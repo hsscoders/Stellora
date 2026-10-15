@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Environment & secrets
+.env
+.env*.local
+
+# Dev database (user-space MariaDB)
+.mariadb/
+
+# Uploads created at runtime
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Logs
+*.log
+dev.log
+server.log
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Test artifacts
+coverage/
+test-results/
+tsconfig.tsbuildinfo
