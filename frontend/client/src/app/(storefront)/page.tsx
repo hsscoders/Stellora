@@ -180,8 +180,10 @@ export default async function HomePage() {
           </Button>
         </div>
         <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-10 md:grid-cols-3 lg:grid-cols-4">
-          {newArrivals.slice(0, 8).map((p) => (
-            <ProductCard key={p.id} product={p} />
+          {newArrivals.slice(0, 8).map((p, i) => (
+            <Reveal key={p.id} delay={(i % 4) * 70}>
+              <ProductCard product={p} priority={i < 2} />
+            </Reveal>
           ))}
         </div>
       </section>
@@ -212,8 +214,10 @@ export default async function HomePage() {
             </Button>
           </div>
           <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-10 md:grid-cols-3 lg:grid-cols-4">
-            {bestSellers.slice(0, 4).map((p) => (
-              <ProductCard key={p.id} product={p} />
+            {bestSellers.slice(0, 4).map((p, i) => (
+              <Reveal key={p.id} delay={i * 70}>
+                <ProductCard product={p} />
+              </Reveal>
             ))}
           </div>
         </section>

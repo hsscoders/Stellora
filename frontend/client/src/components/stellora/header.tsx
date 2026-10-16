@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ShoppingBag,
   Heart,
@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { ThemeToggle } from "@/components/stellora/theme-toggle";
+import { SearchSuggest } from "@/components/stellora/search-suggest";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +42,31 @@ export function Header({ announcement }: { announcement: string | null }) {
   const [user, setUser] = useState<{ name: string; role: string } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [headerHidden, setHeaderHidden] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const lastY = useRef(0);
+
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        const y = window.scrollY;
+        setScrolled(y > 8);
+        const goingDown = y > lastY.current + 4 && y > 140;
+        const goingUp = y < lastY.current - 4;
+        if (goingDown) setHeaderHidden(true);
+        else if (goingUp || y <= 140) setHeaderHidden(false);
+        lastY.current = y;
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, []);
   const [q, setQ] = useState("");
 
   useEffect(() => {
@@ -77,19 +102,15 @@ export function Header({ announcement }: { announcement: string | null }) {
     router.refresh();
   };
 
-  const submitSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (q.trim()) {
-      setSearchOpen(false);
-      router.push(`/search?q=${encodeURIComponent(q.trim())}`);
-    }
-  };
-
   const wishlist = useStore((s) => s.wishlist);
 
   return (
     <>
-      <header className="sticky top-0 z-50 border-b border-border/70 bg-background/90 backdrop-blur-md">
+      <header
+        className={`sticky top-0 z-50 border-b border-border/70 backdrop-blur-md transition-[transform,box-shadow,background-color] duration-300 will-change-transform ${
+          headerHidden && !searchOpen ? "-translate-y-full" : "translate-y-0"
+        } ${scrolled ? "bg-background/95 shadow-lg shadow-foreground/5" : "bg-background/90"}`}
+      >
         {announcement && (
           <div className="brand-gradient text-primary-foreground">
             <p className="mx-auto max-w-7xl truncate px-4 py-1.5 text-center text-[10px] tracking-wide sm:px-6 sm:text-xs">
@@ -214,18 +235,7 @@ export function Header({ announcement }: { announcement: string | null }) {
 
         {searchOpen && (
           <div className="border-t border-border/70 bg-background px-4 py-3 sm:px-6">
-            <form onSubmit={submitSearch} className="mx-auto flex max-w-3xl gap-2">
-              <Input
-                autoFocus
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search jewellery, hair extensions, vanity, handbags…"
-                aria-label="Search products"
-              />
-              <Button type="submit" className="bg-primary hover:bg-primary/90">
-                Search
-              </Button>
-            </form>
+            <SearchSuggest onNavigate={() => setSearchOpen(false)} />
           </div>
         )}
       </header>

@@ -1,6 +1,7 @@
 import { Header } from "@/components/stellora/header";
 import { Footer } from "@/components/stellora/footer";
 import { BackToTop } from "@/components/stellora/back-to-top";
+import { ScrollProgress } from "@/components/stellora/scroll-progress";
 import { WhatsAppButton } from "@/components/stellora/whatsapp-button";
 import { apiSettings } from "@/lib/server-api";
 
@@ -24,6 +25,7 @@ export default async function StorefrontLayout({
 
   return (
     <>
+      <ScrollProgress />
       <Header announcement={announcement} />
       <main className="flex-1">{children}</main>
       <Footer settings={settings} />

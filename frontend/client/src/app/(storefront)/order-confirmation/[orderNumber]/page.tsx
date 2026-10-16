@@ -6,6 +6,7 @@ import { formatINR, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { PayNowButton } from "@/components/stellora/pay-now-button";
+import { Confetti } from "@/components/stellora/confetti";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Order Confirmed" };
@@ -29,6 +30,7 @@ export default async function OrderConfirmationPage({
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-14 sm:px-6">
+      <Confetti burstKey={order.orderNumber} />
       <div className="text-center">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/15">
           <CheckCircle2 className="h-8 w-8 text-primary" />

@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowUpRight, Heart } from "lucide-react";
-import { formatINR, cn } from "@/lib/utils";
+import { ArrowUpRight } from "lucide-react";
+import { formatINR } from "@/lib/utils";
 import type { ProductCardData } from "@/lib/types";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
 
@@ -16,7 +16,9 @@ export function ProductCard({
   if (!from) return null;
   const price = Number(from.price);
   const compareAt = from.compareAtPrice == null ? null : Number(from.compareAtPrice);
-  const inStock = product.variants.some((v) => Number(v.stock) > 0);
+  const totalStock = product.variants.reduce((sum, v) => sum + Number(v.stock || 0), 0);
+  const inStock = totalStock > 0;
+  const lowStock = inStock && totalStock <= 5;
   const onSale = compareAt != null && compareAt > price;
   const discount = onSale ? Math.round(((compareAt! - price) / compareAt!) * 100) : 0;
 
@@ -44,6 +46,17 @@ export function ProductCard({
           {!inStock && (
             <span className="absolute left-3 top-3 rounded-full bg-foreground/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-background">
               Sold Out
+            </span>
+          )}
+          {inStock && (
+            <span
+              className={`absolute bottom-3 left-3 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider shadow-sm transition-opacity duration-300 ${
+                lowStock
+                  ? "anim-pop bg-primary text-primary-foreground"
+                  : "bg-background/85 text-foreground opacity-0 backdrop-blur-sm group-hover:opacity-100"
+              }`}
+            >
+              {lowStock ? `Only ${totalStock} left` : "In stock"}
             </span>
           )}
           {/* Slide-up quick action — desktop pointer devices only */}
