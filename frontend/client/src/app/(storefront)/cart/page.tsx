@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Trash2, Minus, Plus, ShoppingBag, ArrowRight, Tag, X, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";

@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 import { Eye, ShoppingBag, Check, Loader2, ArrowUpRight } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -55,7 +55,12 @@ export function QuickViewButton({
     if (result.ok) {
       await refreshCart();
       setAdded(true);
-      toast.success("Added to cart", { description: `${product.name} × ${qty}` });
+      toast.cart({
+        name: product.name,
+        image: product.images[0]?.url ?? null,
+        qty,
+        price: selected.price,
+      });
       window.setTimeout(() => setOpen(false), 900);
     } else {
       toast.error(result.message ?? "Could not add to cart");

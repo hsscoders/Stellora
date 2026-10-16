@@ -187,7 +187,12 @@ export default async function ProductPage({
           </p>
 
           <div id="purchase-panel" className="mt-2 scroll-mt-28">
-            <ProductPurchase variants={product.variants} productId={product.id} />
+            <ProductPurchase
+              variants={product.variants}
+              productId={product.id}
+              imageUrl={product.images[0]?.url ?? null}
+              productName={product.name}
+            />
           </div>
 
           <div className="mt-6">

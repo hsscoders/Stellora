@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Share2, Check } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 
 /** Copy-the-link share — no native-share dependency, works everywhere. */

@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Plus, Pencil, Archive, Search, Download } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";

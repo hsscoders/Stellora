@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
+import { env } from "../env";
 
 /** Success envelope: { ok: true, data } */
 export function ok(res: Response, data: unknown, status = 200) {
@@ -50,22 +51,80 @@ export function handle(fn: AsyncHandler) {
   };
 }
 
-/** Same-origin check for state-changing requests (CSRF defense alongside SameSite=Lax). */
-export function assertSameOrigin(req: Request & { headers: Record<string, unknown> }) {
+function safeHostOf(value: string): string | null {
+  try {
+    return new URL(value).host.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Same-origin check for state-changing requests (CSRF defense alongside SameSite=Lax).
+ *
+ * The browser's Origin must resolve to a host this API is actually reached from.
+ * Behind the Next.js rewrite proxy the Host header is rewritten to the backend's
+ * own host:port, so the browser-visible host arrives in x-forwarded-host — one
+ * entry per proxy hop (comma-separated). Dynamic preview/sandbox subdomains
+ * (e.g. preview-<id>.space-z.ai) are covered by the ORIGIN_SUFFIXES dot-suffix
+ * allowlist, since their hostnames cannot be enumerated ahead of time.
+ */
+export function assertSameOrigin(req: Request) {
   const origin = req.headers.origin;
   if (!origin) return; // non-browser clients / same-origin posts without Origin
-  // Behind the Next.js rewrite proxy the Host header is rewritten to the
-  // backend's own host:port — the original host arrives in x-forwarded-host.
-  const fwdHost = req.headers["x-forwarded-host"];
-  const host =
-    (typeof fwdHost === "string" && fwdHost.split(",")[0].trim()) ||
-    (typeof req.headers.host === "string" ? req.headers.host : undefined);
+  let originHost: string;
   try {
-    const originHost = new URL(origin).host;
-    if (host && originHost !== host) {
-      throw new HttpError("FORBIDDEN", "Cross-origin request rejected.", 403);
-    }
+    originHost = new URL(origin).host.toLowerCase();
+    if (!originHost) throw new Error("empty host");
   } catch {
     throw new HttpError("FORBIDDEN", "Cross-origin request rejected.", 403);
   }
+
+  // Every proxy hop's host is a legitimate "the browser was talking to this
+  // site" candidate: x-forwarded-host entries first, then the direct Host.
+  const candidates = new Set<string>();
+  const fwd = req.headers["x-forwarded-host"];
+  const fwdList = Array.isArray(fwd) ? fwd : typeof fwd === "string" ? [fwd] : [];
+  for (const entry of fwdList) {
+    for (const part of entry.split(",")) {
+      const host = part.trim().toLowerCase();
+      if (host) candidates.add(host);
+    }
+  }
+  const direct = typeof req.headers.host === "string" ? req.headers.host.trim().toLowerCase() : "";
+  if (direct) candidates.add(direct);
+  const appHost = safeHostOf(env.APP_URL);
+  if (appHost) candidates.add(appHost);
+
+  if (candidates.has(originHost)) return;
+
+  // Loopback development origins (any port) are trusted outside production.
+  if (env.NODE_ENV !== "production") {
+    try {
+      const { hostname } = new URL(origin);
+      if (
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname === "[::1]" ||
+        hostname === "::1" ||
+        hostname.endsWith(".localhost")
+      ) {
+        return;
+      }
+    } catch {
+      throw new HttpError("FORBIDDEN", "Cross-origin request rejected.", 403);
+    }
+  }
+
+  // Dynamic preview hosts (sandbox panels, staging subdomains).
+  const suffixes = env.ORIGIN_SUFFIXES.split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  const suffixOk = suffixes.some((suffix) => {
+    const dotted = suffix.startsWith(".") ? suffix : `.${suffix}`;
+    return originHost.endsWith(dotted);
+  });
+  if (suffixOk) return;
+
+  throw new HttpError("FORBIDDEN", "Cross-origin request rejected.", 403);
 }

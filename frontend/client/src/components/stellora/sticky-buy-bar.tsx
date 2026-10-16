@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ShoppingBag, Check, Loader2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { useStore } from "@/lib/store";
 import { formatINR } from "@/lib/utils";
@@ -69,7 +69,7 @@ export function StickyBuyBar({
     if (result.ok) {
       await refreshCart();
       setAdded(true);
-      toast.success("Added to cart", { description: title });
+      toast.cart({ name: title, image: imageUrl });
       window.setTimeout(() => setAdded(false), 2000);
     } else {
       toast.error(result.message ?? "Could not add to cart");

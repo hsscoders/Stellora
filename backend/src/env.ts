@@ -4,6 +4,10 @@ const envSchema = z.object({
   MONGODB_URI: z.string().min(1),
   PORT: z.string().default("4000").transform((v) => Number(v) || 4000),
   APP_URL: z.string().default("http://localhost:3000"),
+  // Dot-suffix allowlist for dynamic preview/sandbox hosts (e.g. preview-<id>.space-z.ai).
+  // A browser Origin whose host ends with one of these is treated as same-origin
+  // for the state-changing-request CSRF check. Comma-separated.
+  ORIGIN_SUFFIXES: z.string().default(".space-z.ai,.z.ai"),
   ADMIN_BOOTSTRAP_EMAIL: z.string().optional(),
   ADMIN_BOOTSTRAP_PASSWORD: z.string().optional(),
   DEMO_CUSTOMER_EMAIL: z.string().optional(),

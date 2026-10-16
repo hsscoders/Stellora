@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShoppingBag, Zap, BellRing, Check, Loader2, ArrowRight } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QuantityStepper } from "@/components/stellora/quantity-stepper";
@@ -23,11 +23,15 @@ export function AddToCartPanel({
   selected,
   maxStock,
   productId,
+  imageUrl,
+  productName,
 }: {
   variants: Variant[];
   selected: Variant | null;
   maxStock: number;
   productId: string;
+  imageUrl?: string | null;
+  productName?: string;
 }) {
   const router = useRouter();
   const addToCart = useStore((s) => s.addToCart);
@@ -58,9 +62,13 @@ export function AddToCartPanel({
       setAdded(true);
       window.clearTimeout(addedTimer.current);
       addedTimer.current = window.setTimeout(() => setAdded(false), 1800);
-      toast.success("Added to cart", {
-        description: `${selected.name} × ${qty}`,
-        action: { label: "View cart", onClick: () => router.push("/cart") },
+      toast.cart({
+        name: productName ?? selected.name,
+        subtitle: selected.name,
+        image: imageUrl ?? null,
+        qty,
+        price: selected.price,
+        onView: () => router.push("/cart"),
       });
     } else {
       toast.error(result.message ?? "Could not add to cart");

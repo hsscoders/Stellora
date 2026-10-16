@@ -16,10 +16,14 @@ export function ProductPurchase({
   variants,
   productId,
   currencyNote,
+  imageUrl,
+  productName,
 }: {
   variants: Variant[];
   productId?: string;
   currencyNote?: string;
+  imageUrl?: string | null;
+  productName?: string;
 }) {
   const firstAvailable = variants.find((v) => v.stock > 0) ?? variants[0] ?? null;
   const [selected, setSelected] = useState<Variant | null>(firstAvailable);
@@ -74,6 +78,8 @@ export function ProductPurchase({
           selected={selected}
           maxStock={selected.stock}
           productId={productId ?? ""}
+          imageUrl={imageUrl}
+          productName={productName}
           key={selected.id}
         />
       </div>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Send } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { CreditCard, Landmark, Loader2, Lock, ShieldCheck, Smartphone, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";

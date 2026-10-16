@@ -3,7 +3,7 @@
 import { Heart } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 

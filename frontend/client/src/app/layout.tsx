@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { Playfair_Display, Manrope } from "next/font/google";
 import { ThemeProvider } from "next-themes";
-import { Toaster } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const playfair = Playfair_Display({
@@ -136,7 +136,8 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
-          <Toaster position="top-center" richColors closeButton />
+          {/* Premium toast shell — cards come from ui/notify.tsx */}
+          <Toaster />
         </ThemeProvider>
         <script
           type="application/ld+json"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/components/ui/notify";
 import { Trash2, EyeOff, RotateCcw, MessageCircleQuestion, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
