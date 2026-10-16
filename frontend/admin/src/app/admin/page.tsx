@@ -4,6 +4,7 @@ import { apiAdminStats } from "@/lib/server-api";
 import { formatINR, formatDateTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AutomationCard } from "@/components/stellora/automation-card";
 import {
   Table,
   TableBody,
@@ -200,7 +201,7 @@ function DashCard({
   className?: string;
 }) {
   return (
-    <section className={`rounded-lg border border-border/70 bg-card ${className ?? ""}`}>
+    <section className={`min-w-0 rounded-lg border border-border/70 bg-card ${className ?? ""}`}>
       <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 font-serif text-lg font-medium">
@@ -364,6 +365,9 @@ async function Dashboard() {
           </div>
         ))}
       </div>
+
+      {/* Auto-pilot — unattended automation sweeps */}
+      <AutomationCard />
 
       {/* Revenue chart — pure CSS/SVG, no chart library */}
       <DashCard

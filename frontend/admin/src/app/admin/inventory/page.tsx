@@ -6,6 +6,7 @@ import {
   Download,
   History,
   Search,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,15 @@ function stockStatus(r: VariantRow): "OUT" | "LOW" | "OK" {
   return "OK";
 }
 
+/**
+ * Auto-suggested restock quantity: bring the variant to 4× its low-stock
+ * threshold (at least 10 units) so a busy stretch never zero it out again.
+ */
+function suggestedRestock(r: VariantRow): number {
+  const target = Math.max(r.lowStockThreshold * 4, 10);
+  return Math.max(0, target - r.stock);
+}
+
 /** CSV field quoting: wrap in double quotes, escape inner quotes by doubling. */
 function csvField(value: string | number): string {
   return `"${String(value).replace(/"/g, '""')}"`;
@@ -61,6 +71,7 @@ export default function AdminInventoryPage() {
   const [q, setQ] = useState("");
   const [chip, setChip] = useState<StockChip>("ALL");
   const [adjusting, setAdjusting] = useState<VariantRow | null>(null);
+  const [deltaVal, setDeltaVal] = useState("");
   const [historyOf, setHistoryOf] = useState<VariantRow | null>(null);
   const [movements, setMovements] = useState<Movement[] | null>(null);
 
@@ -89,6 +100,13 @@ export default function AdminInventoryPage() {
   useEffect(() => {
     load();
   }, []);
+
+  /** Open the adjust dialog, pre-filling the auto-suggested restock delta. */
+  function openAdjust(v: VariantRow) {
+    const suggestion = suggestedRestock(v);
+    setDeltaVal(suggestion > 0 ? String(suggestion) : "");
+    setAdjusting(v);
+  }
 
   async function openHistory(v: VariantRow) {
     setHistoryOf(v);
@@ -268,10 +286,19 @@ export default function AdminInventoryPage() {
                         Low
                       </Badge>
                     )}
+                    {low && suggestedRestock(v) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => openAdjust(v)}
+                        className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
+                      >
+                        Restock +{suggestedRestock(v)} (suggested)
+                      </button>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setAdjusting(v)}>
+                      <Button variant="outline" size="sm" onClick={() => openAdjust(v)}>
                         Adjust
                       </Button>
                       <Button variant="ghost" size="sm" aria-label="Movement history" onClick={() => openHistory(v)}>
@@ -305,9 +332,31 @@ export default function AdminInventoryPage() {
             <p className="text-sm text-muted-foreground">
               Current stock: <span className="font-semibold tnum text-foreground">{adjusting?.stock}</span>
             </p>
+            {adjusting && suggestedRestock(adjusting) > 0 && (
+              <p className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary" />
+                Suggested: <span className="font-semibold tnum">+{suggestedRestock(adjusting)}</span>
+                <button
+                  type="button"
+                  onClick={() => setDeltaVal(String(suggestedRestock(adjusting)))}
+                  className="ml-auto font-semibold text-primary hover:underline"
+                >
+                  Use suggestion
+                </button>
+              </p>
+            )}
             <div>
               <Label htmlFor="delta">Change (+ to add, − to remove)</Label>
-              <Input id="delta" name="delta" type="number" placeholder="e.g. 10 or -3" required autoFocus />
+              <Input
+                id="delta"
+                name="delta"
+                type="number"
+                value={deltaVal}
+                onChange={(e) => setDeltaVal(e.target.value)}
+                placeholder="e.g. 10 or -3"
+                required
+                autoFocus
+              />
             </div>
             <div>
               <Label htmlFor="note">Note (optional)</Label>

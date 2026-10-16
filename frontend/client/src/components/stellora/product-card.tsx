@@ -19,7 +19,11 @@ export function ProductCard({
   const compareAt = from.compareAtPrice == null ? null : Number(from.compareAtPrice);
   const totalStock = product.variants.reduce((sum, v) => sum + Number(v.stock || 0), 0);
   const inStock = totalStock > 0;
-  const lowStock = inStock && totalStock <= 5;
+  // "Only N left" fires from the admin-configured threshold (most urgent variant), not a hardcoded guess.
+  const lowStockCut = Math.min(
+    ...product.variants.map((v) => (v.lowStockThreshold == null ? 5 : Number(v.lowStockThreshold)))
+  );
+  const lowStock = inStock && totalStock <= (Number.isFinite(lowStockCut) ? lowStockCut : 5);
   const onSale = compareAt != null && compareAt > price;
   const discount = onSale ? Math.round(((compareAt! - price) / compareAt!) * 100) : 0;
 

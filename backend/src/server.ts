@@ -14,6 +14,7 @@ import { commerceRouter } from "./routes/commerce";
 import { adminRouter } from "./routes/admin";
 import { paymentsRouter } from "./routes/payments";
 import { engagementRouter } from "./routes/engagement";
+import { startScheduler } from "./services/scheduler";
 
 const app = express();
 
@@ -94,6 +95,9 @@ async function main() {
   app.listen(env.PORT, "127.0.0.1", () => {
     console.log(`[backend] Stellora API listening on http://127.0.0.1:${env.PORT}`);
   });
+
+  // Stellora Auto-pilot — unattended sweeps (stale order cancel, restock alerts)
+  startScheduler();
 }
 
 main().catch((err) => {

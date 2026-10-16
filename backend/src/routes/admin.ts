@@ -1,6 +1,6 @@
 import { Router } from "express";
 import mongoose from "mongoose";
-import { Product, Category, Order, User, Coupon, HomepageBanner, SiteSetting, ShippingRate, StockMovement, AuditLog, ContactMessage, Session } from "../models";
+import { Product, Category, Order, User, Coupon, HomepageBanner, SiteSetting, ShippingRate, StockMovement, AuditLog, ContactMessage, Session, RestockAlert } from "../models";
 import { ok, fail, handle, assertSameOrigin, HttpError } from "../lib/http";
 import { requireAdmin } from "../lib/auth";
 import {
@@ -14,6 +14,7 @@ import { audit } from "../services/audit";
 import { accrueEarn } from "../services/loyalty";
 import { escapeRegex, serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
+import { getAutomationConfig, schedulerSnapshot, triggerJob, isJobId } from "../services/scheduler";
 import { env } from "../env";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
 import { mkdir, writeFile } from "fs/promises";
@@ -48,10 +49,10 @@ adminRouter.get(
         { $group: { _id: "$status", count: { $sum: 1 } } },
       ]),
       Product.countDocuments({ status: { $ne: "ARCHIVED" } }),
-      // Low stock: unwind embedded variants, filter low + active
+      // Low stock: unwind embedded variants, low = at or below the variant's own threshold
       Product.aggregate([
         { $unwind: "$variants" },
-        { $match: { "variants.isActive": true, "variants.stock": { $lte: 20 } } },
+        { $match: { $expr: { $and: [{ $eq: ["$variants.isActive", true] }, { $lte: ["$variants.stock", "$variants.lowStockThreshold"] }] } } },
         { $sort: { "variants.stock": 1 } },
         { $limit: 8 },
         { $project: { name: 1, slug: 1, variantId: "$variants._id", variantName: "$variants.name", sku: "$variants.sku", stock: "$variants.stock", lowStockThreshold: "$variants.lowStockThreshold" } },
@@ -246,7 +247,7 @@ adminRouter.get(
       ]),
       Product.aggregate([
         { $unwind: "$variants" },
-        { $match: { "variants.isActive": true } },
+        { $match: { $expr: { $and: [{ $eq: ["$variants.isActive", true] }, { $lte: ["$variants.stock", "$variants.lowStockThreshold"] }] } } },
         { $sort: { "variants.stock": 1 } },
         { $limit: 10 },
         { $project: { name: 1, slug: 1, variantName: "$variants.name", sku: "$variants.sku", stock: "$variants.stock", lowStockThreshold: "$variants.lowStockThreshold" } },
@@ -1237,6 +1238,56 @@ adminRouter.put(
       req
     );
     return ok(res, { updated: Object.keys(data).length });
+  })
+);
+
+/* ================= Auto-pilot (automation engine) ================= */
+
+adminRouter.get(
+  "/admin/automation",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const config = await getAutomationConfig();
+    const cutoff = new Date(Date.now() - config.staleOrderHours * 60 * 60 * 1000);
+    const [stalePending, pendingRestockAlerts] = await Promise.all([
+      Order.countDocuments({ status: "PENDING", createdAt: { $lt: cutoff } }),
+      RestockAlert.countDocuments({ notifiedAt: null }),
+    ]);
+    return ok(res, {
+      ...schedulerSnapshot(),
+      config,
+      stalePending,
+      pendingRestockAlerts,
+    });
+  })
+);
+
+adminRouter.post(
+  "/admin/automation/run",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const ip = getClientIp(req);
+    const rl = rateLimit(`automation-run:${ip}`, 10, 60 * 1000);
+    if (!rl.allowed) {
+      return fail(res, "RATE_LIMITED", "Too many manual runs. Please wait a minute.", 429);
+    }
+    const jobId = (req.body as { job?: unknown })?.job;
+    if (!isJobId(jobId)) {
+      return fail(res, "VALIDATION_ERROR", "Unknown automation job.", 422);
+    }
+    const result = await triggerJob(jobId);
+    await audit(
+      {
+        actor: admin,
+        action: "automation.job.run",
+        entityType: "Scheduler",
+        entityId: jobId,
+        metadata: { affected: result.affected, ok: result.ok },
+      },
+      req
+    );
+    return ok(res, { job: jobId, result });
   })
 );
 

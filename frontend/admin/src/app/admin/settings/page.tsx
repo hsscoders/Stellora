@@ -72,6 +72,16 @@ const GROUPS: SettingGroup[] = [
     ],
   },
   {
+    title: "Automation (Auto-pilot)",
+    fields: [
+      {
+        key: "automation.staleOrderHours",
+        label: "Auto-cancel unconfirmed orders after (hours)",
+        placeholder: "24",
+      },
+    ],
+  },
+  {
     title: "Homepage video",
     fields: [
       {

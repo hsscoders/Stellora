@@ -13,6 +13,8 @@ export type ProductCardData = {
     price: number | string;
     compareAtPrice: number | string | null;
     stock: number;
+    /** Admin-configured per-variant low-stock threshold (API supplies it; optional for hand-built cards). */
+    lowStockThreshold?: number;
   }[];
   isBestSeller?: boolean;
   isNewArrival?: boolean;
