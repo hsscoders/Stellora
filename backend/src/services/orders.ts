@@ -11,6 +11,7 @@ export interface CheckoutInput {
   addressId: string;
   couponCode?: string;
   idempotencyKey: string;
+  paymentMethod?: "PAY_ON_CONFIRMATION" | "GATEWAY";
 }
 
 export interface CheckoutResult {
@@ -124,7 +125,7 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
               userId: input.userId,
               status: "PENDING",
               paymentStatus: "PENDING",
-              paymentMethod: "PAY_ON_CONFIRMATION",
+              paymentMethod: input.paymentMethod ?? "PAY_ON_CONFIRMATION",
               subtotal,
               discountTotal,
               shippingFee,
@@ -151,7 +152,7 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
                 lineTotal: line.lineTotal,
               })),
               payment: {
-                method: "PAY_ON_CONFIRMATION",
+                method: input.paymentMethod ?? "PAY_ON_CONFIRMATION",
                 status: "PENDING",
                 amount: grandTotal,
               },

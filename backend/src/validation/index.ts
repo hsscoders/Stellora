@@ -94,6 +94,7 @@ export const checkoutSchema = z.object({
   addressId: z.string().min(1, "Select a delivery address"),
   couponCode: z.string().trim().max(40).optional(),
   idempotencyKey: z.string().min(8).max(64),
+  paymentMethod: z.enum(["PAY_ON_CONFIRMATION", "GATEWAY"]).default("PAY_ON_CONFIRMATION"),
 });
 
 export const trackOrderSchema = z.object({

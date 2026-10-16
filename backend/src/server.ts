@@ -12,6 +12,7 @@ import { accountRouter } from "./routes/account";
 import { cartRouter, wishlistRouter } from "./routes/cart";
 import { commerceRouter } from "./routes/commerce";
 import { adminRouter } from "./routes/admin";
+import { paymentsRouter } from "./routes/payments";
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use("/api", accountRouter);
 app.use("/api", cartRouter);
 app.use("/api", wishlistRouter);
 app.use("/api", commerceRouter);
+app.use("/api", paymentsRouter);
 app.use("/api", adminRouter);
 
 // Contact form (public) — mounted here to keep routes table tidy

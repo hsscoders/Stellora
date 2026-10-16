@@ -1,29 +1,26 @@
 #!/bin/bash
-# Stellora monorepo dev launcher — starts the full stack:
-#   backend  (Express + Mongoose, MongoDB Atlas)  -> http://127.0.0.1:4000
-#   admin    (Next.js, basePath /admin-console)   -> http://127.0.0.1:3001
-#   frontend (Next.js customer storefront)        -> http://127.0.0.1:3000
-# The frontend proxies /api/* -> backend and /admin-console/* -> admin,
-# so a single external origin (port 3000) serves everything.
+# Stellora full stack via PM2 — backend :4000, admin :3001, storefront :3000
+# (auto-restart, unified logs, `pm2 status` / `pm2 logs` for observability)
 set -e
-REPO_DIR="/home/z/my-project/stellora-repo"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_DIR"
 
-# 1. Backend API (detached)
-bash "$REPO_DIR/backend/scripts/start-backend-fork.sh"
-sleep 1
-
-# 2. Install frontend/client + frontend/admin deps if missing
-for app in frontend/client frontend/admin; do
+# 1. Install app deps if missing
+for app in frontend/client frontend/admin backend; do
   if [ ! -d "$REPO_DIR/$app/node_modules" ]; then
     (cd "$REPO_DIR/$app" && bun install >/dev/null 2>&1)
   fi
 done
 
-# 3. Admin console (detached)
-bash "$REPO_DIR/frontend/admin/start-admin-fork.sh"
-sleep 1
+# 2. Ensure pm2 is available
+export PATH="$HOME/.npm-global/bin:$PATH"
+if ! command -v pm2 >/dev/null 2>&1; then
+  npm install -g pm2 >/dev/null 2>&1
+fi
 
-# 4. Frontend storefront (detached)
-bash "$REPO_DIR/frontend/client/start-frontend-fork.sh"
+# 3. Start (idempotent — replaces previous instances)
+pm2 delete stellora-api stellora-admin stellora-web >/dev/null 2>&1 || true
+pm2 start ecosystem.config.js
+pm2 status
 
-echo "[stellora] full stack starting: frontend :3000, admin :3001, api :4000"
+echo "[stellora] PM2 stack running: storefront :3000, admin :3001, api :4000"

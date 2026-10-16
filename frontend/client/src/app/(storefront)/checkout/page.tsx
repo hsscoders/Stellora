@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/stellora/empty-state";
+import { PaymentModal } from "@/components/stellora/payment-modal";
 import { formatINR } from "@/lib/utils";
 import { useStore } from "@/lib/store";
 import type { CartViewData } from "@/lib/store";
@@ -46,6 +47,8 @@ export default function CheckoutPage() {
   const [placing, setPlacing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [addErrors, setAddErrors] = useState<Record<string, string>>({});
+  const [payMethod, setPayMethod] = useState<"GATEWAY" | "PAY_ON_CONFIRMATION">("GATEWAY");
+  const [payOrder, setPayOrder] = useState<{ orderNumber: string; amount: number } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -136,13 +139,21 @@ export default function CheckoutPage() {
         addressId: selectedId,
         couponCode: coupon?.code,
         idempotencyKey,
+        paymentMethod: payMethod,
       }),
     });
     const json = await res.json();
     setPlacing(false);
     if (json.ok) {
-      await refreshCart();
-      router.push(`/order-confirmation/${json.data.orderNumber}`);
+      if (payMethod === "GATEWAY") {
+        // Keep the page (and its summary) mounted while the gateway modal is
+        // open — refreshing the cart now would flip this page into its
+        // empty-cart state and unmount the modal before it can appear.
+        setPayOrder({ orderNumber: json.data.orderNumber, amount: totals.grand });
+      } else {
+        await refreshCart();
+        router.push(`/order-confirmation/${json.data.orderNumber}`);
+      }
     } else {
       toast.error(json.error?.message ?? "Could not place your order");
       if (json.error?.code === "OUT_OF_STOCK") refreshCart();
@@ -305,14 +316,47 @@ export default function CheckoutPage() {
             <h2 className="font-serif text-xl font-medium">
               <ShieldCheck className="mr-2 inline h-4 w-4 text-primary" /> Payment
             </h2>
-            <div className="mt-4 rounded-lg border border-primary/40 bg-accent/40 p-4 text-sm leading-relaxed">
-              <p className="font-medium text-accent-foreground">Pay on confirmation</p>
-              <p className="mt-1 text-muted-foreground">
-                Place your order now and our team will contact you to complete payment securely
-                once availability is confirmed. Online payment is activated here as soon as the
-                store&apos;s payment provider is configured.
-              </p>
-            </div>
+            <RadioGroup
+              value={payMethod}
+              onValueChange={(v) => setPayMethod(v as "GATEWAY" | "PAY_ON_CONFIRMATION")}
+              className="mt-4 space-y-3"
+            >
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition ${
+                  payMethod === "GATEWAY" ? "border-primary bg-accent/40" : "border-border hover:border-primary/50"
+                }`}
+              >
+                <RadioGroupItem value="GATEWAY" className="mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium">
+                    Pay online now
+                    <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary-foreground">
+                      Recommended
+                    </span>
+                  </p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    Card, UPI and wallets via our secure gateway. Instant confirmation and faster
+                    dispatch of your order.
+                  </p>
+                </div>
+              </label>
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition ${
+                  payMethod === "PAY_ON_CONFIRMATION"
+                    ? "border-primary bg-accent/40"
+                    : "border-border hover:border-primary/50"
+                }`}
+              >
+                <RadioGroupItem value="PAY_ON_CONFIRMATION" className="mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium">Pay on confirmation</p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    Place the order now — our team confirms availability and contacts you to
+                    complete payment before dispatch.
+                  </p>
+                </div>
+              </label>
+            </RadioGroup>
           </section>
         </div>
 
@@ -416,7 +460,11 @@ export default function CheckoutPage() {
               disabled={placing || !selectedId || addresses?.length === 0}
               className="mt-5 w-full rounded-full bg-primary py-6 text-sm tracking-wide hover:bg-primary/90"
             >
-              {placing ? "Placing your order…" : `Place Order · ${formatINR(totals.grand)}`}
+              {placing
+                ? "Placing your order…"
+                : payMethod === "GATEWAY"
+                  ? `Pay ${formatINR(totals.grand)} Securely`
+                  : `Place Order · ${formatINR(totals.grand)}`}
             </Button>
             <p className="mt-3 text-center text-xs text-muted-foreground">
               By placing this order you agree to our{" "}
@@ -432,6 +480,25 @@ export default function CheckoutPage() {
           </div>
         </aside>
       </div>
+
+      <PaymentModal
+        open={!!payOrder}
+        onOpenChange={(v) => {
+          if (!v) {
+            setPayOrder(null);
+            // The server cart was consumed by checkout — sync the UI now.
+            void refreshCart();
+          }
+        }}
+        orderNumber={payOrder?.orderNumber ?? ""}
+        amount={payOrder?.amount ?? 0}
+        onSuccess={() => {
+          const num = payOrder?.orderNumber;
+          void refreshCart();
+          setPayOrder(null);
+          if (num) router.push(`/order-confirmation/${num}`);
+        }}
+      />
     </div>
   );
 }

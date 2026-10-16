@@ -113,7 +113,7 @@ export function ProductListing({
                 <label className="flex cursor-pointer items-center gap-2 font-medium">
                   <input
                     type="checkbox"
-                    className="h-4 w-4 accent-[#a9873f]"
+                    className="h-4 w-4 accent-primary"
                     checked={inStock}
                     readOnly
                     onClick={(e) => {

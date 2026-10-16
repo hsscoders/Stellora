@@ -16,6 +16,7 @@ const envSchema = z.object({
   PAYMENT_KEY_ID: z.string().default(""),
   PAYMENT_KEY_SECRET: z.string().default(""),
   PAYMENT_WEBHOOK_SECRET: z.string().default(""),
+  PAYMENT_DEMO_SECRET: z.string().default("stellora_demo_secret_2026"),
   UPLOAD_MAX_MB: z.string().default("5").transform((v) => Number(v) || 5),
   NODE_ENV: z.string().default("development"),
 });

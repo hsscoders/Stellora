@@ -29,6 +29,7 @@ commerceRouter.post(
       addressId: data.addressId,
       couponCode: data.couponCode || undefined,
       idempotencyKey: data.idempotencyKey,
+      paymentMethod: data.paymentMethod,
     });
 
     return ok(res, result, result.replayed ? 200 : 201);

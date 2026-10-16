@@ -4,76 +4,76 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Stellora — Light theme (default): warm ivory, cream, champagne gold, charcoal */
-  --background: #faf7f1;
-  --foreground: #24211c;
+  /* Stellora — Light theme (default): warm ivory, blush cream, modern maroon, deep plum-charcoal */
+  --background: #fbf7f4;
+  --foreground: #2a1b20;
   --card: #ffffff;
-  --card-foreground: #24211c;
+  --card-foreground: #2a1b20;
   --popover: #ffffff;
-  --popover-foreground: #24211c;
-  --primary: #a9873f;
-  --primary-foreground: #fffdf8;
-  --secondary: #f3ede1;
-  --secondary-foreground: #3d3830;
-  --muted: #f3ede1;
-  --muted-foreground: #857c6c;
-  --accent: #f6efdf;
-  --accent-foreground: #6d5a2e;
+  --popover-foreground: #2a1b20;
+  --primary: #8e1f45;
+  --primary-foreground: #fff6f1;
+  --secondary: #f4e9e4;
+  --secondary-foreground: #4a2c35;
+  --muted: #f4e9e4;
+  --muted-foreground: #93777e;
+  --accent: #f9ecee;
+  --accent-foreground: #8e1f45;
   --destructive: #b3382c;
-  --destructive-foreground: #fff8f7;
-  --border: #e7dfcf;
-  --input: #ddd3bf;
-  --ring: #c3a25c;
-  --chart-1: #c3a25c;
-  --chart-2: #6d5a2e;
-  --chart-3: #857c6c;
-  --chart-4: #d9c69a;
-  --chart-5: #3d3830;
+  --destructive-foreground: #fff6f1;
+  --border: #ebdbd8;
+  --input: #dec8c6;
+  --ring: #8e1f45;
+  --chart-1: #8e1f45;
+  --chart-2: #b08a3e;
+  --chart-3: #c4788e;
+  --chart-4: #e5c3c9;
+  --chart-5: #3a242b;
   --radius: 0.375rem;
-  --sidebar: #faf7f1;
-  --sidebar-foreground: #24211c;
-  --sidebar-primary: #a9873f;
-  --sidebar-primary-foreground: #fffdf8;
-  --sidebar-accent: #f3ede1;
-  --sidebar-accent-foreground: #3d3830;
-  --sidebar-border: #e7dfcf;
-  --sidebar-ring: #c3a25c;
+  --sidebar: #fbf7f4;
+  --sidebar-foreground: #2a1b20;
+  --sidebar-primary: #8e1f45;
+  --sidebar-primary-foreground: #fff6f1;
+  --sidebar-accent: #f4e9e4;
+  --sidebar-accent-foreground: #4a2c35;
+  --sidebar-border: #ebdbd8;
+  --sidebar-ring: #8e1f45;
 }
 
 .dark {
-  /* Stellora — Dark theme: warm charcoal with champagne gold */
-  --background: #171411;
-  --foreground: #efe9dd;
-  --card: #201c17;
-  --card-foreground: #efe9dd;
-  --popover: #201c17;
-  --popover-foreground: #efe9dd;
-  --primary: #c9a961;
-  --primary-foreground: #1d1912;
-  --secondary: #2a251f;
-  --secondary-foreground: #d8d0c0;
-  --muted: #2a251f;
-  --muted-foreground: #a89f8d;
-  --accent: #302921;
-  --accent-foreground: #e3c98c;
+  /* Stellora — Dark theme: maroon noir with rose-maroon highlights */
+  --background: #150d11;
+  --foreground: #f2e6e7;
+  --card: #1f1216;
+  --card-foreground: #f2e6e7;
+  --popover: #1f1216;
+  --popover-foreground: #f2e6e7;
+  --primary: #ce5f76;
+  --primary-foreground: #2a0a12;
+  --secondary: #2b1a20;
+  --secondary-foreground: #dcc7cb;
+  --muted: #2b1a20;
+  --muted-foreground: #ac8e93;
+  --accent: #331b22;
+  --accent-foreground: #edaab7;
   --destructive: #e05a4c;
   --destructive-foreground: #1a0806;
-  --border: #353026;
-  --input: #403a2f;
-  --ring: #c9a961;
-  --chart-1: #c9a961;
-  --chart-2: #8b7440;
-  --chart-3: #a89f8d;
-  --chart-4: #e3c98c;
-  --chart-5: #d8d0c0;
-  --sidebar: #1b1815;
-  --sidebar-foreground: #efe9dd;
-  --sidebar-primary: #c9a961;
-  --sidebar-primary-foreground: #1d1912;
-  --sidebar-accent: #2a251f;
-  --sidebar-accent-foreground: #d8d0c0;
-  --sidebar-border: #353026;
-  --sidebar-ring: #c9a961;
+  --border: #3a232a;
+  --input: #472b33;
+  --ring: #ce5f76;
+  --chart-1: #ce5f76;
+  --chart-2: #d9b36a;
+  --chart-3: #9e6c7a;
+  --chart-4: #6e4450;
+  --chart-5: #dcc7cb;
+  --sidebar: #170f13;
+  --sidebar-foreground: #f2e6e7;
+  --sidebar-primary: #ce5f76;
+  --sidebar-primary-foreground: #2a0a12;
+  --sidebar-accent: #2b1a20;
+  --sidebar-accent-foreground: #dcc7cb;
+  --sidebar-border: #3a232a;
+  --sidebar-ring: #ce5f76;
 }
 
 @theme inline {
@@ -148,6 +148,18 @@
       color-mix(in srgb, var(--primary) 55%, transparent),
       transparent
     );
+  }
+  .brand-gradient {
+    background-image: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 62%, #1c0a10));
+  }
+  .lift {
+    transition:
+      transform 400ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lift:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 14px 34px -14px color-mix(in srgb, var(--primary) 38%, transparent);
   }
   .zoom-hover img {
     transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);

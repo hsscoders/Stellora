@@ -5,6 +5,7 @@ import { apiMe, apiMyOrder } from "@/lib/server-api";
 import { formatINR, formatDate } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { PayNowButton } from "@/components/stellora/pay-now-button";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Order Confirmed" };
@@ -35,10 +36,24 @@ export default async function OrderConfirmationPage({
         <h1 className="mt-6 font-serif text-4xl font-medium">Thank You, {user.name.split(" ")[0]}!</h1>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           Your order <span className="font-semibold text-foreground">{order.orderNumber}</span> has
-          been placed on {formatDate(order.createdAt)}. We will contact you shortly on{" "}
-          {order.shipPhone} to confirm availability and complete payment.
+          been placed on {formatDate(order.createdAt)}.{" "}
+          {order.paymentStatus === "PAID"
+            ? "Payment received — your order is confirmed and is being prepared for dispatch."
+            : `We will contact you shortly on ${order.shipPhone} to confirm availability and complete payment.`}
         </p>
       </div>
+
+      {order.paymentStatus === "PENDING" && order.paymentMethod === "GATEWAY" && (
+        <div className="mt-8 rounded-lg border border-primary/40 bg-accent/40 p-5 text-center">
+          <p className="text-sm font-medium text-accent-foreground">Your payment is still pending</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Complete it now to confirm your order instantly and speed up dispatch.
+          </p>
+          <div className="mt-4 flex justify-center">
+            <PayNowButton orderNumber={order.orderNumber} amount={Number(order.grandTotal)} />
+          </div>
+        </div>
+      )}
 
       <div className="mt-10 rounded-lg border border-border/70 bg-card p-6">
         <h2 className="font-serif text-xl font-medium">Order Summary</h2>
@@ -72,7 +87,15 @@ export default async function OrderConfirmationPage({
             <span>{Number(order.shippingFee) === 0 ? "Free" : formatINR(order.shippingFee)}</span>
           </div>
           <div className="flex justify-between text-base font-semibold">
-            <span>Total ({order.paymentMethod === "PAY_ON_CONFIRMATION" ? "Pay on confirmation" : order.paymentMethod})</span>
+            <span>
+              Total ({
+                order.paymentMethod === "GATEWAY"
+                  ? order.paymentStatus === "PAID"
+                    ? "Paid online"
+                    : "Online payment pending"
+                  : "Pay on confirmation"
+              })
+            </span>
             <span>{formatINR(order.grandTotal)}</span>
           </div>
         </div>

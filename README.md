@@ -4,7 +4,7 @@ Sterling Artificial jewellery , hair extensions , vanity & hand bags
 
 Stellora is a complete, production-oriented e-commerce platform for the Stellora retail brand — a premium storefront for sterling & artificial jewellery, hair extensions, vanity products and handbags, with a full-featured administration panel.
 
-**Status: v2 — split-architecture build, verified.** The platform runs as a three-app monorepo (`frontend/client/` + `frontend/admin/` + `backend/`) on **MongoDB Atlas**, browser-verified end to end. Seeded catalogue data is fictional and clearly labelled for development.
+**Status: v2 — split-architecture build, verified.** Maroon-luxe rebrand, working payment gateway (Card/UPI with signature verification) and PM2 process management. The platform runs as a three-app monorepo (`frontend/client/` + `frontend/admin/` + `backend/`) on **MongoDB Atlas**, browser-verified end to end. Seeded catalogue data is fictional and clearly labelled for development.
 
 ---
 
@@ -31,8 +31,8 @@ stellora/
 - **Search** — name/description matching with filters and helpful empty states
 - **Cart** — server-authoritative (prices & stock re-validated on every change), guest cart via httpOnly cookie that **merges into your account on sign-in**
 - **Wishlist** — authenticated, one-tap toggle from cards and product pages
-- **Checkout** — address book, coupon codes validated server-side, shipping rates & free-shipping threshold from the database, **idempotent order creation** (duplicate submissions can never double-order)
-- **Order confirmation + tracking** — truthful, server-backed status timeline; public tracking with order number + email match
+- **Checkout** — address book, coupon codes validated server-side, shipping rates & free-shipping threshold from the database, **integrated payment gateway** (Card + UPI, HMAC-signature-verified, demo gateway by default, Razorpay-ready via env keys), **idempotent order creation** (duplicate submissions can never double-order)
+- **Order confirmation + tracking** — truthful, server-backed status timeline; unpaid online orders get a one-tap "Complete payment" re-checkout; public tracking with order number + email match
 - **Accounts** — register / login / logout / forgot & reset password, profile & password management, address book CRUD, order history & detail
 - **Content** — About, Contact (messages stored & visible to admins), FAQ, Support, and policy pages editable in the admin panel
 - **Custom 404 and safe error boundary**
@@ -57,6 +57,8 @@ stellora/
 | Frontend | Next.js 16 (App Router) + TypeScript 5, Tailwind CSS 4 + shadcn/ui, Playfair Display + Manrope |
 | Admin | Next.js 16, `basePath: /admin-console`, served behind the frontend proxy |
 | Backend | **Express 5 + Mongoose 8** (TypeScript), run with Bun (Node-compatible) |
+| Process management | **PM2** — `ecosystem.config.js` runs api + admin + web with auto-restart and unified logs |
+| Payments | Built-in demo gateway (Card/UPI simulation, HMAC-SHA256 signature handshake, decline rules) — **Razorpay-ready**: set `PAYMENTS_ENABLED=true`, `PAYMENT_PROVIDER=razorpay` + API keys in `backend/.env` |
 | Database | **MongoDB Atlas** (`mongodb+srv://…cluster0.tse9ruk.mongodb.net/stellora`) |
 | Validation | Zod 4 on every API boundary |
 | Auth | DB-backed sessions (httpOnly / SameSite=Lax cookies), scrypt password hashing (Node built-in, RFC 7914), timing-safe verification |

@@ -136,6 +136,17 @@ const OrderSchema = new Schema(
     adminNote: { type: String, default: null },
     items: { type: [OrderItemSchema], default: [] },
     payment: { type: PaymentSchema, default: null },
+    paymentIntent: {
+      type: new Schema(
+        {
+          provider: { type: String, enum: ["razorpay", "demo"], required: true },
+          gatewayOrderId: { type: String, required: true },
+          createdAt: { type: Date, default: Date.now },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
     events: { type: [OrderEventSchema], default: [] },
     shipment: { type: ShipmentSchema, default: null },
   },
