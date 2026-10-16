@@ -14,19 +14,27 @@ export function SectionHeading({
   return (
     <div className={cn(align === "center" ? "text-center" : "text-left", className)}>
       {eyebrow && (
-        <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-primary">
+        <p
+          className={cn(
+            "eyebrow-row text-[11px] font-semibold uppercase tracking-[0.3em] text-primary",
+            align === "left" && "[&::before]:hidden",
+          )}
+        >
           {eyebrow}
         </p>
       )}
-      <h2 className="mt-2 font-serif text-3xl font-medium text-foreground sm:text-4xl">
+      <h2 className="mt-2 font-serif text-3xl font-medium tracking-tight text-foreground sm:text-4xl">
         {title}
       </h2>
       <div
         className={cn(
-          "mt-4 h-px w-24 gold-line",
-          align === "center" ? "mx-auto" : ""
+          "ornament mt-4",
+          align === "center" ? "justify-center" : "justify-start",
         )}
-      />
+        aria-hidden
+      >
+        <span className="ornament-diamond" />
+      </div>
     </div>
   );
 }

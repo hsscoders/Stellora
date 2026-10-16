@@ -245,6 +245,151 @@
     transform: scale(0.97);
   }
 
+  /* ---- Premium finish system ("mast style" polish) ---- */
+
+  /* Shimmer placeholder behind every product/category image — cards never
+     look broken or flat-white while a photo streams in. Pure CSS, no JS. */
+  .img-frame {
+    background:
+      linear-gradient(
+        100deg,
+        color-mix(in srgb, var(--muted) 82%, transparent) 30%,
+        color-mix(in srgb, var(--accent) 90%, transparent) 50%,
+        color-mix(in srgb, var(--muted) 82%, transparent) 70%
+      );
+    background-size: 220% 100%;
+    animation: stellora-shimmer 1.6s ease-in-out infinite;
+  }
+  @keyframes stellora-shimmer {
+    from { background-position: 130% 0; }
+    to { background-position: -90% 0; }
+  }
+
+  /* Light sweep across solid buttons on hover */
+  .btn-sheen {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .btn-sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    transform: translateX(-110%) skewX(-18deg);
+    background: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.28) 50%,
+      transparent 70%
+    );
+    transition: transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+  }
+  .btn-sheen:hover::after {
+    transform: translateX(110%) skewX(-18deg);
+  }
+
+  /* Gradient brand text for display headings */
+  .text-gradient-brand {
+    background-image: linear-gradient(
+      120deg,
+      var(--primary) 20%,
+      color-mix(in srgb, var(--primary) 62%, #d9a547) 55%,
+      var(--primary) 90%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Eyebrow with flanking hairlines (section headings) */
+  .eyebrow-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .eyebrow-row::before,
+  .eyebrow-row::after {
+    content: "";
+    height: 1px;
+    width: 2rem;
+    background: color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+
+  /* Diamond ornament for under-title flourishes */
+  .ornament {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .ornament::before,
+  .ornament::after {
+    content: "";
+    height: 1px;
+    width: 3rem;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--primary) 55%, transparent)
+    );
+  }
+  .ornament::after {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--primary) 55%, transparent),
+      transparent
+    );
+  }
+  .ornament-diamond {
+    width: 6px;
+    height: 6px;
+    transform: rotate(45deg);
+    background: var(--primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+
+  /* Card hover: warm maroon glow + crisper border */
+  .card-glow {
+    transition:
+      border-color 0.35s ease,
+      box-shadow 0.35s ease,
+      transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .card-glow:hover {
+    border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+    box-shadow:
+      0 18px 40px -18px color-mix(in srgb, var(--primary) 42%, transparent),
+      0 4px 14px -6px color-mix(in srgb, var(--foreground) 12%, transparent);
+  }
+
+  /* Frosted glass surface (header / overlays) */
+  .glass {
+    background: color-mix(in srgb, var(--background) 78%, transparent);
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  }
+
+  /* Slide-up quick action bar on product cards */
+  .quick-bar {
+    transform: translateY(102%);
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .group:hover .quick-bar,
+  .group:focus-within .quick-bar {
+    transform: translateY(0);
+  }
+
+  /* Soft vignette for hero imagery */
+  .hero-vignette {
+    background:
+      radial-gradient(
+        120% 90% at 70% 30%,
+        transparent 40%,
+        color-mix(in srgb, var(--background) 55%, transparent) 100%
+      );
+  }
+
   /* Marquee for announcement strip */
   @keyframes stellora-marquee {
     from { transform: translateX(0); }
@@ -269,6 +414,14 @@
   }
   .zoom-hover:hover img {
     transform: none;
+  }
+  .img-frame {
+    animation: none;
+    background: var(--muted);
+  }
+  .btn-sheen::after,
+  .quick-bar {
+    display: none;
   }
   .js .reveal {
     opacity: 1;

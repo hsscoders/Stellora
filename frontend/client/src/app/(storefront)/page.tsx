@@ -42,32 +42,51 @@ export default async function HomePage() {
               className="object-cover"
             />
           )}
-          <div className="absolute inset-0 bg-gradient-to-r from-background/85 via-background/55 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-background/88 via-background/55 to-transparent" />
+          <div className="hero-vignette absolute inset-0" />
           <div className="absolute inset-0 flex items-center">
             <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
               <div className="max-w-xl">
                 {hero && (
                   <>
-                    <p className="anim-fade-up text-[11px] font-semibold uppercase tracking-[0.35em] text-primary">
+                    <p className="anim-fade-up eyebrow-row text-[11px] font-semibold uppercase tracking-[0.35em] text-primary">
                       New Season
                     </p>
                     <h1 className="anim-fade-up anim-delay-2 mt-4 font-serif text-5xl font-medium leading-[1.08] text-foreground sm:text-6xl">
-                      {hero.title}
+                      {hero.title.split(" ").slice(0, -1).join(" ")}{" "}
+                      <span className="text-gradient-brand italic">
+                        {hero.title.split(" ").slice(-1)}
+                      </span>
                     </h1>
                     <p className="anim-fade-up anim-delay-3 mt-4 max-w-md text-[15px] leading-relaxed text-foreground/75">
                       {hero.subtitle}
                     </p>
                     {hero.ctaHref && (
-                      <div className="anim-fade-up anim-delay-4 mt-8">
+                      <div className="anim-fade-up anim-delay-4 mt-8 flex flex-wrap items-center gap-5">
                         <Button
                           asChild
                           size="lg"
-                          className="btn-press rounded-full bg-primary px-8 text-sm tracking-wide hover:bg-primary/90"
+                          className="btn-press btn-sheen rounded-full bg-primary px-8 text-sm tracking-wide shadow-lg shadow-primary/25 hover:bg-primary/90"
                         >
                           <Link href={hero.ctaHref}>{hero.ctaLabel ?? "Shop Now"}</Link>
                         </Button>
+                        <Link
+                          href="/shop"
+                          className="group inline-flex items-center gap-1.5 text-sm font-medium text-foreground/80 transition-colors hover:text-primary"
+                        >
+                          Explore everything
+                          <span className="transition-transform duration-300 group-hover:translate-x-1">→</span>
+                        </Link>
                       </div>
                     )}
+                    <div className="anim-fade-up anim-delay-5 mt-9 flex flex-wrap items-center gap-x-7 gap-y-3 text-xs text-foreground/70">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="text-sm tracking-tight text-primary">★★★★★</span>
+                        4.8 rated by 12,000+ shoppers
+                      </span>
+                      <span className="hidden h-3 w-px bg-border sm:block" aria-hidden />
+                      <span>Free shipping over ₹999</span>
+                    </div>
                   </>
                 )}
               </div>
@@ -86,9 +105,9 @@ export default async function HomePage() {
             <Reveal key={c.id} delay={i * 70}>
               <Link
                 href={`/category/${c.slug}`}
-                className="zoom-hover group relative block overflow-hidden rounded-lg border border-border/60"
+                className="zoom-hover card-glow group relative block overflow-hidden rounded-lg border border-border/60"
               >
-                <div className="relative aspect-[4/5]">
+                <div className="img-frame relative aspect-[4/5]">
                   <Image
                     src={c.imageUrl ?? "/images/placeholder.svg"}
                     alt={c.name}
@@ -96,11 +115,14 @@ export default async function HomePage() {
                     sizes="(max-width: 1024px) 50vw, 25vw"
                     className="object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-foreground/70 via-foreground/10 to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 p-4 sm:p-5">
+                  <div className="absolute inset-0 bg-gradient-to-t from-foreground/75 via-foreground/10 to-transparent transition-opacity duration-500 group-hover:opacity-90" />
+                  <div className="absolute inset-x-0 bottom-0 p-4 transition-transform duration-500 sm:p-5 group-hover:-translate-y-1">
                     <h3 className="font-serif text-lg font-medium text-white sm:text-xl">{c.name}</h3>
                     <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/80">
                       {c.description}
+                    </p>
+                    <p className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white opacity-0 transition-all duration-500 group-hover:opacity-100">
+                      Explore <span aria-hidden>→</span>
                     </p>
                   </div>
                 </div>
@@ -198,9 +220,14 @@ export default async function HomePage() {
       )}
 
       {/* Brand story */}
-      <section className="border-y border-border/60 bg-secondary/40">
+      <section className="relative overflow-hidden border-y border-border/60 bg-secondary/40">
+        <div
+          className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-30 blur-3xl"
+          style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--primary) 38%, transparent), transparent 70%)" }}
+          aria-hidden
+        />
         <div className="mx-auto grid max-w-7xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-20">
-          <div className="relative aspect-[4/3] overflow-hidden rounded-xl">
+          <div className="img-frame relative aspect-[4/3] overflow-hidden rounded-xl shadow-xl shadow-primary/10">
             <Image
               src="/images/banners/category-jewellery.jpg"
               alt="The Stellora atelier"
@@ -242,9 +269,9 @@ export default async function HomePage() {
             { icon: Headset, title: "Real Support", text: "A real person, ready to help." },
           ].map((f, i) => (
             <Reveal key={f.title} delay={i * 80}>
-              <div className="flex flex-col items-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent">
-                  <f.icon className="h-5 w-5 text-accent-foreground" />
+              <div className="group flex flex-col items-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent transition-all duration-300 group-hover:scale-110 group-hover:bg-primary group-hover:text-primary-foreground">
+                  <f.icon className="h-5 w-5 text-accent-foreground transition-colors duration-300 group-hover:text-primary-foreground" />
                 </div>
                 <h4 className="mt-3 text-sm font-semibold">{f.title}</h4>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{f.text}</p>

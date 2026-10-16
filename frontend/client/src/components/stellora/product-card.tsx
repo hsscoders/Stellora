@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Heart } from "lucide-react";
+import { ArrowUpRight, Heart } from "lucide-react";
 import { formatINR, cn } from "@/lib/utils";
 import type { ProductCardData } from "@/lib/types";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
@@ -14,17 +14,20 @@ export function ProductCard({
 }) {
   const from = product.variants[0];
   if (!from) return null;
-  const inStock = product.variants.some((v) => v.stock > 0);
-  const onSale = from.compareAtPrice && from.compareAtPrice > from.price;
+  const price = Number(from.price);
+  const compareAt = from.compareAtPrice == null ? null : Number(from.compareAtPrice);
+  const inStock = product.variants.some((v) => Number(v.stock) > 0);
+  const onSale = compareAt != null && compareAt > price;
+  const discount = onSale ? Math.round(((compareAt! - price) / compareAt!) * 100) : 0;
 
   return (
     <div className="group relative">
       <Link
         href={`/product/${product.slug}`}
-        className="zoom-hover block overflow-hidden rounded-md border border-border/60 bg-card"
+        className="zoom-hover card-glow block overflow-hidden rounded-md border border-border/60 bg-card"
         aria-label={product.name}
       >
-        <div className="relative aspect-square">
+        <div className="img-frame relative aspect-square">
           <Image
             src={product.images[0]?.url ?? "/images/placeholder.svg"}
             alt={product.images[0]?.alt ?? product.name}
@@ -34,8 +37,8 @@ export function ProductCard({
             className="object-cover"
           />
           {onSale && (
-            <span className="absolute left-3 top-3 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground">
-              Sale
+            <span className="anim-pop absolute left-3 top-3 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground shadow-sm">
+              {discount > 0 ? `−${discount}%` : "Sale"}
             </span>
           )}
           {!inStock && (
@@ -43,17 +46,23 @@ export function ProductCard({
               Sold Out
             </span>
           )}
+          {/* Slide-up quick action — desktop pointer devices only */}
+          <span className="quick-bar absolute inset-x-0 bottom-0 hidden items-center justify-between bg-background/92 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary backdrop-blur-sm sm:flex">
+            View Details
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </span>
         </div>
       </Link>
 
       <WishlistButton productId={product.id} className="absolute right-3 top-3" />
 
       <div className="px-1 pt-3">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+        <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+          <span className="h-px w-4 bg-primary/40" aria-hidden />
           {product.category?.name ?? "Stellora"}
         </p>
         <Link href={`/product/${product.slug}`}>
-          <h3 className="mt-1 line-clamp-1 font-serif text-[15px] font-medium leading-snug hover:text-primary">
+          <h3 className="mt-1.5 line-clamp-1 font-serif text-[15px] font-medium leading-snug transition-colors hover:text-primary">
             {product.name}
           </h3>
         </Link>

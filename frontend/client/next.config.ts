@@ -17,6 +17,11 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  // Dev preview: serve original images directly. The on-demand sharp optimizer
+  // makes first loads crawl in dev (each 1080px JPEG re-encoded per unique URL),
+  // so product cards sit white/blank for seconds — the #1 "preview looks broken"
+  // complaint. Production keeps full optimization.
+  images: { unoptimized: process.env.NODE_ENV === "development" },
   // Dev-only: allow the HMR websocket / dev resources from these hosts.
   // Without this, Next 16 blocks /_next/hmr as "cross-origin" and hydration
   // never completes (pages render but no client interactivity). The wildcards

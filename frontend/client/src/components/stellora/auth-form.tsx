@@ -61,7 +61,15 @@ export function AuthForm({
       }
       await refreshCart();
       toast.success(mode === "login" ? "Welcome back!" : "Account created. Welcome to Stellora!");
-      router.push(json.data.role === "ADMIN" ? "/admin-console" : next);
+      // The admin console is a SEPARATE Next.js app behind a rewrite proxy.
+      // router.push() soft-navigates across the rewrite boundary and fails
+      // silently (user stays stuck on /login) — a hard navigation is required.
+      if (json.data.role === "ADMIN" || next.startsWith("/admin-console")) {
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- intentional hard navigation across the admin-console rewrite boundary
+        window.location.assign("/admin-console");
+        return;
+      }
+      router.push(next);
       router.refresh();
     } catch {
       toast.error("Network error. Please try again.");
