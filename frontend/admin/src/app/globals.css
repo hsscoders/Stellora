@@ -194,6 +194,8 @@
   border-radius: 999px;
 }
 
+/* ============================================================
+   Premium toast system — sonner custom cards (see ui/notify.tsx)
    Kind-tinted icon chip, glass card, gold progress bar, action pill.
    ============================================================ */
 [data-sonner-toast].toast-slot {
@@ -363,4 +365,20 @@
 }
 @media (max-width: 480px) {
   .toast-card { width: calc(100vw - 32px); border-radius: 14px; }
+}
+
+/* ---------- Admin shell (Stellora-12) ---------- */
+@keyframes admin-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes admin-slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+.drawer-backdrop { animation: admin-fade-in 0.28s ease-out both; }
+.drawer-panel { animation: admin-slide-in-left 0.34s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .drawer-backdrop,
+  .drawer-panel { animation: none; }
 }

@@ -123,11 +123,66 @@ export default function RootLayout({
   return (
     <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
       <body className={`${playfair.variable} ${manrope.variable} min-h-screen flex flex-col`}>
-        {/* Marks JS availability before first paint — CSS scroll-reveal only
-            hides content when this class is present, so no-JS visitors and
-            non-hydrated previews always see the full page. */}
-        <Script id="stellora-js-class" strategy="beforeInteractive">
-          {"document.documentElement.classList.add('js')"}
+        {/* Scroll-reveal ENGINE — runs before paint, independent of React.
+            Content is hidden by CSS (.js .reveal) only until this engine flips
+            .is-visible, so a slow or failed hydration can NEVER leave sections
+            blank on reload (Collections / Shop by Category bug). */}
+        <Script id="stellora-reveal-engine" strategy="beforeInteractive">
+          {`
+            document.documentElement.classList.add('js');
+            (function () {
+              var doc = document;
+              var io = 'IntersectionObserver' in window
+                ? new IntersectionObserver(function (entries) {
+                    entries.forEach(function (en) {
+                      if (en.isIntersecting) reveal(en.target);
+                    });
+                  }, { threshold: 0, rootMargin: '0px 0px 12% 0px' })
+                : null;
+              function reveal(el) {
+                if (el.__revealed) return;
+                el.__revealed = true;
+                el.classList.add('is-visible');
+                if (io) io.unobserve(el);
+              }
+              function attach(el) {
+                if (el.__rv) return;
+                el.__rv = true;
+                if (io) io.observe(el);
+                else reveal(el);
+              }
+              function scan(node) {
+                if (!node || node.nodeType !== 1) return;
+                if (node.classList && node.classList.contains('reveal')) attach(node);
+                var list = node.querySelectorAll ? node.querySelectorAll('.reveal:not(.is-visible)') : [];
+                for (var i = 0; i < list.length; i++) attach(list[i]);
+              }
+              var mo = new MutationObserver(function (muts) {
+                for (var i = 0; i < muts.length; i++) {
+                  var added = muts[i].addedNodes;
+                  for (var j = 0; j < added.length; j++) scan(added[j]);
+                }
+              });
+              function start() {
+                scan(doc.body);
+                mo.observe(doc.body, { childList: true, subtree: true });
+                // Insurance: anything at or inside the current viewport must
+                // NEVER stay hidden — covers IO edge cases, blocked hydration,
+                // bfcache restores and fast anchor jumps.
+                setInterval(function () {
+                  var vh = window.innerHeight;
+                  var hidden = doc.querySelectorAll('.reveal:not(.is-visible)');
+                  for (var i = 0; i < hidden.length; i++) {
+                    var r = hidden[i].getBoundingClientRect();
+                    if (r.top < vh && r.bottom > -80) reveal(hidden[i]);
+                  }
+                }, 1500);
+              }
+              if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start);
+              else start();
+              window.addEventListener('pageshow', function (e) { if (e.persisted) scan(doc.body); });
+            })();
+          `}
         </Script>
         <ThemeProvider
           attribute="class"
