@@ -147,6 +147,7 @@ export const productSchema = z.object({
   isFeatured: z.boolean().default(false),
   isNewArrival: z.boolean().default(false),
   isBestSeller: z.boolean().default(false),
+  isTrending: z.boolean().default(false),
   images: z
     .array(
       z.object({
@@ -238,4 +239,50 @@ export const orderStatusSchema = z.object({
 export const paymentStatusSchema = z.object({
   paymentStatus: z.enum(["PENDING", "PAID", "FAILED", "REFUNDED"]),
   providerRef: z.string().trim().max(100).optional().or(z.literal("")),
+});
+
+/* ---------- Engagement: reviews, newsletter, restock alerts, returns ---------- */
+
+export const reviewCreateSchema = z.object({
+  rating: z.coerce.number().int().min(1, "Select a rating").max(5, "Select a rating"),
+  title: z.string().trim().max(120).optional().or(z.literal("")),
+  body: z
+    .string()
+    .trim()
+    .min(10, "Please write at least 10 characters")
+    .max(2000, "Review is too long"),
+});
+
+export const newsletterSubscribeSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address"),
+  source: z.string().trim().max(40).optional().or(z.literal("")),
+});
+
+export const restockAlertSchema = z.object({
+  productId: z.string().min(1, "Product is required"),
+  variantId: z.string().optional().or(z.literal("")),
+  email: z.string().trim().toLowerCase().email("Enter a valid email address"),
+});
+
+export const returnItemSchema = z.object({
+  orderItemId: z.string().optional().or(z.literal("")),
+  productName: z.string().trim().min(1),
+  variantName: z.string().optional().or(z.literal("")),
+  quantity: z.coerce.number().int().min(1).max(99),
+});
+
+export const returnRequestSchema = z.object({
+  type: z.enum(["RETURN", "EXCHANGE"]),
+  reason: z.string().trim().min(3, "Select or enter a reason").max(160),
+  details: z.string().trim().max(1000).optional().or(z.literal("")),
+  items: z.array(returnItemSchema).min(1, "Select at least one item"),
+});
+
+export const returnStatusSchema = z.object({
+  status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "COMPLETED"]),
+  adminNote: z.string().trim().max(500).optional().or(z.literal("")),
+});
+
+export const reviewModerationSchema = z.object({
+  status: z.enum(["PENDING", "APPROVED", "REJECTED"]),
 });

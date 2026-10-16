@@ -6,7 +6,9 @@ const nextConfig: NextConfig = {
   reactStrictMode: false,
   basePath: "/admin-console",
   // Dev-only: allow the HMR websocket / dev resources from these hosts.
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  // Wildcards cover sandbox preview hosts (preview-*.space-z.ai) so the admin
+  // console also hydrates when opened through the preview panel.
+  allowedDevOrigins: ["127.0.0.1", "localhost", "*.space-z.ai", "*.z.ai"],
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
     return [
@@ -22,7 +24,7 @@ const nextConfig: NextConfig = {
         source: "/((?!_next/static|_next/image).*)",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors *" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
         ],
       },

@@ -4,76 +4,76 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Stellora — Light theme (default): warm ivory, blush cream, modern maroon, deep plum-charcoal */
-  --background: #fbf7f4;
-  --foreground: #2a1b20;
+  /* Stellora — Light theme: warm ivory, blush cream, deep wine-maroon, plum-charcoal */
+  --background: #faf6f3;
+  --foreground: #2b151b;
   --card: #ffffff;
-  --card-foreground: #2a1b20;
+  --card-foreground: #2b151b;
   --popover: #ffffff;
-  --popover-foreground: #2a1b20;
-  --primary: #8e1f45;
-  --primary-foreground: #fff6f1;
-  --secondary: #f4e9e4;
-  --secondary-foreground: #4a2c35;
-  --muted: #f4e9e4;
-  --muted-foreground: #93777e;
-  --accent: #f9ecee;
-  --accent-foreground: #8e1f45;
+  --popover-foreground: #2b151b;
+  --primary: #801d3f;
+  --primary-foreground: #fff5f2;
+  --secondary: #f3e6e6;
+  --secondary-foreground: #55262f;
+  --muted: #f3e6e6;
+  --muted-foreground: #8f6f76;
+  --accent: #f8e8ea;
+  --accent-foreground: #801d3f;
   --destructive: #b3382c;
-  --destructive-foreground: #fff6f1;
-  --border: #ebdbd8;
-  --input: #dec8c6;
-  --ring: #8e1f45;
-  --chart-1: #8e1f45;
+  --destructive-foreground: #fff5f2;
+  --border: #ecdcda;
+  --input: #ddc7c5;
+  --ring: #801d3f;
+  --chart-1: #801d3f;
   --chart-2: #b08a3e;
   --chart-3: #c4788e;
   --chart-4: #e5c3c9;
   --chart-5: #3a242b;
   --radius: 0.375rem;
-  --sidebar: #fbf7f4;
-  --sidebar-foreground: #2a1b20;
-  --sidebar-primary: #8e1f45;
-  --sidebar-primary-foreground: #fff6f1;
-  --sidebar-accent: #f4e9e4;
-  --sidebar-accent-foreground: #4a2c35;
-  --sidebar-border: #ebdbd8;
-  --sidebar-ring: #8e1f45;
+  --sidebar: #faf6f3;
+  --sidebar-foreground: #2b151b;
+  --sidebar-primary: #801d3f;
+  --sidebar-primary-foreground: #fff5f2;
+  --sidebar-accent: #f3e6e6;
+  --sidebar-accent-foreground: #55262f;
+  --sidebar-border: #ecdcda;
+  --sidebar-ring: #801d3f;
 }
 
 .dark {
-  /* Stellora — Dark theme: maroon noir with rose-maroon highlights */
-  --background: #150d11;
-  --foreground: #f2e6e7;
-  --card: #1f1216;
-  --card-foreground: #f2e6e7;
-  --popover: #1f1216;
-  --popover-foreground: #f2e6e7;
-  --primary: #ce5f76;
-  --primary-foreground: #2a0a12;
-  --secondary: #2b1a20;
-  --secondary-foreground: #dcc7cb;
-  --muted: #2b1a20;
-  --muted-foreground: #ac8e93;
-  --accent: #331b22;
-  --accent-foreground: #edaab7;
+  /* Stellora — Dark theme: true maroon noir, deep wine surfaces, rose-maroon accents */
+  --background: #120a0d;
+  --foreground: #f3e7e9;
+  --card: #1d1115;
+  --card-foreground: #f3e7e9;
+  --popover: #1d1115;
+  --popover-foreground: #f3e7e9;
+  --primary: #c2566e;
+  --primary-foreground: #2a070f;
+  --secondary: #2c1a20;
+  --secondary-foreground: #e3cdd2;
+  --muted: #2c1a20;
+  --muted-foreground: #b18d94;
+  --accent: #361d25;
+  --accent-foreground: #f3b3c0;
   --destructive: #e05a4c;
   --destructive-foreground: #1a0806;
-  --border: #3a232a;
-  --input: #472b33;
-  --ring: #ce5f76;
-  --chart-1: #ce5f76;
+  --border: #3d252c;
+  --input: #4b2e36;
+  --ring: #d46b81;
+  --chart-1: #c2566e;
   --chart-2: #d9b36a;
   --chart-3: #9e6c7a;
   --chart-4: #6e4450;
-  --chart-5: #dcc7cb;
-  --sidebar: #170f13;
-  --sidebar-foreground: #f2e6e7;
-  --sidebar-primary: #ce5f76;
-  --sidebar-primary-foreground: #2a0a12;
-  --sidebar-accent: #2b1a20;
-  --sidebar-accent-foreground: #dcc7cb;
-  --sidebar-border: #3a232a;
-  --sidebar-ring: #ce5f76;
+  --chart-5: #e3cdd2;
+  --sidebar: #150c10;
+  --sidebar-foreground: #f3e7e9;
+  --sidebar-primary: #c2566e;
+  --sidebar-primary-foreground: #2a070f;
+  --sidebar-accent: #2c1a20;
+  --sidebar-accent-foreground: #e3cdd2;
+  --sidebar-border: #3d252c;
+  --sidebar-ring: #d46b81;
 }
 
 @theme inline {
@@ -121,6 +121,9 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: "ss01" on;
@@ -131,6 +134,10 @@
   }
   ::selection {
     background: color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+  *:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--ring) 75%, transparent);
+    outline-offset: 2px;
   }
 }
 
@@ -150,7 +157,7 @@
     );
   }
   .brand-gradient {
-    background-image: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 62%, #1c0a10));
+    background-image: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 55%, #1a050c));
   }
   .lift {
     transition:
@@ -167,6 +174,87 @@
   .zoom-hover:hover img {
     transform: scale(1.06);
   }
+
+  /* ---- Motion system (CSS-only, SSR-safe, reduced-motion aware) ---- */
+  @keyframes stellora-fade-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes stellora-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes stellora-slide-in-left {
+    from { transform: translateX(-100%); }
+    to { transform: none; }
+  }
+  @keyframes stellora-pop {
+    0% { transform: scale(0.4); }
+    60% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
+
+  .anim-fade-up {
+    animation: stellora-fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .anim-fade-in {
+    animation: stellora-fade-in 0.5s ease-out both;
+  }
+  .anim-pop {
+    animation: stellora-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .anim-delay-1 { animation-delay: 0.08s; }
+  .anim-delay-2 { animation-delay: 0.16s; }
+  .anim-delay-3 { animation-delay: 0.26s; }
+  .anim-delay-4 { animation-delay: 0.36s; }
+  .anim-delay-5 { animation-delay: 0.46s; }
+
+  /* Soft page transition on client-side navigation (template remounts) */
+  .page-enter {
+    animation: stellora-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Scroll-reveal: sections start hidden only when JS is available (html.js),
+     then the Reveal component flips .is-visible via IntersectionObserver. */
+  .js .reveal {
+    opacity: 0;
+    transform: translateY(18px);
+    transition:
+      opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+      transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity, transform;
+  }
+  .js .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Mobile drawer entrance */
+  .drawer-backdrop {
+    animation: stellora-fade-in 0.3s ease-out both;
+  }
+  .drawer-panel {
+    animation: stellora-slide-in-left 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* Button micro-interaction */
+  .btn-press {
+    transition: transform 150ms ease;
+  }
+  .btn-press:active {
+    transform: scale(0.97);
+  }
+
+  /* Marquee for announcement strip */
+  @keyframes stellora-marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  .marquee-track {
+    display: inline-flex;
+    white-space: nowrap;
+    animation: stellora-marquee 28s linear infinite;
+  }
 }
 
 /* Restrained, reduced-motion-respecting behavior */
@@ -180,6 +268,10 @@
     scroll-behavior: auto !important;
   }
   .zoom-hover:hover img {
+    transform: none;
+  }
+  .js .reveal {
+    opacity: 1;
     transform: none;
   }
 }

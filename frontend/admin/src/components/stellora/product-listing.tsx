@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { ProductCard } from "@/components/stellora/product-card";
 import { EmptyState } from "@/components/stellora/empty-state";
@@ -54,6 +55,7 @@ export function ProductListing({
   title: string;
   subtitle?: string;
 }) {
+  const router = useRouter();
   const currentSort = searchParams.sort ?? "newest";
   const inStock = searchParams.inStock === "1";
 
@@ -118,9 +120,11 @@ export function ProductListing({
                     readOnly
                     onClick={(e) => {
                       e.preventDefault();
-                      window.location.href = `${basePath}${buildQuery(searchParams, {
-                        inStock: inStock ? "" : "1",
-                      })}`;
+                      router.push(
+                        `${basePath}${buildQuery(searchParams, {
+                          inStock: inStock ? "" : "1",
+                        })}`
+                      );
                     }}
                   />
                   In stock only

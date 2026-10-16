@@ -70,6 +70,9 @@ export default function CartPage() {
   }
 
   const subtotal = cart.subtotal;
+  const FREE_SHIPPING_THRESHOLD = 1999;
+  const progress = Math.min(100, Math.round((subtotal / FREE_SHIPPING_THRESHOLD) * 100));
+  const away = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
@@ -77,6 +80,36 @@ export default function CartPage() {
       <p className="mt-2 text-sm text-muted-foreground tnum">
         {cart.itemCount} {cart.itemCount === 1 ? "item" : "items"}
       </p>
+
+      {/* Free-shipping progress */}
+      <div className="anim-fade-up mt-6 rounded-lg border border-border/70 bg-card p-4">
+        <p className="text-sm">
+          {away > 0 ? (
+            <>
+              Add <span className="font-semibold text-primary tnum">{formatINR(away)}</span> more to
+              unlock <span className="font-semibold">free shipping</span>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold text-primary">Congratulations!</span> Your order ships
+              free
+            </>
+          )}
+        </p>
+        <div
+          className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-valuenow={progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Progress towards free shipping"
+        >
+          <div
+            className="h-full rounded-full brand-gradient transition-all duration-700 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
 
       <div className="mt-8 grid gap-10 lg:grid-cols-[1fr_340px]">
         <ul className="divide-y divide-border">

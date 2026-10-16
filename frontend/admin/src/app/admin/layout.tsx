@@ -17,6 +17,9 @@ import {
   BarChart3,
   Mail,
   ArrowUpRight,
+  Star,
+  RotateCcw,
+  Send,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -28,8 +31,11 @@ const NAV = [
   { href: "/admin/categories", label: "Categories", icon: Tags },
   { href: "/admin/inventory", label: "Inventory", icon: Layers },
   { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
+  { href: "/admin/returns", label: "Returns & Exchanges", icon: RotateCcw },
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/coupons", label: "Coupons", icon: Ticket },
+  { href: "/admin/reviews", label: "Reviews", icon: Star },
+  { href: "/admin/newsletter", label: "Newsletter & Alerts", icon: Send },
   { href: "/admin/banners", label: "Banners", icon: ImageIcon },
   { href: "/admin/shipping", label: "Shipping", icon: Truck },
   { href: "/admin/messages", label: "Messages", icon: Mail },

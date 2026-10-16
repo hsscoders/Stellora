@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Instagram, Facebook, Twitter, Youtube } from "lucide-react";
+import { NewsletterForm } from "@/components/stellora/newsletter-form";
 
 const CATEGORIES = [
   { slug: "jewellery", name: "Jewellery" },
@@ -9,16 +11,47 @@ const CATEGORIES = [
 
 export function Footer({ settings }: { settings: Record<string, string> }) {
   const contact = settings.contact_email || settings.contact_phone;
+  const socials = [
+    { key: "social_instagram", label: "Instagram", icon: Instagram },
+    { key: "social_facebook", label: "Facebook", icon: Facebook },
+    { key: "social_twitter", label: "Twitter / X", icon: Twitter },
+    { key: "social_youtube", label: "YouTube", icon: Youtube },
+  ].filter((s) => settings[s.key]);
   return (
     <footer className="mt-auto border-t border-border bg-secondary/40">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
-        <div className="grid gap-10 md:grid-cols-4">
-          <div>
+        <div className="grid gap-10 md:grid-cols-5">
+          <div className="md:col-span-2">
             <p className="font-serif text-2xl font-semibold tracking-[0.18em]">STELLORA</p>
             <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted-foreground">
               Sterling and artificial jewellery, hair extensions, vanity essentials and handbags —
               curated with care, presented with elegance.
             </p>
+            {socials.length > 0 && (
+              <div className="mt-5 flex items-center gap-2">
+                {socials.map((s) => (
+                  <a
+                    key={s.key}
+                    href={settings[s.key]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Stellora on ${s.label}`}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-border/70 text-muted-foreground transition hover:border-primary hover:text-primary"
+                  >
+                    <s.icon className="h-4 w-4" />
+                  </a>
+                ))}
+              </div>
+            )}
+            <div className="mt-6">
+              <p className="text-sm font-semibold uppercase tracking-[0.14em]">Newsletter</p>
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                New pieces, early access, members-only offers.
+              </p>
+              <div className="mt-3">
+                <NewsletterForm />
+              </div>
+            </div>
           </div>
           <div>
             <h4 className="text-sm font-semibold uppercase tracking-[0.16em]">Shop</h4>

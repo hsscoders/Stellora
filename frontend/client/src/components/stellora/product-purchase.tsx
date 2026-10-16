@@ -14,9 +14,11 @@ type Variant = ProductCardData["variants"][number];
  */
 export function ProductPurchase({
   variants,
+  productId,
   currencyNote,
 }: {
   variants: Variant[];
+  productId?: string;
   currencyNote?: string;
 }) {
   const firstAvailable = variants.find((v) => v.stock > 0) ?? variants[0] ?? null;
@@ -31,7 +33,7 @@ export function ProductPurchase({
   return (
     <div>
       <div className="flex items-baseline gap-3 tnum">
-        <span className="font-serif text-3xl font-semibold">
+        <span className="font-sans text-3xl font-bold tracking-tight">
           {new Intl.NumberFormat("en-IN", {
             style: "currency",
             currency: "INR",
@@ -71,6 +73,7 @@ export function ProductPurchase({
           variants={variants}
           selected={selected}
           maxStock={selected.stock}
+          productId={productId ?? ""}
           key={selected.id}
         />
       </div>

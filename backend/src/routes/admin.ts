@@ -274,6 +274,7 @@ adminRouter.post(
       isFeatured: data.isFeatured,
       isNewArrival: data.isNewArrival,
       isBestSeller: data.isBestSeller,
+      isTrending: data.isTrending,
       images: data.images.map((img, i) => ({ url: img.url, alt: img.alt ?? null, sortOrder: i })),
       variants: data.variants.map((v) => ({
         name: v.name,
@@ -356,6 +357,7 @@ adminRouter.put(
     existing.isFeatured = data.isFeatured;
     existing.isNewArrival = data.isNewArrival;
     existing.isBestSeller = data.isBestSeller;
+    existing.isTrending = data.isTrending;
 
     // Order history check helper: does any order reference this variant?
     const { Order: OrderModel } = await import("../models");

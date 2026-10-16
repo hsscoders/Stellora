@@ -3,22 +3,26 @@ import Link from "next/link";
 import { apiBanners, apiCategories, apiProducts } from "@/lib/server-api";
 import { ProductCard } from "@/components/stellora/product-card";
 import { SectionHeading } from "@/components/stellora/section-heading";
+import { Reveal } from "@/components/stellora/reveal";
+import { RecentlyViewedSection } from "@/components/stellora/recently-viewed";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Truck, Headset, BadgeCheck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [banners, categories, featuredRes, newArrivalsRes, bestSellersRes] = await Promise.all([
+  const [banners, categories, featuredRes, newArrivalsRes, bestSellersRes, trendingRes] = await Promise.all([
     apiBanners(),
     apiCategories(),
     apiProducts({ featured: "1", page: 1 }),
     apiProducts({ sort: "newest", page: 1 }),
     apiProducts({ best: "1", page: 1 }),
+    apiProducts({ trending: "1", page: 1 }),
   ]);
   const featured = featuredRes.products;
   const newArrivals = newArrivalsRes.products;
   const bestSellers = bestSellersRes.products;
+  const trending = trendingRes.products;
 
   const hero = banners[0];
   const promo = banners[1];
@@ -44,23 +48,25 @@ export default async function HomePage() {
               <div className="max-w-xl">
                 {hero && (
                   <>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-primary">
+                    <p className="anim-fade-up text-[11px] font-semibold uppercase tracking-[0.35em] text-primary">
                       New Season
                     </p>
-                    <h1 className="mt-4 font-serif text-5xl font-medium leading-[1.08] text-foreground sm:text-6xl">
+                    <h1 className="anim-fade-up anim-delay-2 mt-4 font-serif text-5xl font-medium leading-[1.08] text-foreground sm:text-6xl">
                       {hero.title}
                     </h1>
-                    <p className="mt-4 max-w-md text-[15px] leading-relaxed text-foreground/75">
+                    <p className="anim-fade-up anim-delay-3 mt-4 max-w-md text-[15px] leading-relaxed text-foreground/75">
                       {hero.subtitle}
                     </p>
                     {hero.ctaHref && (
-                      <Button
-                        asChild
-                        size="lg"
-                        className="mt-8 rounded-full bg-primary px-8 text-sm tracking-wide hover:bg-primary/90"
-                      >
-                        <Link href={hero.ctaHref}>{hero.ctaLabel ?? "Shop Now"}</Link>
-                      </Button>
+                      <div className="anim-fade-up anim-delay-4 mt-8">
+                        <Button
+                          asChild
+                          size="lg"
+                          className="btn-press rounded-full bg-primary px-8 text-sm tracking-wide hover:bg-primary/90"
+                        >
+                          <Link href={hero.ctaHref}>{hero.ctaLabel ?? "Shop Now"}</Link>
+                        </Button>
+                      </div>
                     )}
                   </>
                 )}
@@ -72,31 +78,34 @@ export default async function HomePage() {
 
       {/* Categories */}
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
-        <SectionHeading eyebrow="Collections" title="Shop by Category" />
+        <Reveal>
+          <SectionHeading eyebrow="Collections" title="Shop by Category" />
+        </Reveal>
         <div className="mt-10 grid grid-cols-2 gap-4 lg:grid-cols-4 lg:gap-6">
-          {categories.map((c) => (
-            <Link
-              key={c.id}
-              href={`/category/${c.slug}`}
-              className="zoom-hover group relative overflow-hidden rounded-lg border border-border/60"
-            >
-              <div className="relative aspect-[4/5]">
-                <Image
-                  src={c.imageUrl ?? "/images/placeholder.svg"}
-                  alt={c.name}
-                  fill
-                  sizes="(max-width: 1024px) 50vw, 25vw"
-                  className="object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-foreground/70 via-foreground/10 to-transparent" />
-                <div className="absolute inset-x-0 bottom-0 p-4 sm:p-5">
-                  <h3 className="font-serif text-lg font-medium text-white sm:text-xl">{c.name}</h3>
-                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/80">
-                    {c.description}
-                  </p>
+          {categories.map((c, i) => (
+            <Reveal key={c.id} delay={i * 70}>
+              <Link
+                href={`/category/${c.slug}`}
+                className="zoom-hover group relative block overflow-hidden rounded-lg border border-border/60"
+              >
+                <div className="relative aspect-[4/5]">
+                  <Image
+                    src={c.imageUrl ?? "/images/placeholder.svg"}
+                    alt={c.name}
+                    fill
+                    sizes="(max-width: 1024px) 50vw, 25vw"
+                    className="object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-foreground/70 via-foreground/10 to-transparent" />
+                  <div className="absolute inset-x-0 bottom-0 p-4 sm:p-5">
+                    <h3 className="font-serif text-lg font-medium text-white sm:text-xl">{c.name}</h3>
+                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/80">
+                      {c.description}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </Link>
+              </Link>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -104,10 +113,14 @@ export default async function HomePage() {
       {/* Featured */}
       {featured.length > 0 && (
         <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
-          <SectionHeading eyebrow="Curated" title="Featured Selections" />
+          <Reveal>
+            <SectionHeading eyebrow="Curated" title="Featured Selections" />
+          </Reveal>
           <div className="mt-10 grid grid-cols-2 gap-x-5 gap-y-10 md:grid-cols-3 lg:grid-cols-4">
             {featured.slice(0, 4).map((p, i) => (
-              <ProductCard key={p.id} product={p} priority={i < 2} />
+              <Reveal key={p.id} delay={i * 60}>
+                <ProductCard product={p} priority={i < 2} />
+              </Reveal>
             ))}
           </div>
         </section>
@@ -151,6 +164,22 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {/* Trending */}
+      {trending.length > 0 && (
+        <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
+          <Reveal>
+            <SectionHeading eyebrow="Hot Right Now" title="Trending Now" />
+          </Reveal>
+          <div className="mt-10 grid grid-cols-2 gap-x-5 gap-y-10 md:grid-cols-3 lg:grid-cols-4">
+            {trending.slice(0, 4).map((p, i) => (
+              <Reveal key={p.id} delay={i * 60}>
+                <ProductCard product={p} />
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Best sellers */}
       {bestSellers.length > 0 && (
         <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
@@ -177,6 +206,7 @@ export default async function HomePage() {
               alt="The Stellora atelier"
               fill
               sizes="(max-width: 1024px) 100vw, 50vw"
+              loading="eager"
               className="object-cover"
             />
           </div>
@@ -199,6 +229,9 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {/* Recently viewed (client, localStorage-driven) */}
+      <RecentlyViewedSection />
+
       {/* Trust strip */}
       <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6">
         <div className="grid grid-cols-2 gap-8 text-center lg:grid-cols-4">
@@ -207,14 +240,16 @@ export default async function HomePage() {
             { icon: ShieldCheck, title: "Secure Checkout", text: "Your data is protected end to end." },
             { icon: Truck, title: "Reliable Delivery", text: "Careful packaging on every order." },
             { icon: Headset, title: "Real Support", text: "A real person, ready to help." },
-          ].map((f) => (
-            <div key={f.title} className="flex flex-col items-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent">
-                <f.icon className="h-5 w-5 text-accent-foreground" />
+          ].map((f, i) => (
+            <Reveal key={f.title} delay={i * 80}>
+              <div className="flex flex-col items-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent">
+                  <f.icon className="h-5 w-5 text-accent-foreground" />
+                </div>
+                <h4 className="mt-3 text-sm font-semibold">{f.title}</h4>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{f.text}</p>
               </div>
-              <h4 className="mt-3 text-sm font-semibold">{f.title}</h4>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{f.text}</p>
-            </div>
+            </Reveal>
           ))}
         </div>
       </section>

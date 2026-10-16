@@ -10,7 +10,6 @@ import {
   Menu,
   UserRound,
   X,
-  ChevronDown,
   LogOut,
   LayoutDashboard,
   Package,
@@ -57,6 +56,20 @@ export function Header({ announcement }: { announcement: string | null }) {
       .catch(() => {});
   }, [pathname, refreshCart, refreshWishlist]);
 
+  // Lock body scroll while the mobile drawer is open (Escape closes it).
+  // The drawer itself closes on link clicks / backdrop tap / route changes
+  // handled by the menu's onClick handlers.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMobileOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [mobileOpen]);
+
   const signOut = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
@@ -75,192 +88,197 @@ export function Header({ announcement }: { announcement: string | null }) {
   const wishlist = useStore((s) => s.wishlist);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border/70 bg-background/90 backdrop-blur-md">
-      {announcement && (
-        <div className="bg-primary text-primary-foreground">
-          <p className="mx-auto max-w-7xl px-4 py-1.5 text-center text-xs tracking-wide">
-            {announcement}
-          </p>
-        </div>
-      )}
-      <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-6">
-        <button
-          className="lg:hidden -ml-1 p-2"
-          aria-label="Open menu"
-          onClick={() => setMobileOpen(true)}
-        >
-          <Menu className="h-5 w-5" />
-        </button>
-
-        <Link href="/" className="mr-2 flex flex-col items-center leading-none">
-          <span className="font-serif text-[26px] font-semibold tracking-[0.18em] text-foreground">
-            STELLORA
-          </span>
-          <span className="text-[9px] uppercase tracking-[0.35em] text-muted-foreground">
-            Premium Finds
-          </span>
-        </Link>
-
-        <nav className="ml-6 hidden items-center gap-7 text-[13px] font-medium uppercase tracking-[0.14em] lg:flex">
-          <Link
-            href="/shop"
-            className={`transition-colors hover:text-primary ${pathname === "/shop" ? "text-primary" : "text-foreground/80"}`}
-          >
-            Shop All
-          </Link>
-          {CATEGORIES.map((c) => (
-            <Link
-              key={c.slug}
-              href={`/category/${c.slug}`}
-              className={`transition-colors hover:text-primary ${pathname === `/category/${c.slug}` ? "text-primary" : "text-foreground/80"}`}
-            >
-              {c.name}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="ml-auto flex items-center gap-0.5">
+    <>
+      <header className="sticky top-0 z-50 border-b border-border/70 bg-background/90 backdrop-blur-md">
+        {announcement && (
+          <div className="brand-gradient text-primary-foreground">
+            <p className="mx-auto max-w-7xl truncate px-4 py-1.5 text-center text-[10px] tracking-wide sm:px-6 sm:text-xs">
+              {announcement}
+            </p>
+          </div>
+        )}
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-3 sm:gap-4 sm:px-6">
           <button
-            className="p-2 text-foreground/80 transition hover:text-foreground"
-            aria-label="Search"
-            onClick={() => setSearchOpen((v) => !v)}
+            className="-ml-1 p-2 lg:hidden"
+            aria-label="Open menu"
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen(true)}
           >
-            <Search className="h-5 w-5" />
+            <Menu className="h-5 w-5" />
           </button>
-          <ThemeToggle />
-          <Link
-            href="/wishlist"
-            className="relative p-2 text-foreground/80 transition hover:text-foreground"
-            aria-label="Wishlist"
-          >
-            <Heart className="h-5 w-5" />
-            {wishlist.length > 0 && (
-              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tnum">
-                {wishlist.length}
-              </span>
-            )}
-          </Link>
-          <Link
-            href="/cart"
-            className="relative p-2 text-foreground/80 transition hover:text-foreground"
-            aria-label="Cart"
-          >
-            <ShoppingBag className="h-5 w-5" />
-            {cart && cart.itemCount > 0 && (
-              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tnum">
-                {cart.itemCount}
-              </span>
-            )}
+
+          <Link href="/" className="mr-auto flex flex-col items-center leading-none sm:mr-2 lg:mr-2">
+            <span className="font-serif text-[21px] font-semibold tracking-[0.14em] text-foreground sm:text-[26px] sm:tracking-[0.18em]">
+              STELLORA
+            </span>
+            <span className="text-[8px] uppercase tracking-[0.3em] text-muted-foreground sm:text-[9px] sm:tracking-[0.35em]">
+              Premium Finds
+            </span>
           </Link>
 
-          {user ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Account">
-                  <UserRound className="h-5 w-5 text-foreground/80" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <div className="px-3 py-2 text-sm">
-                  <p className="font-medium">{user.name}</p>
-                  <p className="text-xs text-muted-foreground">My account</p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <Link href="/account">
-                    <Package className="h-4 w-4" /> Orders & Profile
-                  </Link>
-                </DropdownMenuItem>
-                {user.role === "ADMIN" && (
+          <nav className="ml-6 hidden items-center gap-7 text-[13px] font-medium uppercase tracking-[0.14em] lg:flex">
+            <Link
+              href="/shop"
+              className={`transition-colors hover:text-primary ${pathname === "/shop" ? "text-primary" : "text-foreground/80"}`}
+            >
+              Shop All
+            </Link>
+            {CATEGORIES.map((c) => (
+              <Link
+                key={c.slug}
+                href={`/category/${c.slug}`}
+                className={`transition-colors hover:text-primary ${pathname === `/category/${c.slug}` ? "text-primary" : "text-foreground/80"}`}
+              >
+                {c.name}
+              </Link>
+            ))}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
+            <button
+              className="p-2 text-foreground/80 transition hover:text-foreground"
+              aria-label="Search"
+              onClick={() => setSearchOpen((v) => !v)}
+            >
+              <Search className="h-5 w-5" />
+            </button>
+            <ThemeToggle />
+            <Link
+              href="/wishlist"
+              className="relative p-2 text-foreground/80 transition hover:text-foreground"
+              aria-label="Wishlist"
+            >
+              <Heart className="h-5 w-5" />
+              {wishlist.length > 0 && (
+                <span className="anim-pop absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tnum">
+                  {wishlist.length}
+                </span>
+              )}
+            </Link>
+            <Link
+              href="/cart"
+              className="relative p-2 text-foreground/80 transition hover:text-foreground"
+              aria-label="Cart"
+            >
+              <ShoppingBag className="h-5 w-5" />
+              {cart && cart.itemCount > 0 && (
+                <span key={cart.itemCount} className="anim-pop absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tnum">
+                  {cart.itemCount}
+                </span>
+              )}
+            </Link>
+
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="Account">
+                    <UserRound className="h-5 w-5 text-foreground/80" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <div className="px-3 py-2 text-sm">
+                    <p className="font-medium">{user.name}</p>
+                    <p className="text-xs text-muted-foreground">My account</p>
+                  </div>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem asChild>
-                    <Link href="/admin">
-                      <LayoutDashboard className="h-4 w-4" /> Admin Panel
+                    <Link href="/account">
+                      <Package className="h-4 w-4" /> Orders &amp; Profile
                     </Link>
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={signOut}>
-                  <LogOut className="h-4 w-4" /> Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Sign in"
-              onClick={() => router.push("/login")}
-            >
-              <UserRound className="h-5 w-5 text-foreground/80" />
-            </Button>
-          )}
+                  {user.role === "ADMIN" && (
+                    <DropdownMenuItem asChild>
+                      <Link href="/admin-console">
+                        <LayoutDashboard className="h-4 w-4" /> Admin Panel
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={signOut}>
+                    <LogOut className="h-4 w-4" /> Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Sign in"
+                onClick={() => router.push("/login")}
+              >
+                <UserRound className="h-5 w-5 text-foreground/80" />
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
 
-      {searchOpen && (
-        <div className="border-t border-border/70 bg-background px-4 py-3 sm:px-6">
-          <form onSubmit={submitSearch} className="mx-auto flex max-w-3xl gap-2">
-            <Input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search jewellery, hair extensions, vanity, handbags…"
-              aria-label="Search products"
-            />
-            <Button type="submit" className="bg-primary hover:bg-primary/90">
-              Search
-            </Button>
-          </form>
-        </div>
-      )}
+        {searchOpen && (
+          <div className="border-t border-border/70 bg-background px-4 py-3 sm:px-6">
+            <form onSubmit={submitSearch} className="mx-auto flex max-w-3xl gap-2">
+              <Input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search jewellery, hair extensions, vanity, handbags…"
+                aria-label="Search products"
+              />
+              <Button type="submit" className="bg-primary hover:bg-primary/90">
+                Search
+              </Button>
+            </form>
+          </div>
+        )}
+      </header>
 
-      {/* Mobile menu */}
+      {/* Mobile menu — rendered OUTSIDE <header> on purpose: the header's
+          backdrop-blur creates a containing block that would trap the fixed
+          drawer to the header's box, leaving the panel transparent/broken. */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-[60] lg:hidden">
+        <div className="fixed inset-0 z-[70] lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
           <div
-            className="absolute inset-0 bg-foreground/40 backdrop-blur-sm"
+            className="drawer-backdrop absolute inset-0 bg-foreground/45 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
-          <div className="absolute inset-y-0 left-0 flex w-80 max-w-[85vw] flex-col bg-background p-6 shadow-xl">
+          <div className="drawer-panel absolute inset-y-0 left-0 flex w-80 max-w-[85vw] flex-col bg-background p-6 shadow-2xl">
             <div className="flex items-center justify-between">
               <span className="font-serif text-xl tracking-[0.18em]">STELLORA</span>
               <button aria-label="Close menu" onClick={() => setMobileOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav className="mt-8 flex flex-col gap-1" onClick={() => setMobileOpen(false)}>
-              <Link href="/shop" className="rounded-md px-3 py-3 text-base hover:bg-accent">
+            <nav className="stellora-scroll mt-8 flex flex-col gap-1 overflow-y-auto" onClick={() => setMobileOpen(false)}>
+              <Link href="/shop" className="rounded-md px-3 py-3 text-base transition hover:bg-accent">
                 Shop All
               </Link>
               {CATEGORIES.map((c) => (
                 <Link
                   key={c.slug}
                   href={`/category/${c.slug}`}
-                  className="rounded-md px-3 py-3 text-base hover:bg-accent"
+                  className="rounded-md px-3 py-3 text-base transition hover:bg-accent"
                 >
                   {c.name}
                 </Link>
               ))}
               <div className="my-3 h-px gold-line" />
-              <Link href="/track-order" className="rounded-md px-3 py-3 text-base hover:bg-accent">
+              <Link href="/track-order" className="rounded-md px-3 py-3 text-base transition hover:bg-accent">
                 Track Order
               </Link>
-              <Link href="/about" className="rounded-md px-3 py-3 text-base hover:bg-accent">
+              <Link href="/about" className="rounded-md px-3 py-3 text-base transition hover:bg-accent">
                 About
               </Link>
-              <Link href="/contact" className="rounded-md px-3 py-3 text-base hover:bg-accent">
+              <Link href="/contact" className="rounded-md px-3 py-3 text-base transition hover:bg-accent">
                 Contact
               </Link>
-              <Link href="/account" className="rounded-md px-3 py-3 text-base hover:bg-accent">
+              <Link href="/account" className="rounded-md px-3 py-3 text-base transition hover:bg-accent">
                 {user ? "My Account" : "Sign In"}
               </Link>
             </nav>
-            <div className="mt-auto flex items-center gap-2 border-t border-border pt-4 text-sm text-muted-foreground">
-              <ChevronDown className="h-4 w-4 rotate-[-90deg]" /> Menu
-            </div>
+            <p className="mt-auto border-t border-border pt-4 text-xs uppercase tracking-[0.25em] text-muted-foreground">
+              Stellora · Premium Finds
+            </p>
           </div>
         </div>
       )}
-    </header>
+    </>
   );
 }

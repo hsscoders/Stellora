@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { apiProduct, apiProducts } from "@/lib/server-api";
+import { apiProduct, apiProducts, apiProductReviews, apiMe } from "@/lib/server-api";
 import { ProductCard } from "@/components/stellora/product-card";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
 import { ProductGallery } from "@/components/stellora/product-detail-client";
 import { ProductPurchase } from "@/components/stellora/product-purchase";
+import { RecordRecentlyViewed } from "@/components/stellora/recently-viewed";
+import { ReviewsSection } from "@/components/stellora/reviews-section";
 import {
   Accordion,
   AccordionContent,
@@ -26,9 +28,29 @@ async function getProduct(slug: string) {
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const product = await getProduct(slug);
+  if (!product) return { title: "Product" };
+  const v = product.variants[0];
   return {
-    title: product ? product.name : "Product",
-    description: product?.shortDescription,
+    title: product.name,
+    description:
+      product.shortDescription ??
+      `Shop ${product.name} at Stellora — premium quality, carefully packed, delivered across India.`,
+    alternates: { canonical: `/product/${product.slug}` },
+    openGraph: {
+      type: "website",
+      title: `${product.name} · Stellora`,
+      description: product.shortDescription ?? undefined,
+      images: product.images[0]?.url ? [{ url: product.images[0].url }] : undefined,
+    },
+    twitter: {
+      card: "summary_large_image" as const,
+      title: product.name,
+      description: product.shortDescription ?? undefined,
+      images: product.images[0]?.url ? [product.images[0].url] : undefined,
+    },
+    other: v
+      ? ({ "product:price:amount": String(v.price), "product:price:currency": "INR" } as Record<string, string>)
+      : undefined,
   };
 }
 
@@ -44,8 +66,64 @@ export default async function ProductPage({
   const relatedRes = await apiProducts({ category: product.category?.slug ?? "", page: 1 }).catch(() => ({ products: [] as never[] }));
   const related = relatedRes.products.filter((p) => p.id !== product.id).slice(0, 4);
 
+  const [reviewsData, session] = await Promise.all([
+    apiProductReviews(product.id).catch(() => null),
+    apiMe().catch(() => ({ user: null })),
+  ]);
+
+  const v = product.variants.find((x) => x.stock > 0) ?? product.variants[0];
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const productJsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: siteUrl },
+          {
+            "@type": "ListItem",
+            position: 2,
+            name: product.category?.name ?? "Shop",
+            item: `${siteUrl}/category/${product.category?.slug ?? "shop"}`,
+          },
+          { "@type": "ListItem", position: 3, name: product.name, item: `${siteUrl}/product/${product.slug}` },
+        ],
+      },
+      ...(v
+        ? [
+            {
+              "@type": "Product",
+              name: product.name,
+              description: product.shortDescription ?? undefined,
+              sku: v.sku ?? undefined,
+              image: product.images.map((i) => i.url),
+              category: product.category?.name,
+              brand: { "@type": "Brand", name: "Stellora" },
+              offers: {
+                "@type": "Offer",
+                url: `${siteUrl}/product/${product.slug}`,
+                priceCurrency: "INR",
+                price: String(v.price),
+                availability:
+                  product.variants.some((x) => x.stock > 0)
+                    ? "https://schema.org/InStock"
+                    : "https://schema.org/OutOfStock",
+                itemCondition: "https://schema.org/NewCondition",
+              },
+            },
+          ]
+        : []),
+    ],
+  };
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+      <RecordRecentlyViewed productId={product.id} />
+      <script
+        type="application/ld+json"
+        async
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
+      />
       <nav aria-label="Breadcrumb" className="text-xs text-muted-foreground">
         <ol className="flex items-center gap-1.5">
           <li><Link href="/" className="hover:text-foreground">Home</Link></li>
@@ -74,7 +152,7 @@ export default async function ProductPage({
             {product.shortDescription}
           </p>
 
-          <ProductPurchase variants={product.variants} />
+          <ProductPurchase variants={product.variants} productId={product.id} />
 
           <div className="mt-8 space-y-3 rounded-lg border border-border/60 bg-card p-4 text-sm text-muted-foreground">
             <p className="flex items-center gap-2.5">
@@ -140,6 +218,16 @@ export default async function ProductPage({
           </Accordion>
         </div>
       </div>
+
+      {reviewsData && (
+        <ReviewsSection
+          productId={product.id}
+          summary={reviewsData.summary}
+          reviews={reviewsData.reviews}
+          isLoggedIn={!!session.user}
+          myPendingReview={reviewsData.myPendingReview}
+        />
+      )}
 
       {related.length > 0 && (
         <section className="mt-20">

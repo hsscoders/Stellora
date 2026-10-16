@@ -264,7 +264,6 @@ export function ProductForm({
             <div className="grid grid-cols-3 gap-3">
               {values.images.map((img, i) => (
                 <div key={i} className="group relative aspect-square overflow-hidden rounded-md border border-border">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={img.url} alt="" className="h-full w-full object-cover" />
                   <button
                     type="button"

@@ -4,11 +4,13 @@ const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "X-Frame-Options", value: "DENY" },
+  // frame-ancestors * lets the sandbox preview panel embed the site in an
+  // iframe (X-Frame-Options: DENY would render a blank preview for users).
+  { key: "Content-Security-Policy", value: "frame-ancestors *" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), payment=()",
+    value: "camera=(), microphone=(), geolocation=()",
   },
   { key: "X-DNS-Prefetch-Control", value: "on" },
 ];
@@ -17,8 +19,11 @@ const nextConfig: NextConfig = {
   reactStrictMode: false,
   // Dev-only: allow the HMR websocket / dev resources from these hosts.
   // Without this, Next 16 blocks /_next/hmr as "cross-origin" and hydration
-  // never completes (pages render but no client interactivity).
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  // never completes (pages render but no client interactivity). The wildcards
+  // cover the sandbox preview hosts (preview-*.space-z.ai) — without them the
+  // preview panel loads the page but every button stays dead with origin
+  // errors in the console.
+  allowedDevOrigins: ["127.0.0.1", "localhost", "*.space-z.ai", "*.z.ai"],
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
     return [

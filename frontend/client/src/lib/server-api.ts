@@ -206,3 +206,35 @@ export async function apiMyOrders(): Promise<ApiOrderListItem[]> {
 export async function apiMyOrder(orderNumber: string): Promise<ApiOrderDetail> {
   return serverGet<ApiOrderDetail>(`/api/orders/${encodeURIComponent(orderNumber)}`);
 }
+
+/* ---------- Reviews (server-rendered on the product page) ---------- */
+
+export type ApiReviewSummary = {
+  average: number;
+  count: number;
+  distribution: Record<string, number>;
+};
+
+export type ApiReviewItem = {
+  id: string;
+  authorName: string;
+  rating: number;
+  title: string;
+  body: string;
+  isVerifiedPurchase: boolean;
+  status: string;
+  isMine: boolean;
+  createdAt: string;
+};
+
+export type ApiReviewsPayload = {
+  summary: ApiReviewSummary;
+  reviews: ApiReviewItem[];
+  myPendingReview: { rating: number; title: string; body: string } | null;
+};
+
+export async function apiProductReviews(productId: string): Promise<ApiReviewsPayload> {
+  return serverGet<ApiReviewsPayload>(
+    `/api/products/${encodeURIComponent(productId)}/reviews`
+  );
+}

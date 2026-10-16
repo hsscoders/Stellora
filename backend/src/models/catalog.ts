@@ -68,6 +68,7 @@ const ProductSchema = new Schema(
     isFeatured: { type: Boolean, default: false },
     isNewArrival: { type: Boolean, default: false },
     isBestSeller: { type: Boolean, default: false },
+    isTrending: { type: Boolean, default: false },
     variants: { type: [VariantSchema], default: [] },
     images: { type: [ImageSchema], default: [] },
   },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Ban, CheckCircle2 } from "lucide-react";
+import { Search, Ban, CheckCircle2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,9 @@ export default function AdminCustomersPage() {
     <div className="space-y-6">
       <div>
         <h1 className="font-serif text-3xl font-medium">Customers</h1>
+        <a href="/api/admin/export/customers" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
+          <Download className="h-4 w-4" /> Export CSV
+        </a>
         <p className="mt-1 text-sm text-muted-foreground">
           Privacy first: passwords are never displayed or accessible, and records are never deleted
           (orders must remain accurate).

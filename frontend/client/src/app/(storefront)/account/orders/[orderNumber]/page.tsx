@@ -6,6 +6,7 @@ import { formatINR, formatDateTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
+import { OrderActions } from "@/components/stellora/order-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -163,6 +164,17 @@ export default async function OrderDetailPage({
           {order.shipCountry} · {order.shipPhone}
         </p>
       </section>
+
+      <OrderActions
+        orderNumber={order.orderNumber}
+        status={order.status}
+        items={order.items.map((i) => ({
+          id: i.id,
+          productName: i.productName,
+          variantName: i.variantName,
+          quantity: i.quantity,
+        }))}
+      />
 
       <div className="flex gap-3">
         <Button asChild variant="outline" className="rounded-full">

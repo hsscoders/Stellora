@@ -88,7 +88,6 @@ export function PaymentModal({
       setPrepError("Network error while contacting the payment gateway.");
       setStage("declined");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderNumber, onSuccess]);
 
   useEffect(() => {

@@ -13,6 +13,7 @@ import { cartRouter, wishlistRouter } from "./routes/cart";
 import { commerceRouter } from "./routes/commerce";
 import { adminRouter } from "./routes/admin";
 import { paymentsRouter } from "./routes/payments";
+import { engagementRouter } from "./routes/engagement";
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use(
 app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 
 // API routers (paths inside routers include their prefixes: /auth, /account, /cart, /admin, ...)
+app.use("/api", engagementRouter);
 app.use("/api", storefrontRouter);
 app.use("/api", authRouter);
 app.use("/api", accountRouter);

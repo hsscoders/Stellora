@@ -42,6 +42,7 @@ export interface ProductFormValues {
   isFeatured: boolean;
   isNewArrival: boolean;
   isBestSeller: boolean;
+  isTrending: boolean;
   images: { url: string; alt?: string; sortOrder?: number }[];
   variants: VariantForm[];
 }
@@ -68,6 +69,7 @@ export function ProductForm({
       isFeatured: false,
       isNewArrival: false,
       isBestSeller: false,
+      isTrending: false,
       images: [],
       variants: [{ name: "", sku: "", price: "", compareAtPrice: "", stock: "0", lowStockThreshold: "5", isActive: true }],
     }
@@ -245,6 +247,7 @@ export function ProductForm({
               { key: "isFeatured" as const, label: "Featured (homepage Featured Selections)" },
               { key: "isNewArrival" as const, label: "New arrival (prioritised in New Arrivals)" },
               { key: "isBestSeller" as const, label: "Best seller (Best Sellers section)" },
+      { key: "isTrending" as const, label: "Trending (Trending Now section)" },
             ].map((b) => (
               <div key={b.key} className="flex items-center gap-2">
                 <Checkbox
@@ -264,7 +267,6 @@ export function ProductForm({
             <div className="grid grid-cols-3 gap-3">
               {values.images.map((img, i) => (
                 <div key={i} className="group relative aspect-square overflow-hidden rounded-md border border-border">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={img.url} alt="" className="h-full w-full object-cover" />
                   <button
                     type="button"

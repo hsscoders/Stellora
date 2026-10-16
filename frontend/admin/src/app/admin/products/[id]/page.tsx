@@ -31,6 +31,7 @@ export default async function EditProductPage({
     isFeatured: product.isFeatured,
     isNewArrival: product.isNewArrival,
     isBestSeller: product.isBestSeller,
+    isTrending: (product as { isTrending?: boolean }).isTrending ?? false,
     images: product.images.map((i) => ({ url: i.url, alt: i.alt ?? undefined })),
     variants: product.variants.map((v) => ({
       id: v.id,

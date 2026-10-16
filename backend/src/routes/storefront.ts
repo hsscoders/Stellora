@@ -173,6 +173,7 @@ storefrontRouter.get(
     if (req.query.featured === "1") flags.isFeatured = true;
     if (req.query.new === "1") flags.isNewArrival = true;
     if (req.query.best === "1") flags.isBestSeller = true;
+    if (req.query.trending === "1") flags.isTrending = true;
     Object.assign(where, flags);
     if (query.q) {
       const rx = new RegExp(escapeRegex(query.q), "i");

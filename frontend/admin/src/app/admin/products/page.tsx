@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Archive, Search } from "lucide-react";
+import { Plus, Pencil, Archive, Search, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +69,9 @@ export default function AdminProductsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-3xl font-medium">Products</h1>
+        <a href="/api/admin/export/products" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
+          <Download className="h-4 w-4" /> Export CSV
+        </a>
         <Button asChild className="rounded-full bg-primary hover:bg-primary/90">
           <Link href="/admin/products/new">
             <Plus className="h-4 w-4" /> New product
