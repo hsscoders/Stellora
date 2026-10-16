@@ -4,6 +4,7 @@ import { ArrowUpRight } from "lucide-react";
 import { formatINR } from "@/lib/utils";
 import type { ProductCardData } from "@/lib/types";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
+import { QuickViewButton } from "@/components/stellora/quick-view";
 
 export function ProductCard({
   product,
@@ -59,7 +60,7 @@ export function ProductCard({
               {lowStock ? `Only ${totalStock} left` : "In stock"}
             </span>
           )}
-          {/* Slide-up quick action — desktop pointer devices only */}
+          {/* Slide-up quick actions — desktop pointer devices only */}
           <span className="quick-bar absolute inset-x-0 bottom-0 hidden items-center justify-between bg-background/92 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary backdrop-blur-sm sm:flex">
             View Details
             <ArrowUpRight className="h-3.5 w-3.5" />
@@ -68,6 +69,10 @@ export function ProductCard({
       </Link>
 
       <WishlistButton productId={product.id} className="absolute right-3 top-3" />
+      <QuickViewButton
+        product={product}
+        className="absolute bottom-[4.6rem] right-3 hidden items-center gap-1.5 rounded-full border border-border/70 bg-background/92 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition hover:border-primary hover:text-primary sm:flex"
+      />
 
       <div className="px-1 pt-3">
         <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-muted-foreground">

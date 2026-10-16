@@ -61,7 +61,7 @@ export function ProductPurchase({
         )}
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
-        Taxes included · {selected.stock > 0 ? "In stock" : "Out of stock"}
+        Taxes included · Free 7-day returns
       </p>
 
       <Separator className="my-6" />

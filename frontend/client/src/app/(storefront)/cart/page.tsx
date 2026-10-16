@@ -3,14 +3,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Trash2, Minus, Plus, ShoppingBag, ArrowRight } from "lucide-react";
+import { Trash2, Minus, Plus, ShoppingBag, ArrowRight, Tag, X, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/stellora/empty-state";
 import { useStore } from "@/lib/store";
 import { formatINR } from "@/lib/utils";
+
+const COUPON_KEY = "stellora-coupon";
 
 export default function CartPage() {
   const cart = useStore((s) => s.cart);
@@ -19,6 +22,9 @@ export default function CartPage() {
   const updateItem = useStore((s) => s.updateItem);
   const removeItem = useStore((s) => s.removeItem);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [couponInput, setCouponInput] = useState("");
+  const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
 
   useEffect(() => {
     refreshCart();
@@ -35,6 +41,41 @@ export default function CartPage() {
     await removeItem(itemId);
     setBusyId(null);
     toast.success(`Removed ${name}`);
+  };
+
+  const applyCoupon = async () => {
+    const code = couponInput.trim();
+    if (!code) return;
+    setCouponBusy(true);
+    try {
+      const res = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const json = await res.json();
+      if (json.ok && json.data.valid) {
+        const applied = { code: json.data.code as string, discount: json.data.discount as number };
+        setCoupon(applied);
+        setCouponInput("");
+        window.sessionStorage.setItem(COUPON_KEY, applied.code);
+        toast.success(`Coupon ${applied.code} applied — you save ${formatINR(applied.discount)}`);
+      } else {
+        setCoupon(null);
+        window.sessionStorage.removeItem(COUPON_KEY);
+        toast.error(json.data?.message ?? json.error?.message ?? "Coupon could not be applied");
+      }
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setCouponBusy(false);
+    }
+  };
+
+  const removeCoupon = () => {
+    setCoupon(null);
+    window.sessionStorage.removeItem(COUPON_KEY);
+    toast.success("Coupon removed");
   };
 
   if (cartLoading && !cart) {
@@ -71,6 +112,8 @@ export default function CartPage() {
 
   const subtotal = cart.subtotal;
   const FREE_SHIPPING_THRESHOLD = 1999;
+  const discount = coupon?.discount ?? 0;
+  const payable = Math.max(subtotal - discount, 0);
   const progress = Math.min(100, Math.round((subtotal / FREE_SHIPPING_THRESHOLD) * 100));
   const away = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
 
@@ -192,13 +235,74 @@ export default function CartPage() {
                 <span className="text-muted-foreground">Subtotal</span>
                 <span className="font-medium">{formatINR(subtotal)}</span>
               </div>
+              {coupon && discount > 0 && (
+                <div className="flex justify-between text-primary">
+                  <span className="flex items-center gap-1.5">
+                    <Tag className="h-3.5 w-3.5" /> Coupon {coupon.code}
+                  </span>
+                  <span className="font-medium">−{formatINR(discount)}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Shipping</span>
-                <span className="text-muted-foreground">Calculated at checkout</span>
+                <span className={payable >= FREE_SHIPPING_THRESHOLD ? "font-medium text-primary" : "text-muted-foreground"}>
+                  {payable >= FREE_SHIPPING_THRESHOLD ? "FREE" : "Calculated at checkout"}
+                </span>
               </div>
             </div>
             <Separator className="my-4" />
-            <Button asChild size="lg" className="w-full rounded-full bg-primary hover:bg-primary/90">
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-semibold uppercase tracking-[0.14em]">Total</span>
+              <span className="text-xl font-bold tnum">{formatINR(payable)}</span>
+            </div>
+            {coupon && discount > 0 && (
+              <p className="mt-1.5 text-right text-xs font-medium text-primary tnum">
+                You save {formatINR(discount)} with {coupon.code}
+              </p>
+            )}
+
+            {/* Coupon code */}
+            {coupon ? (
+              <div className="mt-4 flex items-center justify-between rounded-lg border border-primary/30 bg-accent/50 px-3 py-2.5">
+                <p className="flex items-center gap-2 text-sm font-medium text-primary">
+                  <Tag className="h-3.5 w-3.5" /> {coupon.code} applied
+                </p>
+                <button
+                  onClick={removeCoupon}
+                  aria-label={`Remove coupon ${coupon.code}`}
+                  className="text-muted-foreground transition hover:text-destructive"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4">
+                <div className="flex gap-2">
+                  <Input
+                    value={couponInput}
+                    onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => e.key === "Enter" && applyCoupon()}
+                    placeholder="Coupon code e.g. WELCOME10"
+                    aria-label="Coupon code"
+                    className="h-10 uppercase"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={couponBusy || !couponInput.trim()}
+                    onClick={applyCoupon}
+                    className="btn-press shrink-0 rounded-full border-primary/50 px-5"
+                  >
+                    {couponBusy ? "…" : "Apply"}
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Try <button type="button" className="font-semibold text-primary underline underline-offset-2" onClick={() => setCouponInput("WELCOME10")}>WELCOME10</button> or <button type="button" className="font-semibold text-primary underline underline-offset-2" onClick={() => setCouponInput("FLAT200")}>FLAT200</button>
+                </p>
+              </div>
+            )}
+
+            <Button asChild size="lg" className="btn-sheen btn-gradient mt-5 w-full rounded-full font-semibold text-primary-foreground shadow-lg shadow-primary/25">
               <Link href="/checkout">
                 Proceed to Checkout <ArrowRight className="h-4 w-4" />
               </Link>
@@ -208,7 +312,8 @@ export default function CartPage() {
                 <ShoppingBag className="h-4 w-4" /> Continue shopping
               </Link>
             </Button>
-            <p className="mt-4 text-center text-xs text-muted-foreground">
+            <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5 text-primary" />
               Secure checkout · Taxes included
             </p>
           </div>

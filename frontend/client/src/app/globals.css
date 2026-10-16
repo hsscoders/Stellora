@@ -400,6 +400,105 @@
     white-space: nowrap;
     animation: stellora-marquee 28s linear infinite;
   }
+
+  /* ---- Detailing system (Stellora-8: professional finish) ---- */
+
+  /* Bottom scrim so captions stay readable on light category photos */
+  .scrim-bottom {
+    background: linear-gradient(
+      180deg,
+      transparent 42%,
+      color-mix(in srgb, #140a0e 42%, transparent) 72%,
+      color-mix(in srgb, #140a0e 78%, transparent) 100%
+    );
+  }
+
+  /* Animated underline for desktop nav links */
+  .nav-underline {
+    position: relative;
+  }
+  .nav-underline::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -6px;
+    height: 1.5px;
+    background: var(--primary);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .nav-underline:hover::after,
+  .nav-underline[aria-current="page"]::after {
+    transform: scaleX(1);
+  }
+
+  /* Live "in stock" pulse dot */
+  @keyframes stellora-pulse-dot {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, #2e9e5b 55%, transparent); }
+    70% { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .stock-dot {
+    background: #2e9e5b;
+    animation: stellora-pulse-dot 1.8s ease-out infinite;
+  }
+  .stock-dot-low {
+    background: var(--primary);
+    animation-name: stellora-pulse-dot;
+    animation-duration: 1.1s;
+  }
+  .stock-dot::after {
+    content: none;
+  }
+
+  /* CTA success morph: button briefly confirms the add */
+  @keyframes stellora-success-flash {
+    0% { background-color: var(--primary); }
+    30% { background-color: #1f8a4c; }
+    100% { background-color: var(--primary); }
+  }
+  .atc-success {
+    animation: stellora-success-flash 1.5s ease both;
+  }
+
+  /* Gradient depth for the hero CTA — richer than a flat fill */
+  .btn-gradient {
+    background-image: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--primary) 92%, #fff 8%),
+      var(--primary) 55%,
+      color-mix(in srgb, var(--primary) 82%, #000 18%)
+    );
+    background-size: 150% 150%;
+    background-position: 0% 50%;
+    transition: background-position 0.5s ease, box-shadow 0.35s ease;
+  }
+  .btn-gradient:hover {
+    background-position: 95% 50%;
+  }
+
+  /* Small pill chip used for payment badges / trust chips */
+  .pay-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    background: color-mix(in srgb, var(--card) 70%, transparent);
+    color: var(--muted-foreground);
+    border-radius: 4px;
+    padding: 0.2rem 0.5rem;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    line-height: 1.4;
+  }
+
+  /* Value props marquee pauses on hover */
+  .marquee-paused:hover .marquee-track {
+    animation-play-state: paused;
+  }
 }
 
 /* Restrained, reduced-motion-respecting behavior */
@@ -426,6 +525,16 @@
   .js .reveal {
     opacity: 1;
     transform: none;
+  }
+  .stock-dot,
+  .stock-dot-low {
+    animation: none;
+  }
+  .atc-success {
+    animation: none;
+  }
+  .marquee-track {
+    animation: none;
   }
 }
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { BadgeCheck, Banknote, RotateCcw, ShieldCheck, Star, Truck } from "lucide-react";
 import { apiProduct, apiProducts, apiProductReviews, apiMe } from "@/lib/server-api";
 import { ProductCard } from "@/components/stellora/product-card";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
@@ -7,13 +8,15 @@ import { ProductGallery } from "@/components/stellora/product-detail-client";
 import { ProductPurchase } from "@/components/stellora/product-purchase";
 import { RecordRecentlyViewed } from "@/components/stellora/recently-viewed";
 import { ReviewsSection } from "@/components/stellora/reviews-section";
+import { DeliveryEstimator } from "@/components/stellora/delivery-estimator";
+import { StickyBuyBar } from "@/components/stellora/sticky-buy-bar";
+import { ShareButton } from "@/components/stellora/share-button";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { ShieldCheck, Truck, RotateCcw } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -72,6 +75,8 @@ export default async function ProductPage({
   ]);
 
   const v = product.variants.find((x) => x.stock > 0) ?? product.variants[0];
+  const inStock = product.variants.some((x) => x.stock > 0);
+  const ratingSummary = reviewsData?.summary;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
   const productJsonLd = {
     "@context": "https://schema.org",
@@ -145,29 +150,71 @@ export default async function ProductPage({
             <h1 className="font-serif text-3xl font-medium leading-tight sm:text-4xl">
               {product.name}
             </h1>
-            <WishlistButton productId={product.id} className="shrink-0" />
+            <div className="flex shrink-0 items-center gap-2">
+              <ShareButton path={`/product/${product.slug}`} name={product.name} />
+              <WishlistButton productId={product.id} className="shrink-0" />
+            </div>
           </div>
+
+          {ratingSummary && ratingSummary.count > 0 && (
+            <a
+              href="#reviews"
+              className="mt-2.5 flex w-fit items-center gap-1.5 text-xs text-muted-foreground transition hover:text-foreground"
+            >
+              <span className="flex items-center gap-0.5" aria-hidden>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Star
+                    key={i}
+                    className={`h-3.5 w-3.5 ${
+                      i < Math.round(ratingSummary.average)
+                        ? "fill-primary text-primary"
+                        : "text-border"
+                    }`}
+                  />
+                ))}
+              </span>
+              <span className="font-semibold text-foreground tnum">
+                {ratingSummary.average.toFixed(1)}
+              </span>
+              <span className="tnum">({ratingSummary.count} review{ratingSummary.count === 1 ? "" : "s"})</span>
+            </a>
+          )}
 
           <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
             {product.shortDescription}
           </p>
 
-          <ProductPurchase variants={product.variants} productId={product.id} />
-
-          <div className="mt-8 space-y-3 rounded-lg border border-border/60 bg-card p-4 text-sm text-muted-foreground">
-            <p className="flex items-center gap-2.5">
-              <ShieldCheck className="h-4 w-4 text-primary" /> Quality checked before dispatch
-            </p>
-            <p className="flex items-center gap-2.5">
-              <Truck className="h-4 w-4 text-primary" /> Careful, protective packaging
-            </p>
-            <p className="flex items-center gap-2.5">
-              <RotateCcw className="h-4 w-4 text-primary" /> Simple returns under our{" "}
-              <Link href="/policies/returns" className="underline hover:text-foreground">
-                return policy
-              </Link>
-            </p>
+          <div id="purchase-panel" className="mt-2 scroll-mt-28">
+            <ProductPurchase variants={product.variants} productId={product.id} />
           </div>
+
+          <div className="mt-6">
+            <DeliveryEstimator unitPrice={Number(v?.price ?? 0)} />
+          </div>
+
+          {/* Four-up trust strip — the assurances shoppers scan for */}
+          <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border/60 bg-border/60 sm:grid-cols-4">
+            {[
+              { icon: Truck, title: "Free Shipping", note: "On orders over ₹1,999" },
+              { icon: ShieldCheck, title: "Secure Payment", note: "Encrypted checkout" },
+              { icon: RotateCcw, title: "7-Day Returns", note: "No-question refunds" },
+              { icon: BadgeCheck, title: "Quality Checked", note: "Inspected pre-dispatch" },
+            ].map((t) => (
+              <div
+                key={t.title}
+                className="group flex flex-col items-center gap-1.5 bg-card px-3 py-4 text-center transition-colors hover:bg-accent/50"
+              >
+                <t.icon className="h-5 w-5 text-primary transition-transform duration-300 group-hover:scale-110" />
+                <p className="text-xs font-semibold">{t.title}</p>
+                <p className="text-[11px] leading-tight text-muted-foreground">{t.note}</p>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+            <Banknote className="h-3.5 w-3.5 text-primary" />
+            Pay online via card / UPI, or cash on delivery
+          </p>
 
           <Accordion type="multiple" className="mt-8">
             <AccordionItem value="description">
@@ -220,12 +267,25 @@ export default async function ProductPage({
       </div>
 
       {reviewsData && (
-        <ReviewsSection
-          productId={product.id}
-          summary={reviewsData.summary}
-          reviews={reviewsData.reviews}
-          isLoggedIn={!!session.user}
-          myPendingReview={reviewsData.myPendingReview}
+        <div id="reviews" className="mt-16 scroll-mt-28">
+          <ReviewsSection
+            productId={product.id}
+            summary={reviewsData.summary}
+            reviews={reviewsData.reviews}
+            isLoggedIn={!!session.user}
+            myPendingReview={reviewsData.myPendingReview}
+          />
+        </div>
+      )}
+
+      {/* Mobile-only sticky purchase bar — always one tap from checkout */}
+      {v && (
+        <StickyBuyBar
+          variantId={v.id}
+          price={Number(v.price)}
+          title={product.name}
+          imageUrl={product.images[0]?.url ?? "/images/placeholder.svg"}
+          inStock={inStock}
         />
       )}
 

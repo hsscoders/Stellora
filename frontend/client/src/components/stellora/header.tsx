@@ -140,7 +140,8 @@ export function Header({ announcement }: { announcement: string | null }) {
           <nav className="ml-6 hidden items-center gap-7 text-[13px] font-medium uppercase tracking-[0.14em] lg:flex">
             <Link
               href="/shop"
-              className={`transition-colors hover:text-primary ${pathname === "/shop" ? "text-primary" : "text-foreground/80"}`}
+              aria-current={pathname === "/shop" ? "page" : undefined}
+              className={`nav-underline transition-colors hover:text-primary ${pathname === "/shop" ? "text-primary" : "text-foreground/80"}`}
             >
               Shop All
             </Link>
@@ -148,7 +149,8 @@ export function Header({ announcement }: { announcement: string | null }) {
               <Link
                 key={c.slug}
                 href={`/category/${c.slug}`}
-                className={`transition-colors hover:text-primary ${pathname === `/category/${c.slug}` ? "text-primary" : "text-foreground/80"}`}
+                aria-current={pathname === `/category/${c.slug}` ? "page" : undefined}
+                className={`nav-underline transition-colors hover:text-primary ${pathname === `/category/${c.slug}` ? "text-primary" : "text-foreground/80"}`}
               >
                 {c.name}
               </Link>

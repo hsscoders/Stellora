@@ -88,7 +88,20 @@ export function Footer({ settings }: { settings: Record<string, string> }) {
         </div>
 
         <div className="mt-10 border-t border-border pt-6">
-          <p className="text-center text-xs text-muted-foreground">
+          {/* Accepted payments — instant trust signal above the fold line */}
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
+              100% Secure Payments · Accepted Here
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {["UPI", "VISA", "MASTERCARD", "RUPAY", "NET BANKING", "COD"].map((m) => (
+                <span key={m} className="pay-chip">
+                  {m}
+                </span>
+              ))}
+            </div>
+          </div>
+          <p className="mt-5 text-center text-xs text-muted-foreground">
             {contact
               ? `Customer care: ${[settings.contact_email, settings.contact_phone].filter(Boolean).join(" · ")}`
               : "Customer care details will be published here once confirmed by the store."}

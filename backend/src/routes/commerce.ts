@@ -182,6 +182,11 @@ commerceRouter.post(
   "/coupons/validate",
   handle(async (req, res) => {
     assertSameOrigin(req);
+    // Throttle code guessing: 12 validations / 10 min / IP.
+    const rl = rateLimit(`coupon:${getClientIp(req)}`, 12, 10 * 60 * 1000);
+    if (!rl.allowed) {
+      return fail(res, "RATE_LIMITED", "Too many coupon attempts. Please try again later.", 429);
+    }
     const code = String(req.body?.code ?? "");
     if (!code) return fail(res, "VALIDATION_ERROR", "Enter a coupon code.", 422);
 

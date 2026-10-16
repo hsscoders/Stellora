@@ -5,6 +5,7 @@ import { ProductCard } from "@/components/stellora/product-card";
 import { SectionHeading } from "@/components/stellora/section-heading";
 import { Reveal } from "@/components/stellora/reveal";
 import { RecentlyViewedSection } from "@/components/stellora/recently-viewed";
+import { StatCounter } from "@/components/stellora/stat-counter";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Truck, Headset, BadgeCheck } from "lucide-react";
 
@@ -85,7 +86,7 @@ export default async function HomePage() {
                         4.8 rated by 12,000+ shoppers
                       </span>
                       <span className="hidden h-3 w-px bg-border sm:block" aria-hidden />
-                      <span>Free shipping over ₹999</span>
+                      <span>Free shipping over ₹1,999</span>
                     </div>
                   </>
                 )}
@@ -94,6 +95,35 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Brand values marquee — quiet, continuous reassurance */}
+      <div
+        className="marquee-paused overflow-hidden border-b border-border/60 bg-secondary/50 py-2.5"
+        aria-hidden
+      >
+        <div className="marquee-track">
+          {[0, 1].map((copy) => (
+            <div key={copy} className="flex items-center">
+              {[
+                "Free shipping over ₹1,999",
+                "7-day easy returns",
+                "Secure payments · UPI · Cards · COD",
+                "Quality checked before dispatch",
+                "Real humans on support",
+                "Cash on delivery available",
+              ].map((v) => (
+                <span
+                  key={`${copy}-${v}`}
+                  className="flex items-center gap-3 px-6 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground"
+                >
+                  <span className="h-1 w-1 rotate-45 bg-primary/70" />
+                  {v}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Categories */}
       <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
@@ -115,10 +145,11 @@ export default async function HomePage() {
                     sizes="(max-width: 1024px) 50vw, 25vw"
                     className="object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-foreground/75 via-foreground/10 to-transparent transition-opacity duration-500 group-hover:opacity-90" />
+                  {/* Constant dark scrim — captions stay readable in BOTH themes */}
+                  <div className="scrim-bottom absolute inset-0 transition-opacity duration-500 group-hover:opacity-95" />
                   <div className="absolute inset-x-0 bottom-0 p-4 transition-transform duration-500 sm:p-5 group-hover:-translate-y-1">
                     <h3 className="font-serif text-lg font-medium text-white sm:text-xl">{c.name}</h3>
-                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/80">
+                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/85">
                       {c.description}
                     </p>
                     <p className="mt-2.5 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white opacity-0 transition-all duration-500 group-hover:opacity-100">
@@ -257,6 +288,24 @@ export default async function HomePage() {
               <Link href="/about">Read our story</Link>
             </Button>
           </div>
+        </div>
+      </section>
+
+      {/* Numbers that build trust — animated on reveal */}
+      <section className="border-b border-border/60 bg-card/50">
+        <div className="mx-auto grid max-w-7xl grid-cols-2 gap-y-8 px-4 py-12 sm:px-6 lg:grid-cols-4">
+          <Reveal>
+            <StatCounter value={12000} suffix="+" label="Happy Shoppers" />
+          </Reveal>
+          <Reveal delay={90}>
+            <StatCounter value={4.8} decimals={1} suffix="★" label="Average Rating" />
+          </Reveal>
+          <Reveal delay={180}>
+            <StatCounter value={500} suffix="+" label="Curated Styles" />
+          </Reveal>
+          <Reveal delay={270}>
+            <StatCounter value={24} suffix="h" label="Dispatch Time" />
+          </Reveal>
         </div>
       </section>
 

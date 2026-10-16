@@ -1,17 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ShoppingBag, Zap, BellRing } from "lucide-react";
+import { ShoppingBag, Zap, BellRing, Check, Loader2, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QuantityStepper } from "@/components/stellora/quantity-stepper";
 import { useStore } from "@/lib/store";
+import { formatINR } from "@/lib/utils";
 import type { ProductCardData } from "@/lib/types";
 
 type Variant = ProductCardData["variants"][number];
 
+/**
+ * Purchase panel for the PDP.
+ * Detailing: price-aware primary CTA (gradient + sheen), success morph,
+ * honest stock meter, express checkout secondary, inline confirmation strip.
+ */
 export function AddToCartPanel({
   variants,
   selected,
@@ -28,12 +34,16 @@ export function AddToCartPanel({
   const refreshCart = useStore((s) => s.refreshCart);
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(false);
+  const addedTimer = useRef<number | undefined>(undefined);
   const [notifyEmail, setNotifyEmail] = useState("");
   const [notifying, setNotifying] = useState(false);
   const [notified, setNotified] = useState(false);
 
+  useEffect(() => () => window.clearTimeout(addedTimer.current), []);
+
   const add = async (goToCheckout: boolean) => {
-    if (!selected) return;
+    if (!selected || busy) return;
     setBusy(true);
     const result = await addToCart(selected.id, qty);
     setBusy(false);
@@ -44,6 +54,10 @@ export function AddToCartPanel({
         router.push("/checkout");
         return;
       }
+      // Success morph on the primary CTA + inline confirmation strip.
+      setAdded(true);
+      window.clearTimeout(addedTimer.current);
+      addedTimer.current = window.setTimeout(() => setAdded(false), 1800);
       toast.success("Added to cart", {
         description: `${selected.name} × ${qty}`,
         action: { label: "View cart", onClick: () => router.push("/cart") },
@@ -54,6 +68,9 @@ export function AddToCartPanel({
   };
 
   const outOfStock = !selected || selected.stock === 0;
+  const lowStock = !outOfStock && selected.stock <= 5;
+  const unit = selected ? Number(selected.price) : 0;
+  const lineTotal = unit * qty;
 
   const registerAlert = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,40 +98,101 @@ export function AddToCartPanel({
 
   return (
     <div className="space-y-4">
+      {/* Stock meter — honest, glanceable, alive */}
+      <div className="flex items-center gap-2.5 text-sm" role="status">
+        {outOfStock ? (
+          <>
+            <span className="h-2 w-2 rounded-full bg-muted-foreground/60" aria-hidden />
+            <span className="text-muted-foreground">Out of stock — restocking soon</span>
+          </>
+        ) : lowStock ? (
+          <>
+            <span className="stock-dot stock-dot-low h-2 w-2 rounded-full" aria-hidden />
+            <span className="font-medium text-primary">
+              Hurry — only {selected.stock} left in stock
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="stock-dot h-2 w-2 rounded-full" aria-hidden />
+            <span className="text-muted-foreground">
+              <span className="font-medium text-foreground">In stock</span> · dispatches within 24
+              hours
+            </span>
+          </>
+        )}
+      </div>
+
       <div className="flex items-center gap-3">
-        <span className="text-sm font-medium">Quantity</span>
+        <span className="text-sm font-medium">Qty</span>
         <QuantityStepper
           value={qty}
           onChange={setQty}
           max={Math.max(1, Math.min(10, maxStock))}
         />
-        {selected && selected.stock > 0 && selected.stock <= 5 && (
-          <span className="text-xs font-medium text-destructive">
-            Only {selected.stock} left
+        {selected && !outOfStock && (
+          <span className="ml-auto text-sm text-muted-foreground tnum">
+            Total <span className="font-semibold text-foreground">{formatINR(lineTotal)}</span>
           </span>
         )}
       </div>
-      <div className="flex flex-col gap-3 sm:flex-row">
+
+      {/* Stacked, full-width CTAs — primary action is unmistakable */}
+      <div className="flex flex-col gap-3">
         <Button
           size="lg"
           disabled={busy || outOfStock}
           onClick={() => add(false)}
-          className="btn-press flex-1 rounded-full bg-primary text-sm tracking-wide hover:bg-primary/90"
+          className={`btn-sheen btn-gradient btn-press relative h-14 w-full rounded-full text-[15px] font-semibold tracking-wide text-primary-foreground shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 ${
+            added ? "atc-success" : ""
+          }`}
         >
-          <ShoppingBag className="h-4 w-4" />
-          {outOfStock ? "Out of Stock" : busy ? "Adding…" : "Add to Cart"}
+          {busy ? (
+            <>
+              <Loader2 className="h-4.5 w-4.5 animate-spin" /> Adding…
+            </>
+          ) : added ? (
+            <>
+              <Check className="h-5 w-5" /> Added to Cart
+            </>
+          ) : (
+            <>
+              <ShoppingBag className="h-4.5 w-4.5" />
+              Add to Cart
+              <span className="tnum opacity-80">· {formatINR(lineTotal)}</span>
+            </>
+          )}
         </Button>
         <Button
           size="lg"
           variant="outline"
           disabled={busy || outOfStock}
           onClick={() => add(true)}
-          className="btn-press flex-1 rounded-full border-primary/50 text-sm tracking-wide hover:bg-accent"
+          className="btn-press h-14 w-full rounded-full border-primary/40 text-[15px] font-semibold tracking-wide hover:border-primary hover:bg-accent"
         >
           <Zap className="h-4 w-4" />
-          {busy ? "Please wait…" : "Buy Now"}
+          {busy ? "Please wait…" : "Buy It Now"}
         </Button>
       </div>
+
+      {/* Inline confirmation strip — reinforces the add without leaving the page */}
+      {added && (
+        <div className="anim-fade-up flex items-center justify-between rounded-lg border border-primary/30 bg-accent/60 px-4 py-3">
+          <p className="flex items-center gap-2 text-sm">
+            <Check className="h-4 w-4 text-primary" />
+            <span className="font-medium">Added to your cart</span>
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-full px-3 text-primary hover:bg-accent"
+            onClick={() => router.push("/cart")}
+          >
+            View Cart <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+
       {outOfStock && (
         <div className="rounded-lg border border-border/70 bg-card p-4">
           {notified ? (

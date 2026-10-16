@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProductCardData } from "@/lib/types";
 
@@ -85,28 +86,37 @@ export function VariantPicker({
   if (variants.length <= 1) return null;
   return (
     <div>
-      <p className="text-sm font-medium">
-        Option: <span className="text-muted-foreground">{selected?.name}</span>
-      </p>
-      <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Product options">
-        {variants.map((v) => (
-          <button
-            key={v.id}
-            role="radio"
-            aria-checked={selected?.id === v.id}
-            onClick={() => onSelect(v)}
-            disabled={v.stock === 0}
-            className={cn(
-              "rounded-md border px-4 py-2 text-sm transition",
-              selected?.id === v.id
-                ? "border-primary bg-accent font-medium text-accent-foreground"
-                : "border-border hover:border-primary/60",
-              v.stock === 0 && "cursor-not-allowed text-muted-foreground line-through opacity-60"
-            )}
-          >
-            {v.name}
-          </button>
-        ))}
+      <div className="flex items-baseline justify-between">
+        <p className="text-sm font-medium">
+          Option: <span className="text-muted-foreground">{selected?.name}</span>
+        </p>
+        {selected && selected.stock > 0 && selected.stock <= 5 && (
+          <p className="text-xs font-medium text-primary">Only {selected.stock} left</p>
+        )}
+      </div>
+      <div className="mt-2.5 flex flex-wrap gap-2.5" role="radiogroup" aria-label="Product options">
+        {variants.map((v) => {
+          const isActive = selected?.id === v.id;
+          return (
+            <button
+              key={v.id}
+              role="radio"
+              aria-checked={isActive}
+              onClick={() => onSelect(v)}
+              disabled={v.stock === 0}
+              className={cn(
+                "btn-press group/s relative flex min-w-[4.25rem] items-center justify-center gap-1.5 rounded-lg border px-4 py-2.5 text-sm transition",
+                isActive
+                  ? "border-primary bg-accent font-semibold text-accent-foreground shadow-[0_0_0_1px_var(--primary)]"
+                  : "border-border hover:border-primary/60 hover:shadow-sm",
+                v.stock === 0 && "cursor-not-allowed text-muted-foreground line-through opacity-60"
+              )}
+            >
+              {isActive && <Check className="h-3.5 w-3.5 text-primary" aria-hidden />}
+              {v.name}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

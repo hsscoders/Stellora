@@ -72,6 +72,31 @@ export default function CheckoutPage() {
     })();
   }, [refreshCart]);
 
+  // A coupon applied on the cart page carries over: re-validate server-side
+  // so the discount is always honest for this exact cart.
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem("stellora-coupon");
+    if (!saved || coupon) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/coupons/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: saved }),
+        });
+        const json = await res.json();
+        if (json.ok && json.data.valid) {
+          setCoupon({ code: json.data.code, discount: json.data.discount });
+          toast.success(`Coupon ${json.data.code} carried over from your cart`);
+        } else {
+          window.sessionStorage.removeItem("stellora-coupon");
+        }
+      } catch {
+        /* silent — coupon is optional */
+      }
+    })();
+  }, []);
+
   const totals = useMemo(() => {
     const subtotal = cart?.subtotal ?? 0;
     const discount = coupon?.discount ?? 0;
