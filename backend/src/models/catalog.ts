@@ -23,6 +23,8 @@ export const Category = model("Category", CategorySchema);
 export interface VariantDoc {
   _id: Schema.Types.ObjectId;
   sku: string;
+  /** Optional scannable barcode number (e.g. 13-digit EAN). Null until assigned. */
+  barcode: string | null;
   name: string;
   price: number;
   compareAtPrice?: number | null;
@@ -36,6 +38,7 @@ export interface VariantDoc {
 const VariantSchema = new Schema<VariantDoc>(
   {
     sku: { type: String, required: true, uppercase: true, trim: true },
+    barcode: { type: String, default: null, trim: true, uppercase: true },
     name: { type: String, required: true, trim: true },
     price: { type: Number, required: true, min: 0 },
     compareAtPrice: { type: Number, default: null, min: 0 },
@@ -79,6 +82,8 @@ const ProductSchema = new Schema(
 
 ProductSchema.index({ categoryId: 1, status: 1 });
 ProductSchema.index({ status: 1, createdAt: -1 });
+// POS scanner fallback — match scanned numbers against embedded variant barcodes
+ProductSchema.index({ "variants.barcode": 1 });
 
 export const Product = model("Product", ProductSchema);
 

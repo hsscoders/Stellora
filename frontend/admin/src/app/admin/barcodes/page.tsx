@@ -6,12 +6,15 @@ import { useRouter } from "next/navigation";
 import {
   Barcode,
   CheckSquare,
+  Hash,
   Loader2,
   PackageOpen,
   Printer,
   RefreshCw,
+  RotateCcw,
   Search,
   Square,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
@@ -27,6 +30,7 @@ interface ApiVariant {
   id: string;
   name: string;
   sku: string;
+  barcode: string | null;
   price: number | string;
   isActive: boolean;
 }
@@ -44,40 +48,215 @@ interface LabelItem {
   productName: string;
   variantName: string;
   sku: string;
+  barcode: string | null;
   price: number;
 }
 
-/* Label sizes map to common thermal/roll label stocks (A4 sheet friendly). */
-const LABEL_SIZES = {
-  sm: { id: "sm", label: "Small · 38 × 25 mm", boxW: "38mm", boxH: "25mm", nameCls: "text-[7px]", subCls: "text-[6px]", barH: 20, footCls: "text-[6px]" },
-  md: { id: "md", label: "Medium · 50 × 30 mm", boxW: "50mm", boxH: "30mm", nameCls: "text-[8px]", subCls: "text-[7px]", barH: 28, footCls: "text-[7px]" },
-  lg: { id: "lg", label: "Large · 60 × 40 mm", boxW: "60mm", boxH: "40mm", nameCls: "text-[9px]", subCls: "text-[7px]", barH: 38, footCls: "text-[8px]" },
-} as const;
+/* ------------------------------ print geometry ------------------------------ */
 
-type LabelSizeId = keyof typeof LABEL_SIZES;
+const MM = 96 / 25.4; // CSS px per mm
+const MAX_LABELS = 800;
+const CFG_KEY = "stellora_barcode_cfg_v2";
 
-const MAX_LABELS = 400;
+const clampN = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+/** Physical papers (A-series + US) and continuous thermal rolls. */
+const PAPERS = [
+  { id: "A4", name: "A4 · 210 × 297 mm", w: 210, h: 297, roll: false },
+  { id: "A5", name: "A5 · 148 × 210 mm", w: 148, h: 210, roll: false },
+  { id: "A3", name: "A3 · 297 × 420 mm", w: 297, h: 420, roll: false },
+  { id: "letter", name: "US Letter · 216 × 279 mm", w: 215.9, h: 279.4, roll: false },
+  { id: "legal", name: "US Legal · 216 × 356 mm", w: 215.9, h: 355.6, roll: false },
+  { id: "r58", name: "Thermal roll · 58 mm", w: 58, h: 0, roll: true },
+  { id: "r80", name: "Thermal roll · 80 mm", w: 80, h: 0, roll: true },
+  { id: "custom", name: "Custom size…", w: 100, h: 150, roll: false },
+] as const;
+
+type PaperId = (typeof PAPERS)[number]["id"];
+
+/** Common retail label stocks in mm + a custom escape hatch. */
+const LABELS = [
+  { id: "25x12", name: "25 × 12 mm · mini tag", w: 25, h: 12 },
+  { id: "30x20", name: "30 × 20 mm · tiny", w: 30, h: 20 },
+  { id: "38x25", name: "38 × 25 mm · small", w: 38, h: 25 },
+  { id: "50x25", name: "50 × 25 mm · price label", w: 50, h: 25 },
+  { id: "50x30", name: "50 × 30 mm · medium", w: 50, h: 30 },
+  { id: "60x40", name: "60 × 40 mm · large", w: 60, h: 40 },
+  { id: "70x50", name: "70 × 50 mm · XL", w: 70, h: 50 },
+  { id: "100x50", name: "100 × 50 mm · shipping", w: 100, h: 50 },
+  { id: "custom", name: "Custom size…", w: 0, h: 0 },
+] as const;
+
+type LabelId = (typeof LABELS)[number]["id"];
+
+interface BcCfg {
+  paper: PaperId;
+  pw: number; // custom paper mm
+  ph: number;
+  label: LabelId;
+  lw: number; // custom label mm
+  lh: number;
+  margin: number; // page margin mm
+  gap: number; // label gutter mm
+  copies: number;
+  source: "sku" | "ean13";
+  showName: boolean;
+  showVariant: boolean;
+  showPrice: boolean;
+  showSku: boolean;
+  showNumber: boolean; // human-readable digits under the bars
+  storeName: string;
+  borders: boolean;
+}
+
+const DEFAULT_CFG: BcCfg = {
+  paper: "A4",
+  pw: 100,
+  ph: 150,
+  label: "50x25",
+  lw: 40,
+  lh: 25,
+  margin: 6,
+  gap: 2,
+  copies: 1,
+  source: "sku",
+  showName: true,
+  showVariant: true,
+  showPrice: true,
+  showSku: false,
+  showNumber: true,
+  storeName: "",
+  borders: true,
+};
+
+function loadCfg(): BcCfg {
+  if (typeof window === "undefined") return DEFAULT_CFG;
+  try {
+    const raw = window.localStorage.getItem(CFG_KEY);
+    if (raw) return { ...DEFAULT_CFG, ...(JSON.parse(raw) as Partial<BcCfg>) };
+  } catch {
+    /* fall through */
+  }
+  return DEFAULT_CFG;
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
 /* ------------------------------ barcode svg ------------------------------ */
 
-function BarcodeSvg({ sku, height }: { sku: string; height: number }) {
+function BarcodeSvg({
+  value,
+  format,
+  height,
+  fontSize,
+  showNumber,
+}: {
+  value: string;
+  format: "CODE128" | "EAN13";
+  height: number;
+  fontSize: number;
+  showNumber: boolean;
+}) {
   const ref = useRef<SVGSVGElement | null>(null);
   useEffect(() => {
     if (!ref.current) return;
     try {
-      JsBarcode(ref.current, sku, {
-        format: "CODE128",
-        displayValue: false,
+      JsBarcode(ref.current, value, {
+        format,
+        displayValue: showNumber,
+        font: "monospace",
+        fontSize,
+        textMargin: 0.4,
         margin: 0,
         height,
-        width: 1.2,
+        width: format === "EAN13" ? 1.6 : 1.15,
         lineColor: "#000000",
+        flat: format === "EAN13" && height < 22,
       });
     } catch {
-      /* invalid SKU charset — leave the label empty rather than crash */
+      /* invalid charset — leave empty rather than crash the sheet */
     }
-  }, [sku, height]);
-  return <svg ref={ref} className="max-w-full" />;
+  }, [value, format, height, fontSize, showNumber]);
+  return <svg ref={ref} className="h-auto max-h-full max-w-full" />;
+}
+
+/* ------------------------------ label box ------------------------------ */
+
+function LabelBox({
+  item,
+  cfg,
+  labelW,
+  labelH,
+}: {
+  item: LabelItem;
+  cfg: BcCfg;
+  labelW: number;
+  labelH: number;
+}) {
+  const value = cfg.source === "ean13" ? (item.barcode ?? "") : item.sku;
+  const format = cfg.source === "ean13" ? "EAN13" : "CODE128";
+  const pad = labelH >= 30 ? 1 : 0.6;
+  const storeFs = clampN(labelH * 0.115, 4.5, 8);
+  const nameFs = clampN(labelH * 0.16, 5.5, 11);
+  const subFs = clampN(labelH * 0.135, 5, 9.5);
+  const skuFs = clampN(labelH * 0.12, 4.5, 8.5);
+  const numFs = clampN(labelH * 0.14, 5, 9.5);
+  const barH = clampN(labelH * (cfg.showNumber ? 0.32 : 0.42), 8, 52);
+
+  return (
+    <div
+      className="flex shrink-0 items-center justify-center overflow-hidden bg-white"
+      style={{
+        width: `${labelW}mm`,
+        height: `${labelH}mm`,
+        border: cfg.borders ? "0.2mm solid #94a3b8" : "none",
+      }}
+    >
+      <div
+        className="flex h-full w-full flex-col items-center justify-between overflow-hidden text-black"
+        style={{ padding: `${pad}mm` }}
+      >
+        {cfg.storeName ? (
+          <p
+            className="w-full truncate text-center font-semibold uppercase leading-tight tracking-wide"
+            style={{ fontSize: `${storeFs}px` }}
+          >
+            {cfg.storeName}
+          </p>
+        ) : null}
+        {cfg.showName ? (
+          <p className="w-full truncate text-center font-semibold leading-tight" style={{ fontSize: `${nameFs}px` }}>
+            {item.productName}
+          </p>
+        ) : null}
+        {cfg.showVariant || cfg.showPrice ? (
+          <p className="w-full truncate text-center leading-tight" style={{ fontSize: `${subFs}px` }}>
+            {cfg.showVariant ? item.variantName : ""}
+            {cfg.showVariant && cfg.showPrice ? " · " : ""}
+            {cfg.showPrice ? formatINR(item.price) : ""}
+          </p>
+        ) : null}
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
+          {value ? (
+            <BarcodeSvg value={value} format={format} height={barH} fontSize={numFs} showNumber={cfg.showNumber} />
+          ) : (
+            <span className="text-center leading-tight text-neutral-400" style={{ fontSize: `${subFs}px` }}>
+              no number yet
+            </span>
+          )}
+        </div>
+        {cfg.showSku ? (
+          <p className="w-full truncate text-center font-mono leading-none" style={{ fontSize: `${skuFs}px` }}>
+            {item.sku}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 /* ------------------------------ page ------------------------------ */
@@ -88,10 +267,26 @@ export default function AdminBarcodesPage() {
   const [products, setProducts] = useState<ApiProduct[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
-  const [sizeId, setSizeId] = useState<LabelSizeId>("md");
-  const [copies, setCopies] = useState("1");
-  const [showPrice, setShowPrice] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [cfg, setCfg] = useState<BcCfg>(DEFAULT_CFG);
+  const [hydrated, setHydrated] = useState(false);
+
+  /* Persisted print configuration — survives reloads and machines. */
+  useEffect(() => {
+    setCfg(loadCfg());
+    setHydrated(true);
+  }, []);
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    } catch {
+      /* private mode — settings just won't persist */
+    }
+  }, [cfg, hydrated]);
+
+  const set = <K extends keyof BcCfg>(key: K, value: BcCfg[K]) => setCfg((c) => ({ ...c, [key]: value }));
 
   /* Pull the whole ACTIVE catalog once (paginated loop over the public API). */
   const fetchAll = useCallback(async () => {
@@ -114,13 +309,12 @@ export default function AdminBarcodesPage() {
       } while (page <= pages && acc.length < 800);
 
       setProducts(acc);
-      const ids: string[] = [];
-      for (const p of acc) {
-        for (const v of p.variants) {
-          if (v.isActive) ids.push(v.id);
-        }
-      }
-      setSelected(new Set(ids));
+      setSelected((prev) => {
+        const valid = new Set<string>();
+        for (const p of acc) for (const v of p.variants) if (v.isActive) valid.add(v.id);
+        const next = new Set([...prev].filter((id) => valid.has(id)));
+        return next.size > 0 ? next : valid;
+      });
     } catch {
       toast.error("Network error while loading products");
     } finally {
@@ -132,10 +326,60 @@ export default function AdminBarcodesPage() {
     void fetchAll();
   }, [fetchAll]);
 
-  const copiesNum = Math.min(Math.max(Math.round(Number(copies) || 1), 1), 12);
-  const size = LABEL_SIZES[sizeId];
+  /* ---------------- assign EAN-13 numbers (bulk) ---------------- */
 
-  /* Build the physical label sheet: selection × filter × copies. */
+  const assignNumbers = useCallback(
+    async (overwrite: boolean) => {
+      if (overwrite && !window.confirm("Overwrite existing barcode numbers for the selected variants?")) return;
+      setAssigning(true);
+      try {
+        const ids = products
+          ? products.flatMap((p) => p.variants.filter((v) => v.isActive && selected.has(v.id)).map((v) => v.id))
+          : [];
+        const res = await fetch("/api/admin/barcodes/assign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ variantIds: ids, overwrite }),
+        });
+        const json = await res.json();
+        if (!json.ok) {
+          toast.error(json.error?.message ?? "Could not assign numbers");
+          return;
+        }
+        toast.success(`${json.data.assigned} barcode number${json.data.assigned === 1 ? "" : "s"} assigned`);
+        await fetchAll();
+      } catch {
+        toast.error("Network error while assigning numbers");
+      } finally {
+        setAssigning(false);
+      }
+    },
+    [products, selected, fetchAll]
+  );
+
+  /* ---------------- geometry: paper · grid · pages ---------------- */
+
+  const paper = PAPERS.find((p) => p.id === cfg.paper) ?? PAPERS[0];
+  const pageW = paper.id === "custom" ? clampN(cfg.pw, 20, 600) : paper.w;
+  const labelW =
+    cfg.label === "custom" ? clampN(cfg.lw, 12, 600) : (LABELS.find((l) => l.id === cfg.label) ?? LABELS[3]).w;
+  const labelH =
+    cfg.label === "custom" ? clampN(cfg.lh, 8, 300) : (LABELS.find((l) => l.id === cfg.label) ?? LABELS[3]).h;
+  // continuous roll: one label row per page
+  const pageH = paper.roll ? labelH + 2 * cfg.margin : paper.id === "custom" ? clampN(cfg.ph, 20, 900) : paper.h;
+
+  const margin = clampN(cfg.margin, 0, 15);
+  const gap = clampN(cfg.gap, 0, 10);
+  const usableW = pageW - 2 * margin;
+  const usableH = pageH - 2 * margin;
+  const overflow = labelW > usableW + 0.01 || labelH > usableH + 0.01;
+  const cols = Math.max(1, Math.floor((usableW + gap + 0.01) / (labelW + gap)));
+  const rows = paper.roll ? 1 : Math.max(1, Math.floor((usableH + gap + 0.01) / (labelH + gap)));
+  const perPage = Math.max(1, cols * rows);
+
+  const copiesNum = Math.min(Math.max(Math.round(Number(cfg.copies) || 1), 1), 100);
+
+  /* Build the label run: selection × filter × copies. */
   const labels = useMemo(() => {
     const out: LabelItem[] = [];
     const q = query.trim().toLowerCase();
@@ -152,6 +396,7 @@ export default function AdminBarcodesPage() {
             productName: p.name,
             variantName: v.name,
             sku: v.sku,
+            barcode: v.barcode ?? null,
             price: Number(v.price),
           });
         }
@@ -159,6 +404,8 @@ export default function AdminBarcodesPage() {
     }
     return out.slice(0, MAX_LABELS);
   }, [products, selected, query, copiesNum]);
+
+  const sheetPages = useMemo(() => chunk(labels, perPage), [labels, perPage]);
 
   const totalLabelable = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -174,6 +421,17 @@ export default function AdminBarcodesPage() {
     return n;
   }, [products, query]);
 
+  const missingNumbers = useMemo(() => {
+    if (!products) return 0;
+    let n = 0;
+    for (const p of products) {
+      for (const v of p.variants) {
+        if (v.isActive && selected.has(v.id) && !v.barcode) n += 1;
+      }
+    }
+    return n;
+  }, [products, selected]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!products) return [];
@@ -184,6 +442,22 @@ export default function AdminBarcodesPage() {
           vs.length > 0 && (!q || `${p.name} ${vs.map((v) => v.sku).join(" ")}`.toLowerCase().includes(q))
       );
   }, [products, query]);
+
+  /* Preview auto-scale so even A3 sheets fit the column (print is always 1:1). */
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [avail, setAvail] = useState(760);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setAvail(Math.max(el.clientWidth - 28, 220));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const scale = Math.min(1, avail / (pageW * MM));
+
+  /* ---------------- selection helpers ---------------- */
 
   function toggleVariant(id: string) {
     setSelected((prev) => {
@@ -210,18 +484,32 @@ export default function AdminBarcodesPage() {
 
   return (
     <div className="space-y-6">
-      {/* print: only the label sheet is visible on paper */}
-      <style>{`@media print{body *{visibility:hidden}.label-sheet,.label-sheet *{visibility:visible}.label-sheet{position:absolute;inset:0;background:#fff}.no-print{display:none !important}@page{margin:4mm}}`}</style>
+      {/* Dynamic @page — the print dialog pagination matches the chosen paper exactly. */}
+      <style>{`
+@page { size: ${pageW}mm ${pageH}mm; margin: 0; }
+@media print {
+  html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+  body * { visibility: hidden !important; }
+  .bc-sheets, .bc-sheets * { visibility: visible !important; }
+  .bc-sheets {
+    position: absolute !important; left: 0 !important; top: 0 !important;
+    width: auto !important; margin: 0 !important; padding: 0 !important; display: block !important;
+  }
+  .no-print { display: none !important; }
+  .bc-frame { width: auto !important; height: auto !important; margin: 0 !important; }
+  .bc-sheet { transform: none !important; box-shadow: none !important; break-after: page; page-break-after: always; overflow: hidden; }
+  .bc-sheet:last-child { break-after: auto; page-break-after: auto; }
+}`}</style>
 
       {/* header */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="no-print flex flex-wrap items-center gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Barcode className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <h1 className="font-serif text-2xl font-medium sm:text-3xl">Barcode Labels</h1>
+          <h1 className="font-serif text-2xl font-medium sm:text-3xl">Barcode Studio</h1>
           <p className="text-sm text-muted-foreground">
-            Print CODE128 price labels for every product — then scan them at the POS.
+            Numbered barcodes on any paper — A4/A5/A3, Letter, Legal, thermal rolls, or a custom size.
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -234,10 +522,10 @@ export default function AdminBarcodesPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
-        {/* LEFT — controls + selection */}
+      <div className="grid gap-6 xl:grid-cols-[400px_1fr]">
+        {/* LEFT — controls */}
         <section className="no-print space-y-4">
-          <div className="space-y-3 rounded-lg border border-border/70 bg-card p-4">
+          <div className="space-y-3.5 rounded-lg border border-border/70 bg-card p-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -249,73 +537,186 @@ export default function AdminBarcodesPage() {
               />
             </div>
 
+            {/* barcode source */}
+            <div className="space-y-1.5">
+              <Label>Barcode content</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={cfg.source === "sku" ? "default" : "outline"}
+                  className="rounded-full text-xs"
+                  onClick={() => set("source", "sku")}
+                >
+                  SKU · CODE128
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={cfg.source === "ean13" ? "default" : "outline"}
+                  className="rounded-full text-xs"
+                  onClick={() => set("source", "ean13")}
+                >
+                  Number · EAN-13
+                </Button>
+              </div>
+              {cfg.source === "ean13" ? (
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="rounded-full text-xs"
+                    disabled={assigning || missingNumbers === 0}
+                    onClick={() => void assignNumbers(false)}
+                  >
+                    {assigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Hash className="h-3.5 w-3.5" />}
+                    Assign missing ({missingNumbers})
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="rounded-full text-xs"
+                    disabled={assigning || selected.size === 0}
+                    onClick={() => void assignNumbers(true)}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Regenerate
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            {/* paper + label sizing */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="label-size">Label size</Label>
+                <Label htmlFor="bc-paper">Paper size</Label>
                 <select
-                  id="label-size"
-                  value={sizeId}
-                  onChange={(e) => setSizeId(e.target.value as LabelSizeId)}
+                  id="bc-paper"
+                  value={cfg.paper}
+                  onChange={(e) => set("paper", e.target.value as PaperId)}
                   className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >
-                  {(Object.keys(LABEL_SIZES) as LabelSizeId[]).map((k) => (
-                    <option key={k} value={k}>
-                      {LABEL_SIZES[k].label}
+                  {PAPERS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="label-copies">Labels per variant</Label>
-                <Input
-                  id="label-copies"
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={copies}
-                  onChange={(e) => setCopies(e.target.value)}
-                  inputMode="numeric"
-                />
+                <Label htmlFor="bc-label">Label size</Label>
+                <select
+                  id="bc-label"
+                  value={cfg.label}
+                  onChange={(e) => set("label", e.target.value as LabelId)}
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {LABELS.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant={showPrice ? "default" : "outline"}
-                size="sm"
-                className="rounded-full text-xs"
-                aria-pressed={showPrice}
-                onClick={() => setShowPrice((s) => !s)}
-              >
-                {showPrice ? "Price shown" : "Price hidden"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-full text-xs"
-                onClick={selectAllFiltered}
-              >
+            {cfg.paper === "custom" ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="bc-pw">Paper W (mm)</Label>
+                  <Input id="bc-pw" type="number" min={20} max={600} value={cfg.pw} onChange={(e) => set("pw", Number(e.target.value))} inputMode="numeric" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="bc-ph">Paper H (mm)</Label>
+                  <Input id="bc-ph" type="number" min={20} max={900} value={cfg.ph} onChange={(e) => set("ph", Number(e.target.value))} inputMode="numeric" />
+                </div>
+              </div>
+            ) : null}
+            {cfg.label === "custom" ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="bc-lw">Label W (mm)</Label>
+                  <Input id="bc-lw" type="number" min={12} max={600} value={cfg.lw} onChange={(e) => set("lw", Number(e.target.value))} inputMode="numeric" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="bc-lh">Label H (mm)</Label>
+                  <Input id="bc-lh" type="number" min={8} max={300} value={cfg.lh} onChange={(e) => set("lh", Number(e.target.value))} inputMode="numeric" />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="bc-margin">Margin (mm)</Label>
+                <Input id="bc-margin" type="number" min={0} max={15} value={cfg.margin} onChange={(e) => set("margin", Number(e.target.value))} inputMode="numeric" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bc-gap">Gap (mm)</Label>
+                <Input id="bc-gap" type="number" min={0} max={10} value={cfg.gap} onChange={(e) => set("gap", Number(e.target.value))} inputMode="numeric" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bc-copies">Copies</Label>
+                <Input id="bc-copies" type="number" min={1} max={100} value={cfg.copies} onChange={(e) => set("copies", Number(e.target.value))} inputMode="numeric" />
+              </div>
+            </div>
+
+            {/* label content toggles */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(
+                [
+                  ["showNumber", "Number"],
+                  ["showName", "Name"],
+                  ["showVariant", "Variant"],
+                  ["showPrice", "Price"],
+                  ["showSku", "SKU text"],
+                  ["borders", "Cut lines"],
+                ] as const
+              ).map(([key, text]) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={cfg[key]}
+                  onClick={() => set(key, !cfg[key])}
+                  className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                    cfg[key] ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-accent"
+                  }`}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="bc-store">Store name on label (optional)</Label>
+              <Input
+                id="bc-store"
+                value={cfg.storeName}
+                onChange={(e) => set("storeName", e.target.value)}
+                placeholder="e.g. STELLORA"
+                maxLength={24}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-2.5">
+              <Button type="button" variant="outline" size="sm" className="rounded-full text-xs" onClick={selectAllFiltered}>
                 <CheckSquare className="h-3.5 w-3.5" /> Select all filtered ({totalLabelable})
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="rounded-full text-xs"
-                onClick={() => setSelected(new Set())}
-              >
+              <Button type="button" variant="outline" size="sm" className="rounded-full text-xs" onClick={() => setSelected(new Set())}>
                 <Square className="h-3.5 w-3.5" /> Clear
+              </Button>
+              <Button type="button" variant="ghost" size="sm" className="rounded-full text-xs" onClick={() => setCfg(DEFAULT_CFG)}>
+                <RotateCcw className="h-3.5 w-3.5" /> Reset layout
               </Button>
             </div>
 
-            <div className="flex items-center justify-between border-t border-border pt-2.5">
+            <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5">
               <p className="text-xs text-muted-foreground">
-                {labels.length} label{labels.length === 1 ? "" : "s"} on sheet
-                {labels.length >= MAX_LABELS ? " (capped)" : ""}
+                {labels.length} label{labels.length === 1 ? "" : "s"}
+                {labels.length >= MAX_LABELS ? " (capped)" : ""} · {cols}×{rows} per sheet ·{" "}
+                {sheetPages.length} sheet{sheetPages.length === 1 ? "" : "s"}
               </p>
-              <Button size="sm" className="rounded-full" disabled={labels.length === 0} onClick={() => window.print()}>
+              <Button size="sm" className="rounded-full" disabled={labels.length === 0 || overflow} onClick={() => window.print()}>
                 <Printer className="h-4 w-4" /> Print
               </Button>
             </div>
@@ -356,14 +757,16 @@ export default function AdminBarcodesPage() {
                               key={v.id}
                               type="button"
                               aria-pressed={on}
+                              title={v.barcode ? `EAN ${v.barcode}` : "No EAN assigned yet"}
                               onClick={() => toggleVariant(v.id)}
                               className={`rounded-full border px-2 py-0.5 font-mono text-[10px] transition ${
-                                on
-                                  ? "border-primary bg-primary/10 text-primary"
-                                  : "border-border text-muted-foreground hover:bg-accent"
+                                on ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-accent"
                               }`}
                             >
                               {v.sku}
+                              {cfg.source === "ean13" && !v.barcode ? (
+                                <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle" />
+                              ) : null}
                             </button>
                           );
                         })}
@@ -376,38 +779,74 @@ export default function AdminBarcodesPage() {
           </div>
         </section>
 
-        {/* RIGHT — the printable sheet */}
-        <section className="min-w-0">
+        {/* RIGHT — live sheet preview */}
+        <section ref={wrapRef} className="min-w-0">
+          {overflow ? (
+            <div className="no-print mb-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                The label ({labelW} × {labelH} mm) does not fit the printable area ({usableW.toFixed(1)} ×{" "}
+                {usableH.toFixed(1)} mm). Pick a bigger paper, smaller label, or reduce the margin.
+              </p>
+            </div>
+          ) : null}
+          {cfg.source === "ean13" && missingNumbers > 0 && !overflow ? (
+            <div className="no-print mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600" />
+              <p className="min-w-0 flex-1 text-amber-700">
+                {missingNumbers} selected variant{missingNumbers === 1 ? " has" : "s have"} no barcode number yet.
+              </p>
+              <Button size="sm" variant="outline" className="rounded-full text-xs" disabled={assigning} onClick={() => void assignNumbers(false)}>
+                {assigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Hash className="h-3.5 w-3.5" />} Assign now
+              </Button>
+            </div>
+          ) : null}
+
           {labels.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-20 text-center">
               <Barcode className="h-8 w-8 text-muted-foreground/50" />
               <p className="text-sm font-medium">No labels selected</p>
               <p className="text-xs text-muted-foreground">
-                Pick variants on the left — every selected SKU gets a CODE128 label.
+                Pick variants on the left — every selected SKU gets a printed, scannable label.
               </p>
             </div>
           ) : (
             <div className="rounded-lg border border-border/70 bg-card p-4">
               <p className="no-print mb-3 text-xs text-muted-foreground">
-                Preview — what you see is exactly what prints, one box per label.
+                1:1 WYSIWYG preview · print at 100% scale, margins “None”, paper “{paper.name}”.
               </p>
-              <div className="label-sheet flex flex-wrap gap-2">
-                {labels.map((item) => (
-                  <div
-                    key={item.key}
-                    className="flex shrink-0 items-center justify-center border border-neutral-300 bg-white"
-                    style={{ width: size.boxW, height: size.boxH }}
-                  >
-                    <div className="flex h-full w-full flex-col items-center justify-between overflow-hidden p-1 text-black">
-                      <div className="w-full text-center leading-tight">
-                        <p className={`truncate font-semibold ${size.nameCls}`}>{item.productName}</p>
-                        <p className={`truncate ${size.subCls}`}>
-                          {item.variantName}
-                          {showPrice ? ` · ${formatINR(item.price)}` : ""}
-                        </p>
+              <div className="bc-sheets flex flex-col items-center gap-5">
+                {sheetPages.map((pageItems, pi) => (
+                  <div key={pi} className="flex flex-col items-center">
+                    <p className="no-print mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Sheet {pi + 1} / {sheetPages.length}
+                    </p>
+                    <div className="bc-frame" style={{ width: pageW * MM * scale, height: pageH * MM * scale }}>
+                      <div
+                        className="bc-sheet bg-white shadow-md"
+                        style={{
+                          width: `${pageW}mm`,
+                          height: `${pageH}mm`,
+                          padding: `${margin}mm`,
+                          transform: `scale(${scale})`,
+                          transformOrigin: "top left",
+                        }}
+                      >
+                        <div
+                          className="grid h-full"
+                          style={{
+                            gridTemplateColumns: `repeat(${cols}, ${labelW}mm)`,
+                            gridAutoRows: `${labelH}mm`,
+                            gap: `${gap}mm`,
+                            justifyContent: "start",
+                            alignContent: "start",
+                          }}
+                        >
+                          {pageItems.map((item) => (
+                            <LabelBox key={item.key} item={item} cfg={cfg} labelW={labelW} labelH={labelH} />
+                          ))}
+                        </div>
                       </div>
-                      <BarcodeSvg sku={item.sku} height={size.barH} />
-                      <p className={`w-full text-center font-mono leading-none ${size.footCls}`}>{item.sku}</p>
                     </div>
                   </div>
                 ))}

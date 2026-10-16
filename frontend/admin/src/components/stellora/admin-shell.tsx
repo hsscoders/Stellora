@@ -63,7 +63,7 @@ const NAV_SECTIONS: NavSection[] = [
     section: "Selling",
     items: [
       { href: "/admin/pos", label: "Point of Sale", icon: Store, isNew: true },
-      { href: "/admin/barcodes", label: "Barcode Labels", icon: Barcode, isNew: true },
+      { href: "/admin/barcodes", label: "Barcode Studio", icon: Barcode, isNew: true },
       { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
       { href: "/admin/returns", label: "Returns & Exchanges", icon: RotateCcw },
       { href: "/admin/coupons", label: "Coupons", icon: Ticket },

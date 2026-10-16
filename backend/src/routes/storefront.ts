@@ -16,6 +16,7 @@ function serializeProduct(p: any) {
     .map((v: any) => ({
       id: String(v._id),
       sku: v.sku,
+      barcode: v.barcode ?? null,
       name: v.name,
       price: v.price,
       compareAtPrice: v.compareAtPrice ?? null,

@@ -1704,22 +1704,117 @@ adminRouter.get(
       return fail(res, "VALIDATION_ERROR", "A valid scan code is required.", 422);
     }
 
-    // The SKU is the barcode identity — printed labels encode CODE128 of the
-    // SKU, so an exact match is both the fastest and the correct semantics for
-    // a scanner (which delivers the whole code in one shot).
-    const product = await Product.findOne({
-      status: "ACTIVE",
-      "variants.sku": code,
-    })
-      .populate("categoryId", "name slug")
-      .lean<any>();
+    // Match order: (1) exact SKU — labels printed in CODE128 of the SKU,
+    // (2) exact assigned barcode number (EAN-13 numeric labels). Both are
+    // scanner-shaped: the whole code arrives in one shot, no fuzzy match.
+    const product =
+      (await Product.findOne({ status: "ACTIVE", "variants.sku": code })
+        .populate("categoryId", "name slug")
+        .lean<any>()) ??
+      (await Product.findOne({ status: "ACTIVE", "variants.barcode": code })
+        .populate("categoryId", "name slug")
+        .lean<any>());
     if (product) {
       const api = serializeProduct(product);
-      const variant = api.variants.find((v: any) => String(v.sku).toUpperCase() === code);
+      const variant = api.variants.find(
+        (v: any) =>
+          String(v.sku).toUpperCase() === code ||
+          (v.barcode && String(v.barcode).toUpperCase() === code)
+      );
       if (variant) {
         return ok(res, { product: api, variant });
       }
     }
     return fail(res, "NOT_FOUND", `No active product matches code "${raw}".`, 404);
+  })
+);
+
+/* ================= Barcode numbering — bulk EAN-13 assignment ================= */
+
+/** EAN-13 check digit: weights 1,3 alternating from the left of 12 digits. */
+function ean13CheckDigit(d12: string): string {
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) sum += Number(d12[i]) * (i % 2 === 0 ? 1 : 3);
+  return String((10 - (sum % 10)) % 10);
+}
+
+function randomEan12(): string {
+  // First digit 2-9 keeps it out of GS1-restricted ranges; rest random.
+  let s = String(2 + Math.floor(Math.random() * 8));
+  for (let i = 1; i < 12; i += 1) s += String(Math.floor(Math.random() * 10));
+  return s;
+}
+
+adminRouter.post(
+  "/admin/barcodes/assign",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    await requireAdmin(req);
+
+    const body = (req.body ?? {}) as { variantIds?: unknown; overwrite?: unknown };
+    const overwrite = body.overwrite === true;
+    const requestedIds = Array.isArray(body.variantIds)
+      ? body.variantIds.map((x) => String(x)).filter((x) => /^[a-f\d]{24}$/i.test(x))
+      : null;
+
+    // Collect targets: every ACTIVE variant, optionally restricted to ids,
+    // skipping ones that already carry a number unless overwrite was asked.
+    const products = await Product.find({ status: "ACTIVE" })
+      .select("variants")
+      .lean<any>();
+    const targets: { productId: string; variantId: string }[] = [];
+    const wanted = requestedIds ? new Set(requestedIds.map((x) => x.toLowerCase())) : null;
+    for (const p of products) {
+      for (const v of p.variants ?? []) {
+        if (wanted && !wanted.has(String(v._id))) continue;
+        if (!overwrite && v.barcode) continue;
+        targets.push({ productId: String(p._id), variantId: String(v._id) });
+      }
+    }
+    if (targets.length === 0) {
+      return ok(res, { assigned: 0, items: [] });
+    }
+
+    // Uniqueness against the live catalog before writing.
+    const taken = new Set<string>();
+    const existing = await Product.find({ "variants.barcode": { $ne: null } })
+      .select("variants.barcode")
+      .lean<any>();
+    for (const p of existing) {
+      for (const v of p.variants ?? []) {
+        if (v.barcode) taken.add(String(v.barcode));
+      }
+    }
+
+    const assigned: { productId: string; variantId: string; barcode: string }[] = [];
+    for (const t of targets) {
+      let code = "";
+      for (let attempt = 0; attempt < 25; attempt += 1) {
+        const d12 = randomEan12();
+        const full = d12 + ean13CheckDigit(d12);
+        if (!taken.has(full)) {
+          taken.add(full);
+          code = full;
+          break;
+        }
+      }
+      if (!code) continue;
+      assigned.push({ ...t, barcode: code });
+    }
+
+    // Persist each embedded variant with a positional update.
+    let written = 0;
+    for (const a of assigned) {
+      const r = await Product.updateOne(
+        { _id: a.productId, "variants._id": a.variantId },
+        { $set: { "variants.$.barcode": a.barcode } }
+      );
+      written += r.modifiedCount ?? 0;
+    }
+
+    return ok(res, {
+      assigned: written,
+      items: assigned.map((a) => ({ variantId: a.variantId, barcode: a.barcode })),
+    });
   })
 );

@@ -27,7 +27,7 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { playPosSound, posSoundEnabled, setPosSoundEnabled } from "@/lib/pos-sound";
+import { playPosSound, posSoundEnabled, setPosSoundEnabled, unlockAudio, getPosVolume, setPosVolume } from "@/lib/pos-sound";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -165,6 +165,7 @@ export default function AdminPosPage() {
   const [camOpen, setCamOpen] = useState(false);
   const [camSupported, setCamSupported] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
+  const [volume, setVolume] = useState(0.9);
   const scanRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -261,10 +262,17 @@ export default function AdminPosPage() {
         if (Array.isArray(h)) setHeld(h as HeldBill[]);
       }
       setSoundOn(posSoundEnabled());
+      setVolume(getPosVolume());
     } catch {
       /* storage unavailable (privacy mode) — in-memory bill still works */
     }
     setHydrated(true);
+  }, []);
+
+  /* Arm the Web Audio context on the first real gesture (click/keydown) so
+     beeps always fire — before this, browsers keep the context suspended. */
+  useEffect(() => {
+    unlockAudio();
   }, []);
 
   /* Persist the working bill so a refresh or accidental close never loses it. */
@@ -528,7 +536,12 @@ export default function AdminPosPage() {
     const next = !soundOn;
     setSoundOn(next);
     setPosSoundEnabled(next);
-    if (next) playPosSound("add");
+    if (next) playPosSound("test");
+  }
+
+  function changeVolume(v: number) {
+    setVolume(v);
+    setPosVolume(v);
   }
 
   function resetBill() {
@@ -829,6 +842,17 @@ export default function AdminPosPage() {
           >
             <Barcode className="h-4 w-4" /> Barcode labels
           </Button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            aria-label="Beep volume"
+            title={`Beep volume — ${Math.round(volume * 100)}%`}
+            onChange={(e) => changeVolume(Number(e.target.value))}
+            className="h-1.5 w-20 shrink-0 cursor-pointer accent-primary"
+          />
           <Button
             variant="outline"
             size="icon"
@@ -838,6 +862,15 @@ export default function AdminPosPage() {
             onClick={toggleSound}
           >
             {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full text-xs"
+            title="Play a test chime to check the beeps"
+            onClick={() => playPosSound("test")}
+          >
+            Test
           </Button>
           <Button variant="outline" onClick={resetBill} className="rounded-full">
             New Bill
