@@ -15,6 +15,7 @@ import { accrueEarn } from "../services/loyalty";
 import { escapeRegex, serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
 import { env } from "../env";
+import { rateLimit, getClientIp } from "../lib/rate-limit";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { randomBytes } from "crypto";
@@ -135,6 +136,83 @@ adminRouter.get(
           o.userId && typeof o.userId === "object"
             ? { name: (o.userId as any).name, email: (o.userId as any).email }
             : null,
+      })),
+    });
+  })
+);
+
+/* ================= Global search (topbar quick-find) ================= */
+
+adminRouter.get(
+  "/admin/search",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+
+    const ip = getClientIp(req);
+    const rl = rateLimit(`admin-search:${ip}`, 60, 60 * 1000);
+    if (!rl.allowed) {
+      return fail(res, "RATE_LIMITED", "Too many searches. Please try again shortly.", 429);
+    }
+
+    const q = String(req.query.q ?? "").trim();
+    if (q.length < 2) {
+      return fail(res, "VALIDATION_ERROR", "Search query must be at least 2 characters.", 400);
+    }
+
+    const rx = new RegExp(escapeRegex(q), "i");
+
+    // Orders: match the order number, or the customer's email via their user doc.
+    const emailUsers = await User.find({ email: rx }).select("_id").lean<{ _id: any }[]>();
+    const userIds = emailUsers.map((u) => u._id);
+
+    const [orders, products, customers] = await Promise.all([
+      Order.find(userIds.length > 0 ? { $or: [{ orderNumber: rx }, { userId: { $in: userIds } }] } : { orderNumber: rx })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate("userId", "email")
+        .lean<any[]>(),
+      Product.find({ $or: [{ name: rx }, { slug: rx }] })
+        .sort({ updatedAt: -1 })
+        .limit(5)
+        .lean<any[]>(),
+      User.find({ role: "CUSTOMER", $or: [{ name: rx }, { email: rx }] })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean<any[]>(),
+    ]);
+
+    return ok(res, {
+      orders: orders.map((o) => ({
+        id: String(o._id),
+        orderNumber: o.orderNumber,
+        status: o.status,
+        paymentStatus: o.paymentStatus,
+        grandTotal: o.grandTotal,
+        createdAt: o.createdAt,
+      })),
+      products: products.map((p) => {
+        // Image: first product image by sortOrder (variants carry no image of their own).
+        const images = [...(p.images ?? [])].sort(
+          (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+        );
+        // Price: cheapest active variant, falling back to any variant.
+        const active = (p.variants ?? []).filter((v: any) => v.isActive);
+        const pool = active.length > 0 ? active : (p.variants ?? []);
+        const price = pool.length > 0 ? Math.min(...pool.map((v: any) => Number(v.price) || 0)) : 0;
+        return {
+          id: String(p._id),
+          name: p.name,
+          slug: p.slug,
+          price,
+          isActive: p.status === "ACTIVE",
+          imageUrl: images[0]?.url ?? null,
+        };
+      }),
+      customers: customers.map((u) => ({
+        id: String(u._id),
+        name: u.name,
+        email: u.email,
+        createdAt: u.createdAt,
       })),
     });
   })

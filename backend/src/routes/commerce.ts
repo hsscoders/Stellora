@@ -82,7 +82,12 @@ export function serializeOrderDetail(o: any) {
   return {
     id: String(o._id),
     orderNumber: o.orderNumber,
-    userId: String(o.userId),
+    // userId may be a populated User doc (admin detail endpoint) or a raw ObjectId —
+    // always serialize the plain id so it never renders as "[object Object]".
+    userId:
+      o.userId && typeof o.userId === "object" && (o.userId as { _id?: unknown })._id
+        ? String((o.userId as { _id: unknown })._id)
+        : String(o.userId ?? ""),
     status: o.status,
     paymentStatus: o.paymentStatus,
     paymentMethod: o.paymentMethod,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -29,8 +29,15 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
+  Bell,
+  Search,
+  CheckCircle2,
+  ChevronRight,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
+import { formatINR } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isNew?: boolean };
 type NavSection = { section: string; items: NavItem[] };
@@ -267,10 +274,473 @@ function UserBlock({
   );
 }
 
+/* ============================================================
+   Global search — debounced, abortable, grouped quick-find
+   ============================================================ */
+
+type SearchOrder = {
+  id: string;
+  orderNumber: string;
+  status: string;
+  paymentStatus: string;
+  grandTotal: number;
+  createdAt: string;
+};
+type SearchProduct = {
+  id: string;
+  name: string;
+  slug: string;
+  price: number;
+  isActive: boolean;
+  imageUrl: string | null;
+};
+type SearchCustomer = { id: string; name: string; email: string; createdAt: string };
+type SearchResults = {
+  orders: SearchOrder[];
+  products: SearchProduct[];
+  customers: SearchCustomer[];
+};
+
+const EMPTY_RESULTS: SearchResults = { orders: [], products: [], customers: [] };
+
+// Status badge tints — mirrors the Orders page so the console stays consistent.
+const STATUS_TINT: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  CONFIRMED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  PROCESSING: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  SHIPPED: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
+  DELIVERED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  CANCELLED: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300",
+};
+
+/** Render `text` with every occurrence of `query` subtly emphasized. */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const needle = query.trim().toLowerCase();
+  const at = needle ? text.toLowerCase().indexOf(needle) : -1;
+  if (at < 0) return <>{text}</>;
+  const end = at + needle.length;
+  return (
+    <>
+      {text.slice(0, at)}
+      <span className="font-medium text-foreground">{text.slice(at, end)}</span>
+      {text.slice(end)}
+    </>
+  );
+}
+
+function SearchRowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <Skeleton className="h-8 w-8 rounded-lg" />
+      <div className="flex-1 space-y-1.5">
+        <Skeleton className="h-3 w-2/5" />
+        <Skeleton className="h-2.5 w-1/4" />
+      </div>
+    </div>
+  );
+}
+
+function GlobalSearch() {
+  const pathname = usePathname();
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<SearchResults | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Debounced lookup (~250ms); previous in-flight request is aborted so only
+  // the newest keystroke's response can land.
+  useEffect(() => {
+    const trimmed = q.trim();
+    const timer = setTimeout(() => {
+      if (trimmed.length < 2) {
+        abortRef.current?.abort();
+        setResults(null);
+        setLoading(false);
+        return;
+      }
+      abortRef.current?.abort();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      setLoading(true);
+      fetch(`/api/admin/search?q=${encodeURIComponent(trimmed)}`, {
+        signal: ctrl.signal,
+        cache: "no-store",
+      })
+        .then((r) => r.json())
+        .then((j) => {
+          if (ctrl.signal.aborted) return;
+          setResults(j?.ok ? (j.data as SearchResults) : EMPTY_RESULTS);
+          setLoading(false);
+        })
+        .catch(() => {
+          if (ctrl.signal.aborted) return;
+          setResults(EMPTY_RESULTS);
+          setLoading(false);
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  // Escape + click-outside close while the panel is open.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        inputRef.current?.blur();
+      }
+    };
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+    };
+  }, [open]);
+
+  // Close whenever the route changes (also covers in-panel link taps).
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setOpen(false));
+    return () => cancelAnimationFrame(raf);
+  }, [pathname]);
+
+  const trimmed = q.trim();
+  const panelVisible = open && trimmed.length >= 2;
+  const hasResults =
+    !!results && (results.orders.length > 0 || results.products.length > 0 || results.customers.length > 0);
+
+  const groups: {
+    key: string;
+    label: string;
+    icon: LucideIcon;
+    items: { to: string; title: string; meta: React.ReactNode; badge?: string }[];
+  }[] = results
+    ? [
+        {
+          key: "orders",
+          label: "Orders",
+          icon: ShoppingCart,
+          items: results.orders.map((o) => ({
+            to: `/admin/orders/${o.id}`,
+            title: o.orderNumber,
+            meta: (
+              <span className="flex items-center gap-1.5">
+                <span className="tnum">{formatINR(Number(o.grandTotal) || 0)}</span>
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                    STATUS_TINT[o.status] ?? "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {o.status}
+                </span>
+              </span>
+            ),
+          })),
+        },
+        {
+          key: "products",
+          label: "Products",
+          icon: Package,
+          items: results.products.map((p) => ({
+            to: `/admin/products/${p.id}`,
+            title: p.name,
+            meta: (
+              <span className="flex items-center gap-1.5">
+                <span className="tnum">{formatINR(Number(p.price) || 0)}</span>
+                {!p.isActive && (
+                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Inactive
+                  </span>
+                )}
+              </span>
+            ),
+          })),
+        },
+        {
+          key: "customers",
+          label: "Customers",
+          icon: Users,
+          items: results.customers.map((c) => ({
+            to: "/admin/customers",
+            title: c.name,
+            meta: <span className="truncate">{c.email}</span>,
+          })),
+        },
+      ].filter((g) => g.items.length > 0)
+    : [];
+
+  return (
+    <div ref={wrapRef} className="relative w-full">
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <input
+          ref={inputRef}
+          type="search"
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search orders, products, customers…"
+          aria-label="Search orders, products and customers"
+          className="h-10 w-full rounded-lg border border-border bg-card/70 pl-9 pr-9 text-sm text-foreground shadow-sm outline-none transition placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 [&::-webkit-search-cancel-button]:hidden"
+        />
+        {q && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => {
+              setQ("");
+              setResults(null);
+              inputRef.current?.focus();
+            }}
+            className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
+      </div>
+
+      {panelVisible && (
+        <div
+          role="listbox"
+          aria-label="Search results"
+          className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-card shadow-xl shadow-black/10 [animation:admin-fade-in_.16s_ease-out_both]"
+        >
+          {loading && !hasResults ? (
+            <div className="py-1" aria-hidden>
+              <SearchRowSkeleton />
+              <SearchRowSkeleton />
+              <SearchRowSkeleton />
+            </div>
+          ) : hasResults && results ? (
+            <div className="stellora-scroll max-h-[70vh] overflow-y-auto py-1.5">
+              {groups.map((g) => (
+                <div key={g.key}>
+                  <p className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                    <g.icon className="h-3 w-3" aria-hidden /> {g.label}
+                  </p>
+                  {g.items.map((item) => (
+                    <Link
+                      key={item.to + item.title}
+                      href={item.to}
+                      className="flex items-center gap-3 px-4 py-2 transition-colors hover:bg-accent"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <g.icon className="h-4 w-4" aria-hidden />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-foreground/90">
+                          <Highlight text={item.title} query={trimmed} />
+                        </span>
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          {item.meta}
+                        </span>
+                      </span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden />
+                    </Link>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+              No results for &ldquo;{trimmed}&rdquo;
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   Notifications bell — actionable counts from /api/admin/stats
+   ============================================================ */
+
+type StatsPayload = {
+  ordersByStatus?: Record<string, number>;
+  pendingReviews?: number;
+  pendingQuestions?: number;
+  lowStock?: unknown[];
+};
+
+function NotificationsBell() {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const [stats, setStats] = useState<StatsPayload | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  const pendingOrders = Number(stats?.ordersByStatus?.PENDING) || 0;
+  const pendingReviews = Number(stats?.pendingReviews) || 0;
+  const pendingQuestions = Number(stats?.pendingQuestions) || 0;
+  const lowStockCount = Array.isArray(stats?.lowStock) ? stats!.lowStock.length : 0;
+  const actionable = pendingOrders + pendingReviews + pendingQuestions + lowStockCount;
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/admin/stats", { cache: "no-store" });
+      const j = await r.json();
+      if (j?.ok) setStats(j.data as StatsPayload);
+    } catch {
+      // Silent — the bell simply keeps its last known counts.
+    }
+  }, []);
+
+  // Initial fetch so the badge is populated before the first open…
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      void load();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [load]);
+
+  // …then refreshed on every open.
+  const toggle = useCallback(() => {
+    setOpen((o) => {
+      const next = !o;
+      if (next) void load();
+      return next;
+    });
+  }, [load]);
+
+  // Escape + click-outside close while open.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointerDown = (e: MouseEvent | TouchEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+    };
+  }, [open]);
+
+  // Close on route change.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setOpen(false));
+    return () => cancelAnimationFrame(raf);
+  }, [pathname]);
+
+  const rows = [
+    {
+      to: "/admin/orders?status=PENDING",
+      icon: ShoppingCart,
+      label: `${pendingOrders} pending order${pendingOrders === 1 ? "" : "s"}`,
+      count: pendingOrders,
+    },
+    {
+      to: "/admin/reviews",
+      icon: Star,
+      label: `${pendingReviews} review${pendingReviews === 1 ? "" : "s"} awaiting approval`,
+      count: pendingReviews,
+    },
+    {
+      to: "/admin/questions",
+      icon: MessageCircleQuestion,
+      label: `${pendingQuestions} question${pendingQuestions === 1 ? "" : "s"} to answer`,
+      count: pendingQuestions,
+    },
+    {
+      to: "/admin/inventory",
+      icon: AlertTriangle,
+      label: `${lowStockCount} variant${lowStockCount === 1 ? "" : "s"} low on stock`,
+      count: lowStockCount,
+    },
+  ].filter((r) => r.count > 0);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={open ? "Close notifications" : "Open notifications"}
+        aria-expanded={open}
+        aria-controls="admin-notifications"
+        className={`relative inline-flex h-11 w-11 items-center justify-center rounded-lg transition hover:bg-accent lg:h-9 lg:w-9 ${
+          open ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Bell className="h-[18px] w-[18px]" aria-hidden />
+        {actionable > 0 && (
+          <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold leading-none text-primary-foreground ring-2 ring-background lg:right-0.5 lg:top-0.5">
+            {actionable > 9 ? "9+" : actionable}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div
+          id="admin-notifications"
+          role="dialog"
+          aria-label="Notifications"
+          className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-border bg-card shadow-xl shadow-black/10 [animation:admin-fade-in_.16s_ease-out_both]"
+        >
+          <p className="border-b border-border px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Notifications
+          </p>
+          <div className="stellora-scroll max-h-80 overflow-y-auto py-1.5">
+            {rows.length === 0 ? (
+              <p className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                <CheckCircle2 className="h-6 w-6 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                <span className="text-sm text-muted-foreground">All caught up</span>
+              </p>
+            ) : (
+              rows.map((r) => (
+                <Link
+                  key={r.to}
+                  href={r.to}
+                  className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent"
+                >
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                      r.icon === AlertTriangle
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                        : "bg-primary/10 text-primary"
+                    }`}
+                  >
+                    <r.icon className="h-4 w-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{r.label}</span>
+                  <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary tnum">
+                    {r.count}
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" aria-hidden />
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Professional admin shell:
+ * - Unified glass topbar on desktop AND mobile: global search (desktop),
+ *   notifications bell, storefront link; hamburger + page title on mobile
  * - Desktop: collapsible sidebar (persisted), gold active indicators, user card + logout
- * - Mobile: sticky glass topbar; the 3-line hamburger opens a slide-in drawer
+ * - Mobile: the 3-line hamburger opens a slide-in drawer
  *   (backdrop blur, Escape / overlay / route-change close, body scroll lock)
  */
 export function AdminShell({
@@ -392,19 +862,19 @@ export function AdminShell({
 
       {/* ---------------- Main column ---------------- */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile glass topbar — 3-line hamburger opens the slide drawer */}
-        <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background/85 px-3 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 lg:hidden">
+        {/* Unified glass topbar — search + bell on desktop, hamburger + title on mobile */}
+        <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background/85 px-3 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 sm:px-4">
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
             aria-label="Open admin menu"
             aria-expanded={drawerOpen}
             aria-controls="admin-drawer"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-foreground transition hover:bg-accent"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-foreground transition hover:bg-accent lg:hidden"
           >
             <Menu className="h-5 w-5" aria-hidden />
           </button>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 lg:hidden">
             <p className="truncate text-sm font-semibold leading-tight text-foreground">
               {current?.label ?? "Dashboard"}
             </p>
@@ -412,13 +882,19 @@ export function AdminShell({
               Stellora Admin
             </p>
           </div>
-          <a
-            href="/"
-            aria-label="View storefront"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-foreground"
-          >
-            <ArrowUpRight className="h-4 w-4" aria-hidden />
-          </a>
+          <div className="hidden min-w-0 flex-1 lg:flex lg:max-w-md">
+            <GlobalSearch />
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <NotificationsBell />
+            <a
+              href="/"
+              aria-label="View storefront"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-foreground lg:h-9 lg:w-9"
+            >
+              <ArrowUpRight className="h-4 w-4" aria-hidden />
+            </a>
+          </div>
         </header>
 
         <main className="mx-auto w-full max-w-[1440px] flex-1 p-4 sm:p-6 lg:p-8">{children}</main>

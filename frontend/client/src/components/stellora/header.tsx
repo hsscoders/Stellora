@@ -11,7 +11,6 @@ import {
   UserRound,
   X,
   LogOut,
-  LayoutDashboard,
   Package,
   Gem,
   Scissors,
@@ -23,7 +22,6 @@ import {
   Truck,
   Phone,
   CircleHelp,
-  ScanBarcode,
   Instagram,
   Facebook,
   Star,
@@ -281,13 +279,6 @@ export function Header({ announcement }: { announcement: string | null }) {
                       <Package className="h-4 w-4" /> Orders &amp; Profile
                     </Link>
                   </DropdownMenuItem>
-                  {user.role === "ADMIN" && (
-                    <DropdownMenuItem asChild>
-                      <Link href="/admin-console">
-                        <LayoutDashboard className="h-4 w-4" /> Admin Panel
-                      </Link>
-                    </DropdownMenuItem>
-                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={signOut}>
                     <LogOut className="h-4 w-4" /> Sign out
@@ -392,25 +383,6 @@ export function Header({ announcement }: { announcement: string | null }) {
               </button>
             </div>
             <nav className="stellora-scroll mt-6 flex flex-1 flex-col gap-5 overflow-y-auto pb-4" onClick={() => setMobileOpen(false)}>
-              {/* Master control — admins only, hard nav across the rewrite boundary */}
-              {user?.role === "ADMIN" && (
-                <a
-                  href="/admin-console"
-                  className="flex items-center gap-3 rounded-xl brand-gradient px-4 py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/25"
-                >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15">
-                    <ScanBarcode className="h-4 w-4" />
-                  </span>
-                  <span>
-                    Master Control
-                    <span className="block text-[10px] font-normal uppercase tracking-[0.2em] text-primary-foreground/75">
-                      POS · Stock · Orders · Analytics
-                    </span>
-                  </span>
-                  <ChevronRight className="ml-auto h-4 w-4" />
-                </a>
-              )}
-
               <section>
                 <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                   Shop by category

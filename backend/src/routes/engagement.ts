@@ -151,6 +151,13 @@ engagementRouter.post(
     if (!mongoose.isValidObjectId(data.productId)) {
       return fail(res, "VALIDATION_ERROR", "Invalid product.", 422);
     }
+    // Never register alerts for products that no longer exist.
+    const productExists = await Product.exists({
+      _id: new mongoose.Types.ObjectId(data.productId),
+    });
+    if (!productExists) {
+      return fail(res, "NOT_FOUND", "This product is no longer available.", 404);
+    }
     await RestockAlert.updateOne(
       { productId: new mongoose.Types.ObjectId(data.productId), email: data.email },
       {

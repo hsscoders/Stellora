@@ -247,7 +247,7 @@ export const adminUserSchema = z.object({
   role: z.enum(["CUSTOMER", "ADMIN"]),
 });
 
-export const settingsSchema = z.record(z.string(), z.string().max(2000));
+export const settingsSchema = z.record(z.string().min(1), z.string().max(2000));
 
 export const orderStatusSchema = z.object({
   status: z.enum(["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"]),

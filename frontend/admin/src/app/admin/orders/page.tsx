@@ -39,6 +39,18 @@ export default function AdminOrdersPage() {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
 
+  // Deep-link support (e.g. notifications bell → /admin/orders?status=PENDING):
+  // read the initial status from the URL once the page has mounted.
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const s = new URLSearchParams(window.location.search).get("status");
+      if (s && ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"].includes(s)) {
+        setStatusFilter(s);
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   useEffect(() => {
     fetch("/api/orders", { cache: "no-store" }).catch(() => {});
     // Admin orders come from the admin products? No — dedicated listing via server page is absent;
