@@ -5,6 +5,8 @@ const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
 const nextConfig: NextConfig = {
   reactStrictMode: false,
   basePath: "/admin-console",
+  // Dev-only: allow the HMR websocket / dev resources from these hosts.
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
     return [

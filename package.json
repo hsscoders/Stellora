@@ -2,15 +2,19 @@
   "name": "stellora",
   "version": "2.0.0",
   "private": true,
-  "workspaces": ["frontend", "admin", "backend"],
+  "workspaces": [
+    "frontend/client",
+    "frontend/admin",
+    "backend"
+  ],
   "scripts": {
     "dev": "bash scripts/dev-server.sh",
-    "dev:frontend": "cd frontend && next dev -p 3000",
-    "dev:admin": "cd admin && next dev -p 3001",
+    "dev:frontend": "cd frontend/client && next dev -p 3000",
+    "dev:admin": "cd frontend/admin && next dev -p 3001",
     "dev:backend": "cd backend && bun src/server.ts",
     "seed": "cd backend && bun src/seed.ts",
-    "lint": "eslint frontend admin",
-    "typecheck": "cd frontend && tsc --noEmit && cd ../admin && tsc --noEmit && cd ../backend && tsc --noEmit",
-    "build": "cd frontend && next build && cd ../admin && next build"
+    "lint": "cd frontend/client && eslint . && cd ../admin && eslint .",
+    "typecheck": "cd frontend/client && tsc --noEmit && cd ../admin && tsc --noEmit && cd ../../backend && tsc --noEmit",
+    "build": "cd frontend/client && next build && cd ../admin && next build"
   }
 }

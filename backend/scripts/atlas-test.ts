@@ -3,7 +3,7 @@
  */
 import mongoose from "mongoose";
 
-const URI = process.env.MONGODB_URI ?? "process.env.MONGODB_LOCAL_FALLBACK ?? "mongodb://127.0.0.1:27017/stellora"";
+const URI = process.env.MONGODB_URI ?? process.env.MONGODB_LOCAL_FALLBACK ?? "mongodb://127.0.0.1:27017/stellora";
 
 async function main() {
   console.log("[atlas-test] connecting...");

@@ -20,7 +20,7 @@ const IMG = (name: string) => `/images/products/${name}.jpg`;
 const BANNER = (name: string) => `/images/banners/${name}.jpg`;
 
 async function main() {
-  const uri = process.env.MONGODB_URI ?? "process.env.MONGODB_LOCAL_FALLBACK ?? "mongodb://127.0.0.1:27017/stellora"";
+  const uri = process.env.MONGODB_URI ?? process.env.MONGODB_LOCAL_FALLBACK ?? "mongodb://127.0.0.1:27017/stellora";
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000 });
   console.log("Seeding Stellora development database (FICTIONAL DATA)...");
   console.log("All products, prices, stock and people below are sample data for development only.\n");

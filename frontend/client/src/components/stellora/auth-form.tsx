@@ -61,7 +61,7 @@ export function AuthForm({
       }
       await refreshCart();
       toast.success(mode === "login" ? "Welcome back!" : "Account created. Welcome to Stellora!");
-      router.push(json.data.role === "ADMIN" ? "/admin" : next);
+      router.push(json.data.role === "ADMIN" ? "/admin-console" : next);
       router.refresh();
     } catch {
       toast.error("Network error. Please try again.");

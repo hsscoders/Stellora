@@ -15,6 +15,10 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  // Dev-only: allow the HMR websocket / dev resources from these hosts.
+  // Without this, Next 16 blocks /_next/hmr as "cross-origin" and hydration
+  // never completes (pages render but no client interactivity).
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
     return [

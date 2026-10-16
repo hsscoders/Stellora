@@ -12,18 +12,18 @@ REPO_DIR="/home/z/my-project/stellora-repo"
 bash "$REPO_DIR/backend/scripts/start-backend-fork.sh"
 sleep 1
 
-# 2. Install frontend/admin deps if missing
-for app in frontend admin; do
+# 2. Install frontend/client + frontend/admin deps if missing
+for app in frontend/client frontend/admin; do
   if [ ! -d "$REPO_DIR/$app/node_modules" ]; then
     (cd "$REPO_DIR/$app" && bun install >/dev/null 2>&1)
   fi
 done
 
 # 3. Admin console (detached)
-bash "$REPO_DIR/admin/start-admin-fork.sh"
+bash "$REPO_DIR/frontend/admin/start-admin-fork.sh"
 sleep 1
 
 # 4. Frontend storefront (detached)
-bash "$REPO_DIR/frontend/start-frontend-fork.sh"
+bash "$REPO_DIR/frontend/client/start-frontend-fork.sh"
 
 echo "[stellora] full stack starting: frontend :3000, admin :3001, api :4000"
