@@ -82,3 +82,47 @@ ReturnRequestSchema.index({ orderNumber: 1 });
 ReturnRequestSchema.index({ status: 1, createdAt: -1 });
 
 export const ReturnRequest = model("ReturnRequest", ReturnRequestSchema);
+
+/* ================= Product Q&A (customer questions, admin answers) ================= */
+
+const ProductQuestionSchema = new Schema(
+  {
+    productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    authorName: { type: String, required: true, trim: true },
+    question: { type: String, required: true, trim: true },
+    answer: { type: String, default: null, trim: true },
+    answeredAt: { type: Date, default: null },
+    answeredById: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    status: { type: String, enum: ["PENDING", "ANSWERED", "HIDDEN"], default: "PENDING" },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: "productquestions" }
+);
+ProductQuestionSchema.index({ productId: 1, status: 1, createdAt: -1 });
+ProductQuestionSchema.index({ status: 1, createdAt: -1 });
+
+export const ProductQuestion = model("ProductQuestion", ProductQuestionSchema);
+
+/* ================= Loyalty ledger (Stellora Rewards audit trail) =================
+ * The user.loyaltyPoints counter is the fast balance; every mutation is also
+ * appended here so accruals are idempotent and refunds are traceable. */
+
+const LoyaltyLedgerSchema = new Schema(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    orderId: { type: Schema.Types.ObjectId, ref: "Order", default: null },
+    delta: { type: Number, required: true }, // + earn / − redeem / ± refund-adjust
+    reason: {
+      type: String,
+      enum: ["EARN", "REDEEM", "REFUND_EARN", "REFUND_REDEEM", "ADJUST"],
+      required: true,
+    },
+    note: { type: String, default: null },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: "loyaltyledger" }
+);
+LoyaltyLedgerSchema.index({ userId: 1, createdAt: -1 });
+// One earn entry per order keeps accrual idempotent across retries.
+LoyaltyLedgerSchema.index({ orderId: 1, reason: 1 });
+
+export const LoyaltyLedger = model("LoyaltyLedger", LoyaltyLedgerSchema);

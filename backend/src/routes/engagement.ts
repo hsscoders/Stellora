@@ -1,6 +1,6 @@
 import { Router, Request } from "express";
 import mongoose from "mongoose";
-import { Order, Product, User, Review, NewsletterSubscriber, RestockAlert, ReturnRequest } from "../models";
+import { Order, Product, User, Review, NewsletterSubscriber, RestockAlert, ReturnRequest, ProductQuestion } from "../models";
 import { ok, fail, handle, assertSameOrigin, HttpError } from "../lib/http";
 import { requireUser, requireAdmin, getCurrentUser } from "../lib/auth";
 import { audit } from "../services/audit";
@@ -13,6 +13,9 @@ import {
   returnRequestSchema,
   returnStatusSchema,
   reviewModerationSchema,
+  questionCreateSchema,
+  questionAnswerSchema,
+  questionModerationSchema,
 } from "../validation";
 import { serializeProduct } from "./storefront";
 
@@ -295,6 +298,174 @@ engagementRouter.get(
       adminNote: r.adminNote ?? null,
       createdAt: r.createdAt,
     })));
+  })
+);
+
+/* ================= Product Q&A (public read, customer ask, admin answer) ================= */
+
+function maskAuthor(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0] || "Customer";
+  const lastInitial = parts.length > 1 ? ` ${parts[parts.length - 1][0].toUpperCase()}.` : "";
+  return `${first}${lastInitial}`;
+}
+
+engagementRouter.get(
+  "/products/:productId/questions",
+  handle(async (req, res) => {
+    const productId = String(req.params.productId);
+    if (!mongoose.isValidObjectId(productId)) return fail(res, "VALIDATION_ERROR", "Invalid product.", 422);
+
+    // Public sees answered questions; a signed-in viewer also sees their own
+    // still-pending questions so they don't wonder where their ask went.
+    const user = await getCurrentUser(req);
+    const orFilter: Record<string, unknown>[] = [{ status: "ANSWERED" }];
+    if (user) {
+      orFilter.push({ status: "PENDING", userId: new mongoose.Types.ObjectId(user.id) });
+    }
+
+    const rows = await ProductQuestion.find({ productId, $or: orFilter })
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .lean<any[]>();
+
+    return ok(res, {
+      questions: rows.map((q) => ({
+        id: String(q._id),
+        author: maskAuthor(q.authorName ?? "Customer"),
+        question: q.question,
+        answer: q.answer ?? null,
+        answeredAt: q.answeredAt ?? null,
+        status: q.status,
+        isMine: user ? String(q.userId) === user.id : false,
+        createdAt: q.createdAt,
+      })),
+    });
+  })
+);
+
+engagementRouter.post(
+  "/products/:productId/questions",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const user = await requireUser(req);
+    const productId = String(req.params.productId);
+    if (!mongoose.isValidObjectId(productId)) return fail(res, "VALIDATION_ERROR", "Invalid product.", 422);
+
+    const product = await Product.findOne({ _id: productId, status: "ACTIVE" }).select("_id").lean<any>();
+    if (!product) return fail(res, "NOT_FOUND", "Product not found.", 404);
+
+    const rl = rateLimit(`question:${user.id}`, 6, 30 * 60 * 1000);
+    if (!rl.allowed) return fail(res, "RATE_LIMITED", "Too many questions submitted. Please try later.", 429);
+
+    // Anti-spam: at most 3 open questions per customer per product.
+    const open = await ProductQuestion.countDocuments({
+      productId: new mongoose.Types.ObjectId(productId),
+      userId: new mongoose.Types.ObjectId(user.id),
+      status: "PENDING",
+    });
+    if (open >= 3) {
+      return fail(res, "TOO_MANY_OPEN", "You already have 3 open questions on this product.", 409);
+    }
+
+    const data = questionCreateSchema.parse(req.body);
+    const created = await ProductQuestion.create({
+      productId: new mongoose.Types.ObjectId(productId),
+      userId: new mongoose.Types.ObjectId(user.id),
+      authorName: user.name || "Stellora Customer",
+      question: data.question,
+      status: "PENDING",
+    });
+
+    await audit(
+      { actor: user, action: "question.submit", entityType: "ProductQuestion", entityId: String(created._id), metadata: { productId } },
+      req
+    );
+
+    return ok(res, { submitted: true, status: "PENDING" }, 201);
+  })
+);
+
+/* ================= Admin: Q&A management ================= */
+
+engagementRouter.get(
+  "/admin/questions",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const status = req.query.status ? String(req.query.status) : undefined;
+    const where: Record<string, unknown> = status ? { status } : {};
+
+    const rows = await ProductQuestion.find(where)
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .populate("productId", "name slug")
+      .populate("userId", "name email")
+      .lean<any[]>();
+
+    return ok(res, {
+      questions: rows.map((q) => ({
+        id: String(q._id),
+        product: q.productId ? { name: q.productId.name, slug: q.productId.slug } : null,
+        customer: q.userId ? { name: q.userId.name, email: q.userId.email } : null,
+        authorName: q.authorName,
+        question: q.question,
+        answer: q.answer ?? null,
+        status: q.status,
+        createdAt: q.createdAt,
+        answeredAt: q.answeredAt ?? null,
+      })),
+    });
+  })
+);
+
+engagementRouter.post(
+  "/admin/questions/:questionId/answer",
+  handle(async (req, res) => {
+    const admin = await requireAdmin(req);
+    assertSameOrigin(req);
+    const data = questionAnswerSchema.parse(req.body);
+    const updated = await ProductQuestion.findByIdAndUpdate(
+      req.params.questionId,
+      {
+        answer: data.answer,
+        status: "ANSWERED",
+        answeredAt: new Date(),
+        answeredById: new mongoose.Types.ObjectId(admin.id),
+      },
+      { new: true }
+    ).lean<any>();
+    if (!updated) return fail(res, "NOT_FOUND", "Question not found.", 404);
+    await audit({ actor: admin, action: "question.answer", entityType: "ProductQuestion", entityId: String(updated._id) }, req);
+    return ok(res, { id: String(updated._id), status: updated.status, answer: updated.answer });
+  })
+);
+
+engagementRouter.post(
+  "/admin/questions/:questionId/status",
+  handle(async (req, res) => {
+    const admin = await requireAdmin(req);
+    assertSameOrigin(req);
+    const data = questionModerationSchema.parse(req.body);
+    const updated = await ProductQuestion.findByIdAndUpdate(
+      req.params.questionId,
+      { status: data.status },
+      { new: true }
+    ).lean<any>();
+    if (!updated) return fail(res, "NOT_FOUND", "Question not found.", 404);
+    await audit({ actor: admin, action: `question.${data.status.toLowerCase()}`, entityType: "ProductQuestion", entityId: String(updated._id) }, req);
+    return ok(res, { id: String(updated._id), status: updated.status });
+  })
+);
+
+engagementRouter.delete(
+  "/admin/questions/:questionId",
+  handle(async (req, res) => {
+    const admin = await requireAdmin(req);
+    assertSameOrigin(req);
+    const deleted = await ProductQuestion.findByIdAndDelete(req.params.questionId).lean<any>();
+    if (!deleted) return fail(res, "NOT_FOUND", "Question not found.", 404);
+    await audit({ actor: admin, action: "question.delete", entityType: "ProductQuestion", entityId: String(deleted._id) }, req);
+    return ok(res, { deleted: true });
   })
 );
 

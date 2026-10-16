@@ -20,6 +20,7 @@ import {
   Star,
   RotateCcw,
   Send,
+  MessageCircleQuestion,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,7 @@ const NAV = [
   { href: "/admin/customers", label: "Customers", icon: Users },
   { href: "/admin/coupons", label: "Coupons", icon: Ticket },
   { href: "/admin/reviews", label: "Reviews", icon: Star },
+  { href: "/admin/questions", label: "Product Q&A", icon: MessageCircleQuestion },
   { href: "/admin/newsletter", label: "Newsletter & Alerts", icon: Send },
   { href: "/admin/banners", label: "Banners", icon: ImageIcon },
   { href: "/admin/shipping", label: "Shipping", icon: Truck },

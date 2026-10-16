@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Sparkles } from "lucide-react";
 import { apiMe, apiMyOrder } from "@/lib/server-api";
-import { formatINR, formatDate } from "@/lib/utils";
+import { formatINR, formatDate, formatDateTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { PayNowButton } from "@/components/stellora/pay-now-button";
 import { Confetti } from "@/components/stellora/confetti";
+import { PrintInvoiceButton } from "@/components/stellora/print-invoice-button";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Order Confirmed" };
@@ -30,6 +31,8 @@ export default async function OrderConfirmationPage({
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-14 sm:px-6">
+      {/* Screen-only celebration flow */}
+      <div className="print:hidden">
       <Confetti burstKey={order.orderNumber} />
       <div className="text-center">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/15">
@@ -44,6 +47,19 @@ export default async function OrderConfirmationPage({
             : `We will contact you shortly on ${order.shipPhone} to confirm availability and complete payment.`}
         </p>
       </div>
+
+      {Number(order.pointsEarned) > 0 && (
+        <div className="anim-pop mt-6 flex items-center justify-center gap-2 rounded-lg border border-primary/30 bg-accent/40 px-4 py-3 text-sm">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <span>
+            You earned{" "}
+            <span className="font-bold text-primary tnum">
+              {Number(order.pointsEarned).toLocaleString("en-IN")} Stellora points
+            </span>{" "}
+            — redeem them as ₹ on a future order.
+          </span>
+        </div>
+      )}
 
       {order.paymentStatus === "PENDING" && order.paymentMethod === "GATEWAY" && (
         <div className="mt-8 rounded-lg border border-primary/40 bg-accent/40 p-5 text-center">
@@ -113,6 +129,10 @@ export default async function OrderConfirmationPage({
       </div>
 
       <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
+        <PrintInvoiceButton
+          className="rounded-full"
+          label="Print Invoice"
+        />
         <Button asChild className="rounded-full bg-primary hover:bg-primary/90">
           <Link href={`/account/orders/${order.orderNumber}`}>View order status</Link>
         </Button>
@@ -122,6 +142,106 @@ export default async function OrderConfirmationPage({
         <Button asChild variant="ghost" className="rounded-full">
           <Link href="/shop">Continue shopping</Link>
         </Button>
+      </div>
+      </div>
+
+      {/* Print-only branded invoice */}
+      <div className="hidden print:block">
+        <div className="print-invoice">
+          <div className="flex items-start justify-between border-b-2 border-gray-900 pb-4">
+            <div>
+              <p className="text-2xl font-bold tracking-[0.2em]">STELLORA</p>
+              <p className="text-[10px] uppercase tracking-[0.3em] text-gray-500">Premium Finds</p>
+              <p className="mt-2 text-xs text-gray-600">
+                Kundan Baazar · support@stellora.local · stellora.local
+              </p>
+            </div>
+            <div className="text-right text-xs text-gray-600">
+              <p className="text-base font-bold text-gray-900">INVOICE</p>
+              <p className="mt-1">{order.orderNumber}</p>
+              <p>{formatDateTime(order.createdAt)}</p>
+              <p className="mt-1 uppercase">{order.status}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-6 text-xs">
+            <div>
+              <p className="font-bold uppercase tracking-wider text-gray-500">Billed &amp; shipped to</p>
+              <p className="mt-1.5 font-semibold text-gray-900">{order.shipName}</p>
+              <p className="text-gray-700">
+                {order.shipLine1}
+                {order.shipLine2 ? `, ${order.shipLine2}` : ""}, {order.shipCity}, {order.shipState} —{" "}
+                {order.shipPincode}, {order.shipCountry}
+              </p>
+              <p className="text-gray-700">{order.shipPhone}</p>
+            </div>
+            <div className="text-right">
+              <p className="font-bold uppercase tracking-wider text-gray-500">Payment</p>
+              <p className="mt-1.5 text-gray-700">
+                {order.paymentMethod === "GATEWAY" ? "Paid online" : "Pay on confirmation"} ·{" "}
+                {order.paymentStatus}
+              </p>
+              {order.couponCode && <p className="text-gray-700">Coupon: {order.couponCode}</p>}
+              {Number(order.pointsRedeemed) > 0 && (
+                <p className="text-gray-700">Points redeemed: {Number(order.pointsRedeemed)}</p>
+              )}
+            </div>
+          </div>
+
+          <table className="mt-6 w-full text-xs">
+            <thead>
+              <tr className="border-b border-gray-300 text-left uppercase tracking-wider text-gray-500">
+                <th className="pb-2">Item</th>
+                <th className="pb-2">SKU</th>
+                <th className="pb-2 text-center">Qty</th>
+                <th className="pb-2 text-right">Unit</th>
+                <th className="pb-2 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.items.map((item) => (
+                <tr key={item.id} className="border-b border-gray-200">
+                  <td className="py-2">
+                    <p className="font-semibold text-gray-900">{item.productName}</p>
+                    <p className="text-gray-500">{item.variantName}</p>
+                  </td>
+                  <td className="py-2 text-gray-600">{item.sku}</td>
+                  <td className="py-2 text-center tnum">{item.quantity}</td>
+                  <td className="py-2 text-right tnum">{formatINR(item.unitPrice)}</td>
+                  <td className="py-2 text-right tnum">{formatINR(item.lineTotal)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="mt-4 ml-auto w-56 space-y-1 text-xs tnum">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Subtotal</span>
+              <span>{formatINR(order.subtotal)}</span>
+            </div>
+            {Number(order.discountTotal) > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Discount</span>
+                <span>−{formatINR(order.discountTotal)}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-gray-500">Shipping</span>
+              <span>{Number(order.shippingFee) === 0 ? "FREE" : formatINR(order.shippingFee)}</span>
+            </div>
+            <div className="flex justify-between border-t border-gray-900 pt-1.5 text-sm font-bold text-gray-900">
+              <span>Grand Total</span>
+              <span>{formatINR(order.grandTotal)}</span>
+            </div>
+          </div>
+
+          <p className="mt-8 border-t border-gray-200 pt-3 text-center text-[10px] text-gray-500">
+            Thank you for shopping with Stellora · Prices include applicable taxes ·{" "}
+            {order.pointsEarned > 0
+              ? `${Number(order.pointsEarned)} Stellora points credited to your account`
+              : "This is a computer-generated invoice"}
+          </p>
+        </div>
       </div>
     </div>
   );

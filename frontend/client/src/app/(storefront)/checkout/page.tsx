@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Plus, ShieldCheck, Check, Tag, MapPin } from "lucide-react";
+import { Plus, ShieldCheck, Check, Tag, MapPin, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +33,14 @@ interface Address {
   isDefault: boolean;
 }
 
+interface LoyaltyInfo {
+  points: number;
+  pointValue: number;
+  minRedeem: number;
+  maxRedeemPct: number;
+  earnRate: string;
+}
+
 export default function CheckoutPage() {
   const router = useRouter();
   const cart = useStore((s) => s.cart);
@@ -44,6 +52,8 @@ export default function CheckoutPage() {
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [couponInput, setCouponInput] = useState("");
   const [couponBusy, setCouponBusy] = useState(false);
+  const [loyalty, setLoyalty] = useState<LoyaltyInfo | null>(null);
+  const [usePoints, setUsePoints] = useState(false);
   const [placing, setPlacing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [addErrors, setAddErrors] = useState<Record<string, string>>({});
@@ -68,6 +78,16 @@ export default function CheckoutPage() {
         if (def) setSelectedId(def.id);
       }
       if (ship.ok) setShipping(ship.data);
+      const loy = await fetch("/api/loyalty", { cache: "no-store" }).then((r) => r.json()).catch(() => null);
+      if (loy?.ok && loy.data && loy.data.points > 0) {
+        setLoyalty({
+          points: loy.data.points,
+          pointValue: loy.data.pointValue,
+          minRedeem: loy.data.minRedeem,
+          maxRedeemPct: loy.data.maxRedeemPct,
+          earnRate: loy.data.earnRate,
+        });
+      }
       refreshCart();
     })();
   }, [refreshCart]);
@@ -99,12 +119,26 @@ export default function CheckoutPage() {
 
   const totals = useMemo(() => {
     const subtotal = cart?.subtotal ?? 0;
-    const discount = coupon?.discount ?? 0;
+    const couponDiscount = coupon?.discount ?? 0;
+    // Mirror the server's redemption rules exactly: cap at 30% of the
+    // coupon-discounted subtotal, 1 point = ₹1, needs ≥ 100 points to apply.
+    let pointsDiscount = 0;
+    let redeemingPoints = 0;
+    if (usePoints && loyalty && loyalty.points > 0) {
+      const cap = Math.floor((subtotal - couponDiscount) * loyalty.maxRedeemPct);
+      redeemingPoints = Math.min(loyalty.points, Math.max(0, cap));
+      if (redeemingPoints >= loyalty.minRedeem) {
+        pointsDiscount = redeemingPoints * loyalty.pointValue;
+      } else {
+        redeemingPoints = 0;
+      }
+    }
+    const discount = couponDiscount + pointsDiscount;
     const payable = Math.max(subtotal - discount, 0);
     let shipFee = shipping ? shipping.baseFee : 0;
     if (shipping?.freeAbove && payable >= shipping.freeAbove) shipFee = 0;
-    return { subtotal, discount, shipFee, grand: payable + shipFee };
-  }, [cart, coupon, shipping]);
+    return { subtotal, couponDiscount, pointsDiscount, redeemingPoints, discount, shipFee, grand: payable + shipFee };
+  }, [cart, coupon, shipping, loyalty, usePoints]);
 
   async function applyCoupon() {
     if (!couponInput.trim()) return;
@@ -165,6 +199,7 @@ export default function CheckoutPage() {
         couponCode: coupon?.code,
         idempotencyKey,
         paymentMethod: payMethod,
+        redeemPoints: totals.pointsDiscount > 0,
       }),
     });
     const json = await res.json();
@@ -446,16 +481,59 @@ export default function CheckoutPage() {
                 </button>
               </p>
             )}
+
+            {/* Stellora Rewards redemption */}
+            {loyalty && loyalty.points > 0 && (
+              <div className="mt-3 rounded-md border border-primary/30 bg-accent/40 p-3">
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <Checkbox
+                    checked={usePoints}
+                    onCheckedChange={(v) => setUsePoints(v === true)}
+                    className="mt-0.5"
+                    aria-label="Redeem Stellora Rewards points"
+                  />
+                  <span className="text-sm">
+                    <span className="flex items-center gap-1.5 font-medium text-primary">
+                      <Sparkles className="h-3.5 w-3.5" /> Use Stellora Points
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground tnum">
+                      {loyalty.points.toLocaleString("en-IN")} points available · up to{" "}
+                      {Math.round(loyalty.maxRedeemPct * 100)}% of order · {loyalty.earnRate}
+                    </span>
+                    {usePoints && totals.pointsDiscount > 0 && (
+                      <span className="mt-1 block text-xs font-semibold text-primary tnum">
+                        Redeeming {totals.redeemingPoints.toLocaleString("en-IN")} points — save{" "}
+                        {formatINR(totals.pointsDiscount)}
+                      </span>
+                    )}
+                    {usePoints && totals.pointsDiscount === 0 && (
+                      <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
+                        Need at least {loyalty.minRedeem} points (or 30% of order value) to redeem
+                        here.
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </div>
+            )}
             <Separator className="my-4" />
             <div className="space-y-2.5 text-sm tnum">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
                 <span className="font-medium">{formatINR(totals.subtotal)}</span>
               </div>
-              {totals.discount > 0 && (
+              {totals.couponDiscount > 0 && (
                 <div className="flex justify-between text-primary">
                   <span>Discount ({coupon?.code})</span>
-                  <span>−{formatINR(totals.discount)}</span>
+                  <span>−{formatINR(totals.couponDiscount)}</span>
+                </div>
+              )}
+              {totals.pointsDiscount > 0 && (
+                <div className="flex justify-between text-primary">
+                  <span className="flex items-center gap-1">
+                    <Sparkles className="h-3.5 w-3.5" /> Points ({totals.redeemingPoints})
+                  </span>
+                  <span>−{formatINR(totals.pointsDiscount)}</span>
                 </div>
               )}
               <div className="flex justify-between">
@@ -468,8 +546,9 @@ export default function CheckoutPage() {
               </div>
               {shipping?.freeAbove && totals.shipFee > 0 && (
                 <p className="rounded bg-accent/60 px-3 py-2 text-xs text-accent-foreground">
-                  Add {formatINR(shipping.freeAbove - (totals.subtotal - totals.discount))} more for
-                  free shipping.
+                  Add{" "}
+                  {formatINR(shipping.freeAbove - (totals.subtotal - totals.couponDiscount - totals.pointsDiscount))}{" "}
+                  more for free shipping.
                 </p>
               )}
               <Separator />

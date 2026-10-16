@@ -547,3 +547,21 @@
   background: color-mix(in srgb, var(--muted-foreground) 35%, transparent);
   border-radius: 999px;
 }
+
+/* ---------- Print: branded invoice ---------- */
+@media print {
+  html, body {
+    background: #fff !important;
+  }
+  .print-invoice {
+    color: #111827;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    font-size: 12px;
+  }
+  /* Kill animations/transitions so nothing is mid-flight on the printed page */
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

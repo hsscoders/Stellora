@@ -164,6 +164,8 @@ export type ApiOrderDetail = {
   grandTotal: number;
   currency: string;
   couponCode: string | null;
+  pointsRedeemed: number;
+  pointsEarned: number;
   shipName: string;
   shipPhone: string;
   shipLine1: string;
@@ -237,4 +239,49 @@ export async function apiProductReviews(productId: string): Promise<ApiReviewsPa
   return serverGet<ApiReviewsPayload>(
     `/api/products/${encodeURIComponent(productId)}/reviews`
   );
+}
+
+/* ---------- Product Q&A (server-rendered on the product page) ---------- */
+
+export type ApiQuestionItem = {
+  id: string;
+  author: string;
+  question: string;
+  answer: string | null;
+  answeredAt: string | null;
+  status: string;
+  isMine: boolean;
+  createdAt: string;
+};
+
+export type ApiQuestionsPayload = {
+  questions: ApiQuestionItem[];
+};
+
+export async function apiProductQuestions(productId: string): Promise<ApiQuestionsPayload> {
+  return serverGet<ApiQuestionsPayload>(
+    `/api/products/${encodeURIComponent(productId)}/questions`
+  );
+}
+
+/* ---------- Stellora Rewards (server-rendered on the account page) ---------- */
+
+export type ApiLoyalty = {
+  points: number;
+  pointValue: number;
+  minRedeem: number;
+  maxRedeemPct: number;
+  earnRate: string;
+  history: {
+    id: string;
+    delta: number;
+    reason: string;
+    note: string | null;
+    orderNumber: string | null;
+    at: string;
+  }[];
+};
+
+export async function apiLoyalty(): Promise<ApiLoyalty> {
+  return serverGet<ApiLoyalty>("/api/loyalty");
 }

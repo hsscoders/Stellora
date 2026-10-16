@@ -123,6 +123,10 @@ const OrderSchema = new Schema(
     grandTotal: { type: Number, required: true },
     currency: { type: String, default: "INR" },
     couponCode: { type: String, default: null },
+    // Stellora Rewards: points spent at checkout (each = ₹1 off) and points
+    // credited when the order was confirmed. Ledger-backed, refundable on cancel.
+    pointsRedeemed: { type: Number, default: 0, min: 0 },
+    pointsEarned: { type: Number, default: 0, min: 0 },
     idempotencyKey: { type: String, required: true, unique: true },
     shipName: { type: String, required: true },
     shipPhone: { type: String, required: true },

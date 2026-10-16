@@ -95,6 +95,7 @@ export const checkoutSchema = z.object({
   couponCode: z.string().trim().max(40).optional(),
   idempotencyKey: z.string().min(8).max(64),
   paymentMethod: z.enum(["PAY_ON_CONFIRMATION", "GATEWAY"]).default("PAY_ON_CONFIRMATION"),
+  redeemPoints: z.boolean().default(false),
 });
 
 export const trackOrderSchema = z.object({
@@ -285,4 +286,26 @@ export const returnStatusSchema = z.object({
 
 export const reviewModerationSchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "REJECTED"]),
+});
+
+/* ---------- Product Q&A ---------- */
+
+export const questionCreateSchema = z.object({
+  question: z
+    .string()
+    .trim()
+    .min(10, "Please write at least 10 characters")
+    .max(500, "Question is too long"),
+});
+
+export const questionAnswerSchema = z.object({
+  answer: z
+    .string()
+    .trim()
+    .min(5, "Answer must be at least 5 characters")
+    .max(1000, "Answer is too long"),
+});
+
+export const questionModerationSchema = z.object({
+  status: z.enum(["PENDING", "ANSWERED", "HIDDEN"]),
 });

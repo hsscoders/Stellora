@@ -4,6 +4,7 @@ import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireUser } from "../lib/auth";
 import { rateLimit } from "../lib/rate-limit";
 import { money } from "../lib/money";
+import { accrueEarn } from "../services/loyalty";
 import {
   getPaymentProvider,
   isDemoMode,
@@ -197,6 +198,19 @@ paymentsRouter.post(
     }
     await order.save();
 
-    return ok(res, { orderNumber: order.orderNumber, paymentStatus: order.paymentStatus, status: order.status });
+    // Stellora Rewards: credit earn points once the order is confirmed via
+    // payment. Ledger-guarded, so retries and double-confirms are no-ops.
+    let pointsEarned = 0;
+    if (order.status === "CONFIRMED") {
+      const earn = await accrueEarn(String(order._id), "Payment received online");
+      pointsEarned = earn.earned;
+    }
+
+    return ok(res, {
+      orderNumber: order.orderNumber,
+      paymentStatus: order.paymentStatus,
+      status: order.status,
+      pointsEarned,
+    });
   })
 );

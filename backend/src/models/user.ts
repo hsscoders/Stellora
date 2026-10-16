@@ -52,6 +52,9 @@ const UserSchema = new Schema(
       default: [],
       set: function (this: any, val: any) { return val; },
     },
+    // Stellora Rewards — 1 point earned per ₹100 paid, 1 point = ₹1 to redeem.
+    // Fast counter; the loyalty ledger collection is the audit source of truth.
+    loyaltyPoints: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true, collection: "users" }
 );

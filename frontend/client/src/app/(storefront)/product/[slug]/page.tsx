@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BadgeCheck, Banknote, RotateCcw, ShieldCheck, Star, Truck } from "lucide-react";
-import { apiProduct, apiProducts, apiProductReviews, apiMe } from "@/lib/server-api";
+import { apiProduct, apiProducts, apiProductReviews, apiProductQuestions, apiMe } from "@/lib/server-api";
 import { ProductCard } from "@/components/stellora/product-card";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
 import { ProductGallery } from "@/components/stellora/product-detail-client";
 import { ProductPurchase } from "@/components/stellora/product-purchase";
 import { RecordRecentlyViewed } from "@/components/stellora/recently-viewed";
 import { ReviewsSection } from "@/components/stellora/reviews-section";
+import { QaSection } from "@/components/stellora/qa-section";
 import { DeliveryEstimator } from "@/components/stellora/delivery-estimator";
 import { StickyBuyBar } from "@/components/stellora/sticky-buy-bar";
 import { ShareButton } from "@/components/stellora/share-button";
@@ -69,8 +70,9 @@ export default async function ProductPage({
   const relatedRes = await apiProducts({ category: product.category?.slug ?? "", page: 1 }).catch(() => ({ products: [] as never[] }));
   const related = relatedRes.products.filter((p) => p.id !== product.id).slice(0, 4);
 
-  const [reviewsData, session] = await Promise.all([
+  const [reviewsData, questionsData, session] = await Promise.all([
     apiProductReviews(product.id).catch(() => null),
+    apiProductQuestions(product.id).catch(() => ({ questions: [] })),
     apiMe().catch(() => ({ user: null })),
   ]);
 
@@ -277,6 +279,14 @@ export default async function ProductPage({
           />
         </div>
       )}
+
+      <div id="qa" className="mt-16 scroll-mt-28">
+        <QaSection
+          productId={product.id}
+          initialQuestions={questionsData.questions}
+          isLoggedIn={!!session.user}
+        />
+      </div>
 
       {/* Mobile-only sticky purchase bar — always one tap from checkout */}
       {v && (

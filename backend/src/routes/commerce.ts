@@ -7,6 +7,7 @@ import { createOrderFromCart } from "../services/orders";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
 import { validateCoupon } from "../services/pricing";
 import { getCartView, resolveCart } from "../services/cart";
+import { getLoyaltySnapshot } from "../services/loyalty";
 import { money } from "../lib/money";
 
 export const commerceRouter = Router();
@@ -30,9 +31,20 @@ commerceRouter.post(
       couponCode: data.couponCode || undefined,
       idempotencyKey: data.idempotencyKey,
       paymentMethod: data.paymentMethod,
+      redeemPoints: data.redeemPoints,
     });
 
     return ok(res, result, result.replayed ? 200 : 201);
+  })
+);
+
+/* ---------- Stellora Rewards (my points balance + ledger) ---------- */
+
+commerceRouter.get(
+  "/loyalty",
+  handle(async (req, res) => {
+    const user = await requireUser(req);
+    return ok(res, await getLoyaltySnapshot(user.id));
   })
 );
 
@@ -80,6 +92,8 @@ export function serializeOrderDetail(o: any) {
     grandTotal: o.grandTotal,
     currency: o.currency,
     couponCode: o.couponCode ?? null,
+    pointsRedeemed: o.pointsRedeemed ?? 0,
+    pointsEarned: o.pointsEarned ?? 0,
     idempotencyKey: o.idempotencyKey,
     shipName: o.shipName,
     shipPhone: o.shipPhone,

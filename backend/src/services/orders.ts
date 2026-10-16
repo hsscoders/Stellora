@@ -1,10 +1,11 @@
 import mongoose from "mongoose";
-import { Order, Product, StockMovement, Coupon, User, Cart } from "../models";
+import { Order, Product, StockMovement, Coupon, User, Cart, LoyaltyLedger } from "../models";
 import { HttpError } from "../lib/http";
 import { d, money } from "../lib/money";
 import { generateOrderNumber } from "../lib/utils";
 import { getCartView, type CartView } from "./cart";
 import { getActiveShippingRate, computeShipping, validateCoupon } from "./pricing";
+import { MIN_REDEEM, maxRedeemable, settleOnCancel, accrueEarn } from "./loyalty";
 
 export interface CheckoutInput {
   userId: string;
@@ -12,6 +13,7 @@ export interface CheckoutInput {
   couponCode?: string;
   idempotencyKey: string;
   paymentMethod?: "PAY_ON_CONFIRMATION" | "GATEWAY";
+  redeemPoints?: boolean;
 }
 
 export interface CheckoutResult {
@@ -83,6 +85,21 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
     couponId = result.coupon.id;
     couponCode = result.coupon.code;
   }
+
+  // Stellora Rewards redemption — decided entirely server-side from the live
+  // balance, capped at 30% of the coupon-discounted subtotal, min 100 points.
+  let pointsRedeemed = 0;
+  if (input.redeemPoints) {
+    const bal = await User.findById(input.userId)
+      .select("loyaltyPoints")
+      .lean<{ loyaltyPoints?: number } | null>();
+    const balance = Math.max(0, bal?.loyaltyPoints ?? 0);
+    const cap = maxRedeemable(d(subtotal).minus(discountTotal).toNumber());
+    const redeem = Math.min(balance, cap);
+    if (redeem >= MIN_REDEEM) pointsRedeemed = redeem; // silently skipped when too small
+  }
+  discountTotal = money(d(discountTotal).plus(pointsRedeemed));
+
   const rate = await getActiveShippingRate();
   const shippingFee = computeShipping(
     rate ? { baseFee: rate.baseFee, freeAbove: rate.freeAbove } : null,
@@ -118,6 +135,22 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
           }
         }
 
+        // Conditional points spend — race-safe against concurrent checkouts
+        if (pointsRedeemed > 0) {
+          const spent = await User.updateOne(
+            { _id: input.userId, loyaltyPoints: { $gte: pointsRedeemed } },
+            { $inc: { loyaltyPoints: -pointsRedeemed } },
+            { session }
+          );
+          if (spent.modifiedCount !== 1) {
+            throw new HttpError(
+              "NOT_ENOUGH_POINTS",
+              "Your rewards balance changed. Please review your points selection.",
+              409
+            );
+          }
+        }
+
         const [createdOrder] = await Order.create(
           [
             {
@@ -131,6 +164,7 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
               shippingFee,
               grandTotal,
               couponCode,
+              pointsRedeemed,
               idempotencyKey: input.idempotencyKey,
               shipName: address.fullName,
               shipPhone: address.phone,
@@ -187,6 +221,22 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
           await Coupon.updateOne(
             { _id: couponId },
             { $push: { redemptions: { orderId: createdOrder._id, userId: input.userId, amount: discountTotal } } },
+            { session }
+          );
+        }
+
+        // Loyalty ledger entry for the redeemed points (audit trail)
+        if (pointsRedeemed > 0) {
+          await LoyaltyLedger.create(
+            [
+              {
+                userId: input.userId,
+                orderId: createdOrder._id,
+                delta: -pointsRedeemed,
+                reason: "REDEEM",
+                note: `Redeemed at checkout on ${orderNumber}`,
+              },
+            ],
             { session }
           );
         }
@@ -309,6 +359,15 @@ export async function transitionOrderStatus(
         }
       }
     });
+
+    // Loyalty settlement AFTER the transaction commits — ledger-guarded and
+    // idempotent, so a crash here can be safely retried.
+    if (wasCancel) {
+      await settleOnCancel(orderId);
+    }
+    if (nextStatus === "CONFIRMED") {
+      await accrueEarn(orderId, "Order confirmed by store");
+    }
   } finally {
     await session.endSession();
   }
