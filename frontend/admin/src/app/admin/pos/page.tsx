@@ -1,14 +1,20 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Banknote,
+  Barcode,
+  Camera,
   CreditCard,
+  ExternalLink,
+  History,
   Info,
   Loader2,
   Minus,
   PackageOpen,
+  Pause,
   Plus,
   Printer,
   ReceiptText,
@@ -17,8 +23,11 @@ import {
   ShoppingBasket,
   Smartphone,
   Store,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
+import { playPosSound, posSoundEnabled, setPosSoundEnabled } from "@/lib/pos-sound";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -104,6 +113,16 @@ interface ReceiptData {
   method: PaymentMethod;
 }
 
+interface HeldBill {
+  id: string;
+  at: number;
+  lines: BillLine[];
+  discount: string;
+  customerEmail: string;
+  note: string;
+  paymentMethod: PaymentMethod;
+}
+
 const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Banknote }[] = [
   { value: "CASH", label: "Cash", icon: Banknote },
   { value: "CARD", label: "Card", icon: CreditCard },
@@ -111,6 +130,7 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Bankn
 ];
 
 export default function AdminPosPage() {
+  const router = useRouter();
   /* catalog */
   const [products, setProducts] = useState<ApiProduct[] | null>(null);
   const [query, setQuery] = useState("");
@@ -134,6 +154,23 @@ export default function AdminPosPage() {
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [billOpen, setBillOpen] = useState(false);
   const [receiptFooter, setReceiptFooter] = useState("");
+
+  /* scanner + terminal + sounds + held bills */
+  const [terminalId, setTerminalId] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  const [scanValue, setScanValue] = useState("");
+  const [scanFlash, setScanFlash] = useState<"ok" | "err" | null>(null);
+  const [held, setHeld] = useState<HeldBill[]>([]);
+  const [heldOpen, setHeldOpen] = useState(false);
+  const [camOpen, setCamOpen] = useState(false);
+  const [camSupported, setCamSupported] = useState(true);
+  const [soundOn, setSoundOn] = useState(true);
+  const scanRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const camTimerRef = useRef<number | null>(null);
+  const scanSeq = useRef(0);
+  const lastScanRef = useRef<{ code: string; at: number } | null>(null);
 
   const fetchProducts = useCallback(async (targetPage: number, q: string, append: boolean) => {
     const seq = ++seqRef.current;
@@ -194,6 +231,158 @@ export default function AdminPosPage() {
     };
   }, []);
 
+  /* Terminal + bill restore. sessionStorage is per-window/tab, so every
+     cashier window gets its own isolated bill — multiple windows can bill
+     side by side without overwriting each other. */
+  useEffect(() => {
+    try {
+      let tid = sessionStorage.getItem("pos_terminal");
+      if (!tid) {
+        tid = Math.random().toString(36).slice(2, 6).toUpperCase();
+        sessionStorage.setItem("pos_terminal", tid);
+      }
+      setTerminalId(tid);
+      const saved = sessionStorage.getItem(`pos_bill_${tid}`);
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (Array.isArray(p.lines) && p.lines.length > 0) {
+          setBill(p.lines as BillLine[]);
+          setDiscount(typeof p.discount === "string" ? p.discount : "");
+          setCustomerEmail(typeof p.customerEmail === "string" ? p.customerEmail : "");
+          setNote(typeof p.note === "string" ? p.note : "");
+          if (p.paymentMethod === "CASH" || p.paymentMethod === "CARD" || p.paymentMethod === "UPI") {
+            setPaymentMethod(p.paymentMethod);
+          }
+        }
+      }
+      const savedHeld = sessionStorage.getItem(`pos_held_${tid}`);
+      if (savedHeld) {
+        const h = JSON.parse(savedHeld);
+        if (Array.isArray(h)) setHeld(h as HeldBill[]);
+      }
+      setSoundOn(posSoundEnabled());
+    } catch {
+      /* storage unavailable (privacy mode) — in-memory bill still works */
+    }
+    setHydrated(true);
+  }, []);
+
+  /* Persist the working bill so a refresh or accidental close never loses it. */
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      sessionStorage.setItem(
+        `pos_bill_${terminalId}`,
+        JSON.stringify({ lines: bill, discount, customerEmail, note, paymentMethod })
+      );
+    } catch {}
+  }, [bill, discount, customerEmail, note, paymentMethod, hydrated, terminalId]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      sessionStorage.setItem(`pos_held_${terminalId}`, JSON.stringify(held));
+    } catch {}
+  }, [held, hydrated, terminalId]);
+
+  /* USB barcode scanners are keyboard-wedge devices: they type the code and
+     press Enter. Capture those keystrokes even when no input is focused, so
+     the cashier can keep working without clicking back into a field. */
+  useEffect(() => {
+    let buf = "";
+    let last = 0;
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)
+      ) {
+        return; // normal typing in fields — the scan input has its own handler
+      }
+      const now = Date.now();
+      if (now - last > 150) buf = "";
+      last = now;
+      if (e.key === "Enter") {
+        const code = buf;
+        buf = "";
+        if (code.trim().length >= 4) void handleScanRef.current(code.trim());
+        return;
+      }
+      if (e.key.length === 1) buf += e.key;
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Camera scanning via the native BarcodeDetector API (Chrome/Edge).
+     Graceful fallback: browsers without it just show a hint — USB scanners
+     and typed SKUs work everywhere. The stream is fully released on close. */
+  useEffect(() => {
+    if (!camOpen) return;
+    let cancelled = false;
+    interface DetectedCode {
+      rawValue: string;
+    }
+    interface DetectorLike {
+      detect: (src: HTMLVideoElement) => Promise<DetectedCode[]>;
+    }
+    const BD = (
+      window as unknown as {
+        BarcodeDetector?: new (opts: { formats: string[] }) => DetectorLike;
+      }
+    ).BarcodeDetector;
+    if (!BD) {
+      setCamSupported(false);
+      return;
+    }
+    setCamSupported(true);
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+        const detector = new BD({
+          formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code"],
+        });
+        const timer = window.setInterval(async () => {
+          const video = videoRef.current;
+          if (!video || video.readyState < 2) return;
+          try {
+            const codes = await detector.detect(video);
+            if (codes.length > 0 && codes[0].rawValue) {
+              void handleScanRef.current(codes[0].rawValue);
+            }
+          } catch {
+            /* transient decode errors are normal — keep polling */
+          }
+        }, 350);
+        camTimerRef.current = timer;
+      } catch {
+        if (!cancelled) setCamSupported(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (camTimerRef.current !== null) {
+        window.clearInterval(camTimerRef.current);
+        camTimerRef.current = null;
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camOpen]);
+
   /* ------------------------------ bill logic ------------------------------ */
 
   const subtotal = useMemo(
@@ -208,18 +397,22 @@ export default function AdminPosPage() {
 
   function addVariant(product: ApiProduct, v: ApiVariant) {
     if (!v.isActive || v.stock <= 0) {
+      playPosSound("error");
       toast.error(`${product.name} (${v.name}) is out of stock`);
       return;
     }
     const existing = bill.find((l) => l.variantId === v.id);
     if (existing) {
       if (existing.quantity + 1 > v.stock) {
+        playPosSound("error");
         toast.error(`Only ${v.stock} in stock`);
         return;
       }
+      playPosSound("add");
       setBill(bill.map((l) => (l.variantId === v.id ? { ...l, quantity: l.quantity + 1 } : l)));
       return;
     }
+    playPosSound("add");
     setBill([
       ...bill,
       {
@@ -240,6 +433,7 @@ export default function AdminPosPage() {
     const next = line.quantity + delta;
     if (next < 1) return;
     if (next > line.stock) {
+      playPosSound("error");
       toast.error(`Only ${line.stock} in stock`);
       return;
     }
@@ -251,10 +445,90 @@ export default function AdminPosPage() {
     if (active.length === 1) {
       addVariant(p, active[0]);
     } else if (active.length === 0) {
+      playPosSound("error");
       toast.error(`${p.name} is out of stock`);
     } else {
+      playPosSound("click");
       setVariantPicker(p);
     }
+  }
+
+  /* ------------------------------ barcode scanning ------------------------------ */
+
+  async function handleScan(rawCode: string) {
+    const code = rawCode.trim();
+    if (!code) return;
+    // Debounce identical codes (cameras hold the barcode in frame; scanners
+    // can double-fire) so one physical scan adds exactly one unit.
+    const last = lastScanRef.current;
+    if (last && last.code === code && Date.now() - last.at < 1200) return;
+    lastScanRef.current = { code, at: Date.now() };
+
+    const seq = ++scanSeq.current;
+    try {
+      const res = await fetch(`/api/admin/pos/lookup?code=${encodeURIComponent(code)}`, {
+        cache: "no-store",
+      });
+      const json = await res.json();
+      if (seq !== scanSeq.current) return;
+      if (json.ok) {
+        const product = json.data.product as ApiProduct;
+        const variant = json.data.variant as ApiVariant;
+        playPosSound("scan");
+        addVariant(product, variant);
+        setScanFlash("ok");
+        setTimeout(() => setScanFlash(null), 600);
+        toast.success(`${product.name} — ${variant.name} added`);
+      } else {
+        playPosSound("error");
+        setScanFlash("err");
+        setTimeout(() => setScanFlash(null), 600);
+        toast.error(json.error?.message ?? `No product found for "${code}"`);
+      }
+    } catch {
+      playPosSound("error");
+      setScanFlash("err");
+      setTimeout(() => setScanFlash(null), 600);
+      toast.error("Network error while looking up the code");
+    }
+  }
+  const handleScanRef = useRef(handleScan);
+  handleScanRef.current = handleScan;
+
+  function holdBill() {
+    if (bill.length === 0) return;
+    const h: HeldBill = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      at: Date.now(),
+      lines: bill,
+      discount,
+      customerEmail,
+      note,
+      paymentMethod,
+    };
+    setHeld([h, ...held].slice(0, 12));
+    playPosSound("click");
+    resetBill();
+    toast.success("Bill held — start the next customer");
+  }
+
+  function resumeBill(h: HeldBill) {
+    setBill(h.lines);
+    setDiscount(h.discount);
+    setCustomerEmail(h.customerEmail);
+    setNote(h.note);
+    setPaymentMethod(h.paymentMethod);
+    setHeld(held.filter((x) => x.id !== h.id));
+    playPosSound("click");
+    setHeldOpen(false);
+    toast.success("Held bill restored");
+  }
+
+  function toggleSound() {
+    const next = !soundOn;
+    setSoundOn(next);
+    setPosSoundEnabled(next);
+    if (next) playPosSound("add");
   }
 
   function resetBill() {
@@ -291,15 +565,18 @@ export default function AdminPosPage() {
       if (json.ok) {
         const order = json.data.order as PosOrder;
         const pointsEarned = Number(json.data.pointsEarned ?? 0);
+        playPosSound("success");
         toast.success(`Order ${order.orderNumber} billed — ${formatINR(order.grandTotal)}`);
         setReceipt({ order, pointsEarned, method: paymentMethod });
         setBillOpen(false);
         resetBill();
         void fetchProducts(1, query, false); // refresh stock badges
       } else {
+        playPosSound("error");
         toast.error(json.error?.message ?? "Could not complete the sale");
       }
     } catch {
+      playPosSound("error");
       toast.error("Network error — sale was not completed");
     } finally {
       setBusy(false);
@@ -310,6 +587,33 @@ export default function AdminPosPage() {
 
   const billPanel = (idPrefix: string) => (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
+      {/* hold / held-bills toolbar (Stocky-style queue) */}
+      <div className="flex items-center gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 rounded-full text-xs"
+          disabled={bill.length === 0}
+          onClick={holdBill}
+        >
+          <Pause className="h-3 w-3" /> Hold bill
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 rounded-full text-xs"
+          disabled={held.length === 0}
+          onClick={() => {
+            playPosSound("click");
+            setHeldOpen(true);
+          }}
+        >
+          <History className="h-3 w-3" /> Held ({held.length})
+        </Button>
+      </div>
+
       {/* lines */}
       <div className="stellora-scroll max-h-72 min-h-0 overflow-y-auto" aria-live="polite">
         {bill.length === 0 ? (
@@ -361,7 +665,10 @@ export default function AdminPosPage() {
                     type="button"
                     aria-label={`Remove ${l.productName} from bill`}
                     className="rounded-full p-1 text-muted-foreground transition hover:bg-accent hover:text-destructive"
-                    onClick={() => setBill(bill.filter((x) => x.variantId !== l.variantId))}
+                    onClick={() => {
+                      playPosSound("remove");
+                      setBill(bill.filter((x) => x.variantId !== l.variantId));
+                    }}
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -424,7 +731,10 @@ export default function AdminPosPage() {
               key={value}
               type="button"
               aria-pressed={paymentMethod === value}
-              onClick={() => setPaymentMethod(value)}
+              onClick={() => {
+                setPaymentMethod(value);
+                playPosSound("click");
+              }}
               className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-2.5 text-xs font-semibold transition ${
                 paymentMethod === value
                   ? "bg-primary text-primary-foreground shadow-sm"
@@ -493,9 +803,46 @@ export default function AdminPosPage() {
             Counter billing — ring up walk-in sales in seconds.
           </p>
         </div>
-        <Button variant="outline" onClick={resetBill} className="ml-auto rounded-full">
-          New Bill
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {terminalId && (
+            <Badge variant="outline" className="tnum shrink-0" title="This cashier window's isolated terminal id">
+              Window T-{terminalId}
+            </Badge>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            onClick={() => window.open(window.location.href, "_blank", "noopener")}
+            title="Open another independent cashier window"
+          >
+            <ExternalLink className="h-4 w-4" /> New window
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            onClick={() => {
+              playPosSound("click");
+              router.push("/admin/barcodes");
+            }}
+          >
+            <Barcode className="h-4 w-4" /> Barcode labels
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0 rounded-full"
+            aria-label={soundOn ? "Mute POS sounds" : "Unmute POS sounds"}
+            title={soundOn ? "Mute sounds" : "Unmute sounds"}
+            onClick={toggleSound}
+          >
+            {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </Button>
+          <Button variant="outline" onClick={resetBill} className="rounded-full">
+            New Bill
+          </Button>
+        </div>
       </div>
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Info className="h-3.5 w-3.5 shrink-0" />
@@ -505,6 +852,50 @@ export default function AdminPosPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* LEFT — catalog */}
         <section className="min-w-0 space-y-4">
+          {/* scanner bar — USB scanners type here, or use the camera */}
+          <div
+            className={`flex items-center gap-2 rounded-lg border-2 bg-muted/30 px-3 py-1.5 transition-colors ${
+              scanFlash === "err"
+                ? "border-destructive"
+                : scanFlash === "ok"
+                  ? "border-emerald-500"
+                  : "border-border"
+            }`}
+          >
+            <Barcode className="h-5 w-5 shrink-0 text-muted-foreground" />
+            <Input
+              ref={scanRef}
+              value={scanValue}
+              onChange={(e) => setScanValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const v = scanValue;
+                  setScanValue("");
+                  void handleScan(v);
+                }
+              }}
+              placeholder="Scan barcode or type SKU, then Enter"
+              className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+              aria-label="Barcode scanner input"
+              autoComplete="off"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 shrink-0 rounded-full"
+              aria-label="Scan with camera"
+              title="Scan with camera"
+              onClick={() => {
+                playPosSound("click");
+                setCamOpen(true);
+              }}
+            >
+              <Camera className="h-4 w-4" />
+            </Button>
+          </div>
+
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -688,6 +1079,95 @@ export default function AdminPosPage() {
                 </button>
               ))}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* camera scanner dialog */}
+      <Dialog open={camOpen} onOpenChange={setCamOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Camera className="h-4 w-4" /> Camera scanner
+            </DialogTitle>
+            <DialogDescription>
+              Point the camera at a barcode — matched products are added to the bill automatically.
+            </DialogDescription>
+          </DialogHeader>
+          {camSupported ? (
+            <div className="overflow-hidden rounded-md border border-border bg-black">
+              <video ref={videoRef} playsInline muted className="aspect-video w-full object-cover" />
+            </div>
+          ) : (
+            <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+              Camera scanning is not available in this browser (unsupported API or camera permission
+              denied). Use a USB barcode scanner or type the SKU instead.
+            </p>
+          )}
+          <Button variant="outline" className="w-full rounded-full" onClick={() => setCamOpen(false)}>
+            Close
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* held bills dialog */}
+      <Dialog open={heldOpen} onOpenChange={setHeldOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-4 w-4" /> Held bills
+            </DialogTitle>
+            <DialogDescription>
+              Paused customers wait here — resume any bill to continue billing.
+            </DialogDescription>
+          </DialogHeader>
+          {held.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+              No bills on hold.
+            </p>
+          ) : (
+            <div className="stellora-scroll max-h-80 space-y-1.5 overflow-y-auto">
+              {held.map((h) => (
+                <div
+                  key={h.id}
+                  className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {h.lines.length} item{h.lines.length === 1 ? "" : "s"} ·{" "}
+                      {formatINR(h.lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0))}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Held at {new Date(h.at).toLocaleTimeString()}
+                      {h.note ? ` · ${h.note}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 rounded-full text-xs"
+                      onClick={() => resumeBill(h)}
+                    >
+                      Resume
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7 rounded-full"
+                      aria-label="Discard held bill"
+                      onClick={() => {
+                        playPosSound("remove");
+                        setHeld(held.filter((x) => x.id !== h.id));
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

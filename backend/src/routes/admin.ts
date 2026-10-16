@@ -1689,3 +1689,37 @@ adminRouter.post(
     );
   })
 );
+
+/* ================= POS scanner — barcode/SKU lookup ================= */
+
+adminRouter.get(
+  "/admin/pos/lookup",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    await requireAdmin(req);
+
+    const raw = String(req.query.code ?? "").trim();
+    const code = raw.toUpperCase();
+    if (!code || code.length > 64) {
+      return fail(res, "VALIDATION_ERROR", "A valid scan code is required.", 422);
+    }
+
+    // The SKU is the barcode identity — printed labels encode CODE128 of the
+    // SKU, so an exact match is both the fastest and the correct semantics for
+    // a scanner (which delivers the whole code in one shot).
+    const product = await Product.findOne({
+      status: "ACTIVE",
+      "variants.sku": code,
+    })
+      .populate("categoryId", "name slug")
+      .lean<any>();
+    if (product) {
+      const api = serializeProduct(product);
+      const variant = api.variants.find((v: any) => String(v.sku).toUpperCase() === code);
+      if (variant) {
+        return ok(res, { product: api, variant });
+      }
+    }
+    return fail(res, "NOT_FOUND", `No active product matches code "${raw}".`, 404);
+  })
+);
