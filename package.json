@@ -9,12 +9,15 @@
   ],
   "scripts": {
     "dev": "bash scripts/dev-server.sh",
-    "dev:frontend": "cd frontend/client && next dev -p 3000",
-    "dev:admin": "cd frontend/admin && next dev -p 3001",
+    "dev:frontend": "cd frontend/client && bun next dev -p 3000",
+    "dev:admin": "cd frontend/admin && bun next dev -p 3001",
     "dev:backend": "cd backend && bun src/server.ts",
+    "start:backend": "cd backend && bun src/server.ts",
     "seed": "cd backend && bun src/seed.ts",
-    "lint": "cd frontend/client && eslint . && cd ../admin && eslint .",
-    "typecheck": "cd frontend/client && tsc --noEmit && cd ../admin && tsc --noEmit && cd ../../backend && tsc --noEmit",
-    "build": "cd frontend/client && next build && cd ../admin && next build"
+    "lint": "cd frontend/client && bun eslint . && cd ../admin && bun eslint .",
+    "typecheck": "cd frontend/client && bun tsc --noEmit && cd ../admin && bun tsc --noEmit && cd ../../backend && bun tsc --noEmit",
+    "build": "bun run build:client && bun run build:admin",
+    "build:client": "cd frontend/client && bun next build",
+    "build:admin": "cd frontend/admin && bun next build"
   }
 }

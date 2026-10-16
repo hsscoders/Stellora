@@ -1,0 +1,24 @@
+# Netlify — admin console site (Stellora admin)
+#
+# Monorepo setup: in Netlify UI set
+#   Base directory  =  frontend/admin
+# Netlify reads this netlify.toml from the base directory.
+#
+# Required site environment variables (Site configuration → Environment variables):
+#   BACKEND_URL — Express API base, e.g. https://stellora-api.onrender.com (no trailing slash)
+#
+# The app keeps basePath "/admin-console", so on its own Netlify domain it is
+# served at https://<site>.netlify.app/admin-console — identical to the paths
+# the storefront proxy exposes, so absolute asset paths line up either way.
+
+[build]
+  # bun.lock lives at the repo root (bun workspace) — install from there, then
+  # build just the admin app.
+  command = "cd ../.. && bun install --frozen-lockfile && bun run build:admin"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

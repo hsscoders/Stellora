@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
+// Admin console origin. Local dev: the sibling Next app on :3001.
+// On Netlify: set ADMIN_URL to the admin site's own URL
+// (e.g. https://stellora-admin.netlify.app) so /admin-console/* proxies there.
+const ADMIN = process.env.ADMIN_URL ?? "http://127.0.0.1:3001";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -37,10 +41,10 @@ const nextConfig: NextConfig = {
       { source: "/api/:path*", destination: `${BACKEND}/api/:path*` },
       // Uploaded media served by the backend
       { source: "/uploads/:path*", destination: `${BACKEND}/api/media/:path*` },
-      // Admin console is a separate Next.js app on port 3001, proxied in so the
-      // whole site is reachable from a single external origin.
-      { source: "/admin-console/:path*", destination: `http://127.0.0.1:3001/admin-console/:path*` },
-      { source: "/admin-console", destination: `http://127.0.0.1:3001/admin-console` },
+      // Admin console is a separate Next.js app, proxied in so the whole site
+      // is reachable from a single external origin (cookies stay same-origin).
+      { source: "/admin-console/:path*", destination: `${ADMIN}/admin-console/:path*` },
+      { source: "/admin-console", destination: `${ADMIN}/admin-console` },
     ];
   },
   async headers() {
