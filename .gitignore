@@ -6,21 +6,17 @@ node_modules/
 out/
 next-env.d.ts
 
-# Environment & secrets
+# Environment & secrets (never commit real credentials)
 .env
 .env*.local
-
-# Dev database (user-space MariaDB)
-.mariadb/
+!.env.example
 
 # Uploads created at runtime
-public/uploads/*
-!public/uploads/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
 
 # Logs
 *.log
-dev.log
-server.log
 
 # OS / editor
 .DS_Store

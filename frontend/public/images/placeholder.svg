@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#F3EDE1"/>
+  <g fill="none" stroke="#C3A25C" stroke-width="2">
+    <path d="M200 140 L260 200 L200 260 L140 200 Z"/>
+    <circle cx="200" cy="200" r="90"/>
+  </g>
+  <text x="200" y="330" text-anchor="middle" font-family="Georgia, serif" font-size="20" letter-spacing="6" fill="#A9873F">STELLORA</text>
+</svg>

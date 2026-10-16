@@ -1,0 +1,79 @@
+"use client";
+
+import { useState } from "react";
+import type { ProductCardData } from "@/lib/types";
+import { VariantPicker } from "@/components/stellora/product-detail-client";
+import { AddToCartPanel } from "@/components/stellora/add-to-cart-panel";
+import { Separator } from "@/components/ui/separator";
+
+type Variant = ProductCardData["variants"][number];
+
+/**
+ * Client island that owns the selected-variant state and re-renders
+ * price/stock/add-to-cart accordingly. Server passes the full variant list.
+ */
+export function ProductPurchase({
+  variants,
+  currencyNote,
+}: {
+  variants: Variant[];
+  currencyNote?: string;
+}) {
+  const firstAvailable = variants.find((v) => v.stock > 0) ?? variants[0] ?? null;
+  const [selected, setSelected] = useState<Variant | null>(firstAvailable);
+
+  if (!selected) {
+    return <p className="text-sm text-muted-foreground">Currently unavailable.</p>;
+  }
+
+  const onSale = selected.compareAtPrice && Number(selected.compareAtPrice) > Number(selected.price);
+
+  return (
+    <div>
+      <div className="flex items-baseline gap-3 tnum">
+        <span className="font-serif text-3xl font-semibold">
+          {new Intl.NumberFormat("en-IN", {
+            style: "currency",
+            currency: "INR",
+            maximumFractionDigits: Number(selected.price) % 1 === 0 ? 0 : 2,
+          }).format(Number(selected.price))}
+        </span>
+        {onSale && (
+          <>
+            <span className="text-lg text-muted-foreground line-through">
+              {new Intl.NumberFormat("en-IN", {
+                style: "currency",
+                currency: "INR",
+                maximumFractionDigits: 0,
+              }).format(Number(selected.compareAtPrice))}
+            </span>
+            <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-semibold text-primary">
+              Save{" "}
+              {new Intl.NumberFormat("en-IN", {
+                style: "currency",
+                currency: "INR",
+                maximumFractionDigits: 0,
+              }).format(Number(selected.compareAtPrice) - Number(selected.price))}
+            </span>
+          </>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Taxes included · {selected.stock > 0 ? "In stock" : "Out of stock"}
+      </p>
+
+      <Separator className="my-6" />
+
+      <VariantPicker variants={variants} selected={selected} onSelect={setSelected} />
+
+      <div className="mt-6">
+        <AddToCartPanel
+          variants={variants}
+          selected={selected}
+          maxStock={selected.stock}
+          key={selected.id}
+        />
+      </div>
+    </div>
+  );
+}

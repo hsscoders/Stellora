@@ -1,30 +1,29 @@
 #!/bin/bash
-# Stellora dev server launcher — used by the workspace root's `bun run dev`.
-# Starts MariaDB (user-space) if needed, syncs Prisma schema, then runs Next.js.
+# Stellora monorepo dev launcher — starts the full stack:
+#   backend  (Express + Mongoose, MongoDB Atlas)  -> http://127.0.0.1:4000
+#   admin    (Next.js, basePath /admin-console)   -> http://127.0.0.1:3001
+#   frontend (Next.js customer storefront)        -> http://127.0.0.1:3000
+# The frontend proxies /api/* -> backend and /admin-console/* -> admin,
+# so a single external origin (port 3000) serves everything.
 set -e
 REPO_DIR="/home/z/my-project/stellora-repo"
-export DATABASE_URL="mysql://stellora:stellora_dev_pw@127.0.0.1:33061/stellora"
-export NODE_ENV="development"
 
-cd "$REPO_DIR"
-
-# 1. Database up (idempotent)
-bash scripts/setup-mariadb.sh >/dev/null 2>&1 || true
-bash scripts/start-db-fork.sh 2>/dev/null || true
+# 1. Backend API (detached)
+bash "$REPO_DIR/backend/scripts/start-backend-fork.sh"
 sleep 1
 
-# 2. Install deps if missing
-if [ ! -d node_modules ]; then
-  bun install
-fi
+# 2. Install frontend/admin deps if missing
+for app in frontend admin; do
+  if [ ! -d "$REPO_DIR/$app/node_modules" ]; then
+    (cd "$REPO_DIR/$app" && bun install >/dev/null 2>&1)
+  fi
+done
 
-# 3. Ensure Prisma client exists
-if [ ! -d node_modules/.prisma/client ] && [ ! -d node_modules/@prisma/client ]; then
-  bunx prisma generate >/dev/null 2>&1 || true
-fi
+# 3. Admin console (detached)
+bash "$REPO_DIR/admin/start-admin-fork.sh"
+sleep 1
 
-# 4. Sync schema to database
-bunx prisma db push --skip-generate >/dev/null 2>&1 || true
+# 4. Frontend storefront (detached)
+bash "$REPO_DIR/frontend/start-frontend-fork.sh"
 
-# 5. Run Next.js dev server on port 3000
-exec bunx next dev -p 3000
+echo "[stellora] full stack starting: frontend :3000, admin :3001, api :4000"
