@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, Upload, X, Plus } from "lucide-react";
+import { Trash2, Upload, X, Plus, Check } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,7 @@ export interface ProductFormValues {
   isNewArrival: boolean;
   isBestSeller: boolean;
   isTrending: boolean;
+  videoUrl: string;
   images: { url: string; alt?: string; sortOrder?: number }[];
   variants: VariantForm[];
 }
@@ -70,6 +71,7 @@ export function ProductForm({
       isNewArrival: false,
       isBestSeller: false,
       isTrending: false,
+      videoUrl: "",
       images: [],
       variants: [{ name: "", sku: "", price: "", compareAtPrice: "", stock: "0", lowStockThreshold: "5", isActive: true }],
     }
@@ -297,6 +299,32 @@ export function ProductForm({
             <p className="text-xs text-muted-foreground">
               JPEG, PNG or WebP, up to 5 MB. First image is used as the primary photo.
             </p>
+          </div>
+
+          <div className="space-y-4 rounded-lg border border-border/70 bg-card p-6">
+            <h2 className="font-serif text-lg font-medium">Product video (preview)</h2>
+            <div>
+              <Label htmlFor="videoUrl">Video URL — mp4/webm file or YouTube link</Label>
+              <Input
+                id="videoUrl"
+                value={values.videoUrl}
+                onChange={(e) => set("videoUrl", e.target.value)}
+                placeholder="https://example.com/demo.mp4 or https://www.youtube.com/watch?v=…"
+                className="mt-1.5"
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Shown as a “Video” tile on the product page and in the homepage
+                “Watch It In Action” showcase. Leave empty if the product has no video.
+              </p>
+              {values.videoUrl.trim() && (
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-emerald-600">
+                  <Check className="h-3.5 w-3.5" />
+                  {/youtu\.?be|youtube\.com/.test(values.videoUrl)
+                    ? "YouTube link detected — embedded player will be used"
+                    : "Video file detected — inline HTML5 player will be used"}
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="space-y-4 rounded-lg border border-border/70 bg-card p-6">

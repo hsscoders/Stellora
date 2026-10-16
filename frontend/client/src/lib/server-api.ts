@@ -86,6 +86,7 @@ export type ApiProduct = {
   isFeatured: boolean;
   isNewArrival: boolean;
   isBestSeller: boolean;
+  videoUrl: string | null;
   createdAt: string;
   updatedAt: string;
   category: ApiCategory | null;

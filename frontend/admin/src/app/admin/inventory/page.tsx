@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, History } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  History,
+  Search,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -37,9 +43,23 @@ interface Movement {
   createdAt: string;
 }
 
+type StockChip = "ALL" | "LOW" | "OUT";
+
+function stockStatus(r: VariantRow): "OUT" | "LOW" | "OK" {
+  if (r.stock === 0) return "OUT";
+  if (r.stock <= r.lowStockThreshold) return "LOW";
+  return "OK";
+}
+
+/** CSV field quoting: wrap in double quotes, escape inner quotes by doubling. */
+function csvField(value: string | number): string {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
 export default function AdminInventoryPage() {
   const [rows, setRows] = useState<VariantRow[] | null>(null);
   const [q, setQ] = useState("");
+  const [chip, setChip] = useState<StockChip>("ALL");
   const [adjusting, setAdjusting] = useState<VariantRow | null>(null);
   const [historyOf, setHistoryOf] = useState<VariantRow | null>(null);
   const [movements, setMovements] = useState<Movement[] | null>(null);
@@ -73,21 +93,13 @@ export default function AdminInventoryPage() {
   async function openHistory(v: VariantRow) {
     setHistoryOf(v);
     setMovements(null);
-    // Movements come through the products payload; simplest is a dedicated fetch on variant via products list
-    const res = await fetch("/api/admin/products");
-    const json = await res.json();
-    if (json.ok) {
-      const variant = json.data
-        .flatMap((p: { variants: (Movement & { id: string })[] }) => p.variants)
-        .find((x: { id: string }) => false); // movements not embedded — use filter below
-    }
-    // Fallback: query movements through audit? Keep it direct:
-    const mres = await fetch(`/api/admin/inventory/${v.id}/movements`).catch(() => null);
-    if (mres && mres.ok) {
-      const mjson = await mres.json();
-      setMovements(mjson.ok ? mjson.data : []);
-    } else {
+    try {
+      const res = await fetch(`/api/admin/inventory/${v.id}/movements`, { cache: "no-store" });
+      const json = await res.json();
+      setMovements(json.ok ? json.data : []);
+    } catch {
       setMovements([]);
+      toast.error("Could not load movement history");
     }
   }
 
@@ -113,12 +125,55 @@ export default function AdminInventoryPage() {
     }
   }
 
-  const filtered = rows?.filter(
-    (r) =>
+  function exportCsv() {
+    const data = filtered ?? [];
+    if (data.length === 0) {
+      toast.error("Nothing to export — adjust the filters first");
+      return;
+    }
+    const header = "product,variant,sku,stock,threshold,status";
+    const lines = data.map((r) =>
+      [
+        r.product.name,
+        r.name,
+        r.sku,
+        r.stock,
+        r.lowStockThreshold,
+        stockStatus(r) === "OUT" ? "Out of stock" : stockStatus(r) === "LOW" ? "Low" : "In stock",
+      ]
+        .map(csvField)
+        .join(",")
+    );
+    const csv = [header, ...lines].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
+    a.href = url;
+    a.download = `stellora-inventory-${ymd}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${data.length} row${data.length === 1 ? "" : "s"} to CSV`);
+  }
+
+  const filtered = rows?.filter((r) => {
+    const status = stockStatus(r);
+    if (chip === "LOW" && status !== "LOW") return false;
+    if (chip === "OUT" && status !== "OUT") return false;
+    return (
       !q ||
       r.sku.toLowerCase().includes(q.toLowerCase()) ||
       r.product.name.toLowerCase().includes(q.toLowerCase())
-  );
+    );
+  });
+
+  const lowCount = rows?.filter((r) => stockStatus(r) === "LOW").length ?? 0;
+  const outCount = rows?.filter((r) => stockStatus(r) === "OUT").length ?? 0;
 
   if (!rows) return <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>;
 
@@ -131,9 +186,58 @@ export default function AdminInventoryPage() {
         </p>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search SKU or product…" className="pl-9" />
+      {(lowCount > 0 || outCount > 0) && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <p>
+            <span className="font-semibold tnum">{lowCount}</span> variant
+            {lowCount === 1 ? "" : "s"} low on stock
+            {outCount > 0 && (
+              <>
+                {" · "}
+                <span className="font-semibold tnum">{outCount}</span> out of stock
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative max-w-xs flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search SKU or product…"
+            className="pl-9"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {(
+            [
+              ["ALL", "All"],
+              ["LOW", `Low stock (${lowCount})`],
+              ["OUT", `Out of stock (${outCount})`],
+            ] as [StockChip, string][]
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={chip === value}
+              onClick={() => setChip(value)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                chip === value
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <Button variant="outline" onClick={exportCsv} className="ml-auto rounded-full">
+          <Download className="h-4 w-4" /> Export CSV
+        </Button>
       </div>
 
       <div className="rounded-lg border border-border/70 bg-card">
@@ -149,7 +253,7 @@ export default function AdminInventoryPage() {
           </TableHeader>
           <TableBody>
             {filtered?.map((v) => {
-              const low = v.stock <= v.lowStockThreshold;
+              const low = stockStatus(v) !== "OK";
               return (
                 <TableRow key={v.id}>
                   <TableCell className="max-w-52 truncate text-sm font-medium">{v.product.name}</TableCell>
@@ -225,25 +329,41 @@ export default function AdminInventoryPage() {
             </DialogTitle>
           </DialogHeader>
           {movements === null ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+            <div className="space-y-2.5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
           ) : movements.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">No movements recorded.</p>
           ) : (
             <ul className="divide-y divide-border text-sm">
               {movements.map((m) => (
-                <li key={m.id} className="flex items-center justify-between gap-3 py-2.5">
-                  <div>
-                    <p className="font-medium">
-                      {m.delta > 0 ? "+" : ""}
-                      {m.delta}{" "}
-                      <span className="text-xs font-normal text-muted-foreground">({m.reason})</span>
+                <li key={m.id} className="flex items-start justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2">
+                      <span
+                        className={`tnum font-semibold ${
+                          m.delta > 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : m.delta < 0
+                              ? "text-rose-600 dark:text-rose-400"
+                              : ""
+                        }`}
+                      >
+                        {m.delta > 0 ? "+" : ""}
+                        {m.delta}
+                      </span>
+                      <Badge variant="secondary" className="text-[10px] font-medium uppercase tracking-wide">
+                        {m.reason}
+                      </Badge>
                     </p>
-                    {m.note && <p className="text-xs text-muted-foreground">{m.note}</p>}
+                    {m.note && <p className="mt-0.5 text-xs text-muted-foreground">{m.note}</p>}
                     {m.reference && (
                       <p className="text-xs text-muted-foreground">Ref: {m.reference}</p>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">{formatDateTime(m.createdAt)}</p>
+                  <p className="shrink-0 text-xs text-muted-foreground">{formatDateTime(m.createdAt)}</p>
                 </li>
               ))}
             </ul>

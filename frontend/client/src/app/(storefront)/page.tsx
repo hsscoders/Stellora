@@ -1,25 +1,47 @@
 import Image from "next/image";
 import Link from "next/link";
-import { apiBanners, apiCategories, apiProducts } from "@/lib/server-api";
+import { apiBanners, apiCategories, apiProducts, apiSettings } from "@/lib/server-api";
 import { ProductCard } from "@/components/stellora/product-card";
 import { SectionHeading } from "@/components/stellora/section-heading";
 import { Reveal } from "@/components/stellora/reveal";
 import { RecentlyViewedSection } from "@/components/stellora/recently-viewed";
 import { StatCounter } from "@/components/stellora/stat-counter";
+import {
+  BrandFilmBanner,
+  VideoShowcase,
+  type VideoItem,
+} from "@/components/stellora/video-showcase";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck, Truck, Headset, BadgeCheck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
+/** Video previews for the "Watch It In Action" showcase — empty on any failure. */
+async function getVideos(): Promise<VideoItem[]> {
+  try {
+    const res = await fetch(
+      `${process.env.BACKEND_URL ?? "http://127.0.0.1:4000"}/api/videos`,
+      { cache: "no-store" }
+    );
+    const j = (await res.json()) as { ok?: boolean; data?: VideoItem[] };
+    return j.ok && Array.isArray(j.data) ? j.data : [];
+  } catch {
+    return [];
+  }
+}
+
 export default async function HomePage() {
-  const [banners, categories, featuredRes, newArrivalsRes, bestSellersRes, trendingRes] = await Promise.all([
-    apiBanners(),
-    apiCategories(),
-    apiProducts({ featured: "1", page: 1 }),
-    apiProducts({ sort: "newest", page: 1 }),
-    apiProducts({ best: "1", page: 1 }),
-    apiProducts({ trending: "1", page: 1 }),
-  ]);
+  const [banners, categories, featuredRes, newArrivalsRes, bestSellersRes, trendingRes, settings, videos] =
+    await Promise.all([
+      apiBanners(),
+      apiCategories(),
+      apiProducts({ featured: "1", page: 1 }),
+      apiProducts({ sort: "newest", page: 1 }),
+      apiProducts({ best: "1", page: 1 }),
+      apiProducts({ trending: "1", page: 1 }),
+      apiSettings().catch(() => [] as { key: string; value: string }[]),
+      getVideos(),
+    ]);
   const featured = featuredRes.products;
   const newArrivals = newArrivalsRes.products;
   const bestSellers = bestSellersRes.products;
@@ -27,6 +49,8 @@ export default async function HomePage() {
 
   const hero = banners[0];
   const promo = banners[1];
+  const brandFilmUrl =
+    settings.find((s) => s.key === "hero_video_url")?.value?.trim() || null;
 
   return (
     <div>
@@ -253,6 +277,10 @@ export default async function HomePage() {
           </div>
         </section>
       )}
+
+      {/* Brand film + video showcase — watch every piece in motion */}
+      {brandFilmUrl && <BrandFilmBanner url={brandFilmUrl} />}
+      {videos.length > 0 && <VideoShowcase videos={videos} />}
 
       {/* Brand story */}
       <section className="relative overflow-hidden border-y border-border/60 bg-secondary/40">

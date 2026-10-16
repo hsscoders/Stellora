@@ -1,6 +1,6 @@
 import { Router } from "express";
 import mongoose from "mongoose";
-import { Product, Category } from "../models";
+import { Product, Category, Review } from "../models";
 import { ok, handle } from "../lib/http";
 import { productQuerySchema } from "../validation";
 import { toAPI } from "../lib/serialize";
@@ -38,6 +38,7 @@ function serializeProduct(p: any) {
     isFeatured: !!p.isFeatured,
     isNewArrival: !!p.isNewArrival,
     isBestSeller: !!p.isBestSeller,
+    videoUrl: p.videoUrl ?? null,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
     category: p.categoryId && typeof p.categoryId === "object" && "_id" in (p.categoryId as object)
@@ -163,6 +164,7 @@ storefrontRouter.get(
       category: req.query.category ?? undefined,
       minPrice: req.query.minPrice ?? undefined,
       maxPrice: req.query.maxPrice ?? undefined,
+      minRating: req.query.minRating ?? undefined,
       inStock: req.query.inStock ?? undefined,
       sort: req.query.sort ?? undefined,
       page: req.query.page ?? undefined,
@@ -196,19 +198,53 @@ storefrontRouter.get(
 
     const populate = { path: "categoryId", select: "-__v" };
 
-    if (query.sort === "price-asc" || query.sort === "price-desc") {
-      // Fetch then sort by first active variant price (mirrors original behaviour)
+    // Rating-aware flows (minRating filter / rating sort) need review averages,
+    // and price sort already uses the in-memory path — unify all three here.
+    const needsRatings = query.sort === "rating-desc" || query.minRating !== undefined;
+    if (needsRatings || query.sort === "price-asc" || query.sort === "price-desc") {
       const products = await Product.find(where).populate(populate).lean<any[]>();
-      products.sort((a, b) => {
-        const pa = a.variants?.filter((v: any) => v.isActive)[0]?.price ?? Infinity;
-        const pb = b.variants?.filter((v: any) => v.isActive)[0]?.price ?? Infinity;
-        return query.sort === "price-asc" ? pa - pb : pb - pa;
-      });
-      const total = products.length;
+      let ratingMap = new Map<string, { avg: number; count: number }>();
+      if (needsRatings) {
+        const ids = products.map((p: any) => p._id);
+        const ratingAgg = await Review.aggregate<{ _id: Types.ObjectId; avg: number; count: number }>([
+          { $match: { productId: { $in: ids }, status: "APPROVED" } },
+          { $group: { _id: "$productId", avg: { $avg: "$rating" }, count: { $sum: 1 } } },
+        ]);
+        ratingMap = new Map(
+          ratingAgg.map((r) => [String(r._id), { avg: Math.round(r.avg * 10) / 10, count: r.count }])
+        );
+      }
+      let list = products;
+      if (query.minRating !== undefined) {
+        list = list.filter(
+          (p: any) => (ratingMap.get(String(p._id))?.avg ?? 0) >= (query.minRating as number)
+        );
+      }
+      if (query.sort === "rating-desc") {
+        list = [...list].sort((a: any, b: any) => {
+          const ra = ratingMap.get(String(a._id));
+          const rb = ratingMap.get(String(b._id));
+          const va = ra ? ra.avg : -1;
+          const vb = rb ? rb.avg : -1;
+          if (vb !== va) return vb - va;
+          return (rb?.count ?? 0) - (ra?.count ?? 0); // tie-break by review count
+        });
+      } else {
+        list = [...list].sort((a: any, b: any) => {
+          const pa = a.variants?.filter((v: any) => v.isActive)[0]?.price ?? Infinity;
+          const pb = b.variants?.filter((v: any) => v.isActive)[0]?.price ?? Infinity;
+          return query.sort === "price-asc" ? pa - pb : pb - pa;
+        });
+      }
+      const total = list.length;
       const start = (query.page - 1) * PAGE_SIZE;
-      const pageItems = products.slice(start, start + PAGE_SIZE);
+      const pageItems = list.slice(start, start + PAGE_SIZE).map((p: any) => {
+        const api = serializeProduct(p);
+        const r = ratingMap.get(String(p._id));
+        return r ? { ...api, rating: r.avg, reviewCount: r.count } : api;
+      });
       return ok(res, {
-        products: pageItems.map(serializeProduct),
+        products: pageItems,
         total,
         page: query.page,
         pages: Math.ceil(total / PAGE_SIZE) || 1,
@@ -233,6 +269,42 @@ storefrontRouter.get(
       page: query.page,
       pages: Math.ceil(total / PAGE_SIZE) || 1,
     });
+  })
+);
+
+storefrontRouter.get(
+  "/videos",
+  handle(async (_req, res) => {
+    // Products that carry a video preview (mp4 / webm / YouTube link) — powers
+    // the homepage "Watch it in action" swipeable showcase.
+    const products = await Product.find({
+      status: "ACTIVE",
+      videoUrl: { $nin: [null, ""] },
+    })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .populate("categoryId", "name slug")
+      .lean<any[]>();
+    return ok(
+      res,
+      products.map((p) => {
+        const images = [...(p.images ?? [])].sort(
+          (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+        );
+        const active = (p.variants ?? []).filter((v: any) => v.isActive).sort((a: any, b: any) => a.price - b.price);
+        return {
+          id: String(p._id),
+          slug: p.slug,
+          name: p.name,
+          videoUrl: p.videoUrl,
+          posterUrl: images[0]?.url ?? null,
+          categoryName:
+            p.categoryId && typeof p.categoryId === "object" ? p.categoryId.name : null,
+          price: active[0]?.price ?? null,
+          compareAtPrice: active[0]?.compareAtPrice ?? null,
+        };
+      })
+    );
   })
 );
 

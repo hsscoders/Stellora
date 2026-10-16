@@ -142,7 +142,7 @@ export default async function ProductPage({
       </nav>
 
       <div className="mt-8 grid gap-10 lg:grid-cols-2">
-        <ProductGallery images={product.images} productName={product.name} />
+        <ProductGallery images={product.images} productName={product.name} videoUrl={product.videoUrl} />
 
         <div className="flex flex-col">
           <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-primary">

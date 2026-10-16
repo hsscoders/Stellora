@@ -138,6 +138,8 @@ const OrderSchema = new Schema(
     shipCountry: { type: String, default: "India" },
     cancelledReason: { type: String, default: null },
     adminNote: { type: String, default: null },
+    // ONLINE = website checkout · POS = in-store point-of-sale billing
+    source: { type: String, enum: ["ONLINE", "POS"], default: "ONLINE" },
     items: { type: [OrderItemSchema], default: [] },
     payment: { type: PaymentSchema, default: null },
     paymentIntent: {

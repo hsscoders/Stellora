@@ -109,6 +109,14 @@ export function Footer({ settings }: { settings: Record<string, string> }) {
           <p className="mt-2 text-center text-xs text-muted-foreground">
             © {new Date().getFullYear()} Stellora. All rights reserved.
           </p>
+          <p className="mt-2 text-center">
+            <Link
+              href="/admin/login?next=/admin-console"
+              className="text-[11px] text-muted-foreground/60 transition hover:text-primary"
+            >
+              Master Control
+            </Link>
+          </p>
         </div>
       </div>
     </footer>

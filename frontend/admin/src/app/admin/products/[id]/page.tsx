@@ -32,6 +32,7 @@ export default async function EditProductPage({
     isNewArrival: product.isNewArrival,
     isBestSeller: product.isBestSeller,
     isTrending: (product as { isTrending?: boolean }).isTrending ?? false,
+    videoUrl: (product as { videoUrl?: string | null }).videoUrl ?? "",
     images: product.images.map((i) => ({ url: i.url, alt: i.alt ?? undefined })),
     variants: product.variants.map((v) => ({
       id: v.id,

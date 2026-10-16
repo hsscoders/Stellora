@@ -71,6 +71,8 @@ const ProductSchema = new Schema(
     isTrending: { type: Boolean, default: false },
     variants: { type: [VariantSchema], default: [] },
     images: { type: [ImageSchema], default: [] },
+    // Product video preview — mp4/webm file URL or YouTube watch/short link
+    videoUrl: { type: String, default: null, trim: true },
   },
   { timestamps: true, collection: "products" }
 );

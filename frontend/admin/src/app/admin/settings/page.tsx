@@ -14,7 +14,17 @@ interface Setting {
   value: string;
 }
 
-const GROUPS: { title: string; fields: { key: string; label: string; textarea?: boolean; placeholder?: string }[] }[] = [
+type SettingField = {
+  key: string;
+  label: string;
+  textarea?: boolean;
+  placeholder?: string;
+  rows?: number;
+};
+
+type SettingGroup = { title: string; fields: SettingField[] };
+
+const GROUPS: SettingGroup[] = [
   {
     title: "Storefront",
     fields: [
@@ -55,11 +65,33 @@ const GROUPS: { title: string; fields: { key: string; label: string; textarea?: 
       { key: "policy_terms", label: "Terms of Service — full text", textarea: true },
     ],
   },
+  {
+    title: "Billing / POS receipt",
+    fields: [
+      { key: "pos_receipt_footer", label: "Receipt footer line (shown on POS printed bills)", textarea: true, rows: 3 },
+    ],
+  },
+  {
+    title: "Homepage video",
+    fields: [
+      {
+        key: "hero_video_url",
+        label: "Brand film / homepage video URL (mp4 or YouTube link, empty to hide)",
+        placeholder: "https://…/brand-film.mp4",
+      },
+    ],
+  },
 ];
+
+function groupId(index: number): string {
+  return `settings-group-${index}`;
+}
 
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Record<string, string> | null>(null);
   const [busy, setBusy] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const loaded = settings !== null;
 
   useEffect(() => {
     fetch("/api/admin/settings")
@@ -70,6 +102,31 @@ export default function AdminSettingsPage() {
         }
       });
   }, []);
+
+  // Scroll-spy: highlight the section currently in view (state set in observer callback).
+  useEffect(() => {
+    if (!loaded) return;
+    const els = GROUPS.map((_, i) => document.getElementById(groupId(i))).filter(
+      (el): el is HTMLElement => el !== null
+    );
+    if (els.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActiveGroup(visible[0].target.id);
+      },
+      { rootMargin: "-15% 0px -60% 0px", threshold: 0 }
+    );
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [loaded]);
+
+  function jumpTo(id: string) {
+    setActiveGroup(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -105,7 +162,7 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <form onSubmit={save} className="space-y-6">
+    <form onSubmit={save} className="space-y-8">
       <div>
         <h1 className="font-serif text-3xl font-medium">Business Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -114,39 +171,78 @@ export default function AdminSettingsPage() {
         </p>
       </div>
 
-      {GROUPS.map((g) => (
-        <Card key={g.title}>
-          <CardHeader>
-            <CardTitle className="font-serif text-xl">{g.title}</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
-            {g.fields.map((f) => (
-              <div key={f.key} className={f.textarea ? "sm:col-span-2" : undefined}>
-                <Label htmlFor={f.key}>{f.label}</Label>
-                {f.textarea ? (
-                  <Textarea
-                    id={f.key}
-                    name={f.key}
-                    defaultValue={settings[f.key] ?? ""}
-                    rows={5}
-                  />
-                ) : (
-                  <Input
-                    id={f.key}
-                    name={f.key}
-                    defaultValue={settings[f.key] ?? ""}
-                    placeholder={f.placeholder}
-                  />
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      ))}
+      <div className="lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
+        {/* Sticky section nav (desktop) */}
+        <aside className="hidden lg:block">
+          <nav className="sticky top-8 space-y-1" aria-label="Settings sections">
+            <p className="px-3 pb-2 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              Sections
+            </p>
+            {GROUPS.map((g, i) => {
+              const id = groupId(i);
+              const active = activeGroup === id;
+              return (
+                <button
+                  key={g.title}
+                  type="button"
+                  onClick={() => jumpTo(id)}
+                  aria-current={active ? "true" : undefined}
+                  className={`block w-full rounded-md px-3 py-1.5 text-left text-xs leading-snug transition ${
+                    active
+                      ? "bg-primary/10 font-medium text-primary"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                  }`}
+                >
+                  {g.title}
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
 
-      <Button type="submit" disabled={busy} className="rounded-full bg-primary px-8 hover:bg-primary/90">
-        {busy ? "Saving…" : "Save all settings"}
-      </Button>
+        {/* Setting groups */}
+        <div className="min-w-0 space-y-6">
+          {GROUPS.map((g, i) => (
+            <Card key={g.title} id={groupId(i)} className="scroll-mt-6">
+              <CardHeader>
+                <CardTitle className="font-serif text-xl">{g.title}</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-2">
+                {g.fields.map((f) => (
+                  <div key={f.key} className={f.textarea ? "sm:col-span-2" : undefined}>
+                    <Label htmlFor={f.key}>{f.label}</Label>
+                    {f.textarea ? (
+                      <Textarea
+                        id={f.key}
+                        name={f.key}
+                        defaultValue={settings[f.key] ?? ""}
+                        rows={f.rows ?? 5}
+                      />
+                    ) : (
+                      <Input
+                        id={f.key}
+                        name={f.key}
+                        defaultValue={settings[f.key] ?? ""}
+                        placeholder={f.placeholder}
+                      />
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              disabled={busy}
+              className="rounded-full bg-primary px-8 hover:bg-primary/90"
+            >
+              {busy ? "Saving…" : "Save all settings"}
+            </Button>
+          </div>
+        </div>
+      </div>
     </form>
   );
 }

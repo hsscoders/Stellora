@@ -108,14 +108,32 @@ export const productQuerySchema = z.object({
   category: z.string().trim().max(80).optional(),
   minPrice: z.coerce.number().min(0).optional(),
   maxPrice: z.coerce.number().min(0).optional(),
+  minRating: z.coerce.number().int().min(1).max(5).optional(),
   inStock: z.coerce.boolean().optional(),
   sort: z
-    .enum(["newest", "price-asc", "price-desc", "name-asc", "name-desc"])
+    .enum(["newest", "price-asc", "price-desc", "name-asc", "name-desc", "rating-desc"])
     .default("newest"),
   page: z.coerce.number().int().min(1).default(1),
   featured: z.string().optional(),
   new: z.string().optional(),
   best: z.string().optional(),
+});
+
+/* POS (in-store) checkout — admin terminal billing */
+export const posCheckoutSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        variantId: z.string().min(1),
+        quantity: z.coerce.number().int().min(1).max(50),
+      })
+    )
+    .min(1, "Add at least one item to the bill"),
+  paymentMethod: z.enum(["CASH", "CARD", "UPI"]).default("CASH"),
+  discountAmount: z.coerce.number().min(0).optional(),
+  customerEmail: z.string().trim().toLowerCase().email().optional().or(z.literal("")),
+  customerPhone: z.string().trim().max(15).optional().or(z.literal("")),
+  note: z.string().trim().max(300).optional().or(z.literal("")),
 });
 
 /* ---------- Admin ---------- */
@@ -149,6 +167,7 @@ export const productSchema = z.object({
   isNewArrival: z.boolean().default(false),
   isBestSeller: z.boolean().default(false),
   isTrending: z.boolean().default(false),
+  videoUrl: z.string().trim().max(500).optional().or(z.literal("")),
   images: z
     .array(
       z.object({

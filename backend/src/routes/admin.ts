@@ -1,15 +1,17 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 import { Product, Category, Order, User, Coupon, HomepageBanner, SiteSetting, ShippingRate, StockMovement, AuditLog, ContactMessage, Session } from "../models";
-import { ok, fail, handle, assertSameOrigin } from "../lib/http";
+import { ok, fail, handle, assertSameOrigin, HttpError } from "../lib/http";
 import { requireAdmin } from "../lib/auth";
 import {
   productSchema, categorySchema, couponSchema, bannerSchema,
   shippingRateSchema, inventoryAdjustSchema, adminUserSchema, settingsSchema,
+  posCheckoutSchema,
 } from "../validation";
-import { slugify } from "../lib/utils";
+import { slugify, generateOrderNumber } from "../lib/utils";
 import { hashPassword } from "../lib/password";
 import { audit } from "../services/audit";
+import { accrueEarn } from "../services/loyalty";
 import { escapeRegex, serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
 import { env } from "../env";
@@ -32,7 +34,7 @@ adminRouter.get(
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const [revAgg, rev24, statusAgg, productCount, lowStockProducts, recentOrders] = await Promise.all([
+    const [revAgg, rev24, statusAgg, productCount, lowStockProducts, recentOrders, dailyAgg, topProductsAgg, posAgg, customerCount, pendingReviews, pendingQuestions] = await Promise.all([
       Order.aggregate<{ total: number; count: number }>([
         { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
         { $group: { _id: null, total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
@@ -54,7 +56,44 @@ adminRouter.get(
         { $project: { name: 1, slug: 1, variantId: "$variants._id", variantName: "$variants.name", sku: "$variants.sku", stock: "$variants.stock", lowStockThreshold: "$variants.lowStockThreshold" } },
       ]),
       Order.find().sort({ createdAt: -1 }).limit(8).populate("userId", "name email").lean<any[]>(),
+      // Revenue per day for the last 14 days (fills missing days client-side)
+      Order.aggregate<{ _id: string; total: number; count: number }>([
+        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000) } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            total: { $sum: "$grandTotal" },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      // Best sellers by quantity sold in the last 30 days
+      Order.aggregate<{ _id: string | null; name: { $first: string }; qty: number; revenue: number }>([
+        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.productId",
+            name: { $first: "$items.productName" },
+            qty: { $sum: "$items.quantity" },
+            revenue: { $sum: "$items.lineTotal" },
+          },
+        },
+        { $sort: { qty: -1 } },
+        { $limit: 5 },
+      ]),
+      // POS vs ONLINE split (30d)
+      Order.aggregate<{ _id: string; total: number; count: number }>([
+        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
+        { $group: { _id: "$source", total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
+      ]),
+      User.countDocuments({ role: "CUSTOMER" }),
+      (await import("../models")).Review.countDocuments({ status: "PENDING" }),
+      (await import("../models")).ProductQuestion.countDocuments({ status: "PENDING" }),
     ]);
+
+    const posOnline = Object.fromEntries(posAgg.map((s) => [s._id ?? "ONLINE", { total: s.total, count: s.count }]));
 
     return ok(res, {
       revenue30d: revAgg[0]?.total ?? 0,
@@ -62,6 +101,20 @@ adminRouter.get(
       revenue24h: rev24[0]?.total ?? 0,
       ordersByStatus: Object.fromEntries(statusAgg.map((s) => [s._id, s.count])),
       productCount,
+      customerCount,
+      pendingReviews,
+      pendingQuestions,
+      posVsOnline: {
+        POS: posOnline["POS"] ?? { total: 0, count: 0 },
+        ONLINE: posOnline["ONLINE"] ?? { total: 0, count: 0 },
+      },
+      dailyRevenue: dailyAgg.map((d) => ({ date: d._id, total: d.total, count: d.count })),
+      topProducts: topProductsAgg.map((t) => ({
+        productId: t._id ? String(t._id) : null,
+        name: t.name,
+        qty: t.qty,
+        revenue: t.revenue,
+      })),
       lowStock: lowStockProducts.map((v: any) => ({
         variantId: String(v.variantId),
         variantName: v.variantName,
@@ -77,6 +130,7 @@ adminRouter.get(
         paymentStatus: o.paymentStatus,
         grandTotal: o.grandTotal,
         createdAt: o.createdAt,
+        source: o.source ?? "ONLINE",
         user:
           o.userId && typeof o.userId === "object"
             ? { name: (o.userId as any).name, email: (o.userId as any).email }
@@ -275,6 +329,7 @@ adminRouter.post(
       isNewArrival: data.isNewArrival,
       isBestSeller: data.isBestSeller,
       isTrending: data.isTrending,
+      videoUrl: data.videoUrl || null,
       images: data.images.map((img, i) => ({ url: img.url, alt: img.alt ?? null, sortOrder: i })),
       variants: data.variants.map((v) => ({
         name: v.name,
@@ -358,6 +413,7 @@ adminRouter.put(
     existing.isNewArrival = data.isNewArrival;
     existing.isBestSeller = data.isBestSeller;
     existing.isTrending = data.isTrending;
+    existing.videoUrl = data.videoUrl || null;
 
     // Order history check helper: does any order reference this variant?
     const { Order: OrderModel } = await import("../models");
@@ -1279,5 +1335,228 @@ adminRouter.post(
     await writeFile(path.join(dir, name), buffer);
 
     return ok(res, { url: `/api/media/${name}` }, 201);
+  })
+);
+
+/* ================= POS — Point of Sale (in-store billing) ================= */
+
+const WALKIN_EMAIL = "pos-walkin@stellora.local";
+
+/**
+ * POS checkout: bills items at the counter, decrements stock inside a
+ * transaction, marks the order CONFIRMED + PAID immediately, and (when a
+ * registered customer is attached) credits Stellora Rewards points.
+ * All prices/totals are computed server-side from live variant data.
+ */
+adminRouter.post(
+  "/admin/pos/orders",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const data = posCheckoutSchema.parse(req.body);
+
+    // Resolve the customer: registered user by email, else the shared
+    // walk-in account (Order.userId is required by the schema).
+    let customer: { _id: any; name: string; email: string } | null = null;
+    if (data.customerEmail) {
+      customer = await User.findOne({ email: data.customerEmail })
+        .select("_id name email")
+        .lean<{ _id: any; name: string; email: string } | null>();
+    }
+    if (!customer) {
+      customer = await User.findOneAndUpdate(
+        { email: WALKIN_EMAIL },
+        {
+          $setOnInsert: {
+            email: WALKIN_EMAIL,
+            name: "Walk-in Customer",
+            role: "CUSTOMER",
+            passwordHash: randomBytes(24).toString("hex"), // unusable random password
+            phone: null,
+          },
+        },
+        { new: true, upsert: true, select: "_id name email" }
+      ).lean<any>();
+    }
+
+    // Load every referenced product once; build a variant lookup map
+    const variantIds = data.items.map((i) => new mongoose.Types.ObjectId(i.variantId));
+    const products = await Product.find({
+      status: "ACTIVE",
+      "variants._id": { $in: variantIds },
+    }).lean<any[]>();
+    const variantMap = new Map<string, { product: any; variant: any }>();
+    for (const p of products) {
+      for (const v of p.variants ?? []) {
+        if (v.isActive && variantIds.some((id) => String(id) === String(v._id))) {
+          variantMap.set(String(v._id), { product: p, variant: v });
+        }
+      }
+    }
+
+    // Resolve lines server-side — client only sends variantId + quantity
+    const lines: {
+      productId: any;
+      variantId: any;
+      productName: string;
+      variantName: string;
+      sku: string;
+      imageUrl: string | null;
+      unitPrice: number;
+      quantity: number;
+      lineTotal: number;
+    }[] = [];
+    let subtotal = 0;
+    for (const item of data.items) {
+      const found = variantMap.get(item.variantId);
+      if (!found) {
+        return fail(res, "NOT_FOUND", "One of the billed items is no longer available.", 422);
+      }
+      const { product, variant } = found;
+      if (item.quantity > variant.stock) {
+        return fail(
+          res,
+          "OUT_OF_STOCK",
+          `Only ${variant.stock} left of ${product.name} (${variant.name}).`,
+          409
+        );
+      }
+      const lineTotal = Math.round(variant.price * item.quantity * 100) / 100;
+      subtotal += lineTotal;
+      lines.push({
+        productId: product._id,
+        variantId: variant._id,
+        productName: product.name,
+        variantName: variant.name,
+        sku: variant.sku,
+        imageUrl: (product.images ?? []).sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0]?.url ?? null,
+        unitPrice: variant.price,
+        quantity: item.quantity,
+        lineTotal,
+      });
+    }
+    subtotal = Math.round(subtotal * 100) / 100;
+
+    const discountAmount = Math.min(data.discountAmount ?? 0, subtotal);
+    const grandTotal = Math.round((subtotal - discountAmount) * 100) / 100;
+    if (grandTotal < 0) return fail(res, "VALIDATION_ERROR", "Invalid discount amount.", 422);
+
+    const orderNumber = generateOrderNumber();
+    const now = new Date();
+
+    const session = await mongoose.startSession();
+    let createdOrderId = "";
+    try {
+      await session.withTransaction(async () => {
+        for (const line of lines) {
+          const updated = await Product.updateOne(
+            {
+              _id: line.productId,
+              status: "ACTIVE",
+              variants: {
+                $elemMatch: { _id: line.variantId, stock: { $gte: line.quantity }, isActive: true },
+              },
+            },
+            { $inc: { "variants.$[v].stock": -line.quantity } },
+            { arrayFilters: [{ "v._id": line.variantId }], session }
+          );
+          if (updated.modifiedCount !== 1) {
+            throw new HttpError(
+              "OUT_OF_STOCK",
+              `${line.productName} (${line.variantName}) just went out of stock.`,
+              409
+            );
+          }
+          await StockMovement.create(
+            [
+              {
+                variantId: line.variantId,
+                delta: -line.quantity,
+                reason: "ORDER_COMMIT",
+                reference: orderNumber,
+                note: "POS sale",
+                createdById: admin.id,
+              },
+            ],
+            { session }
+          );
+        }
+
+        const [order] = await Order.create(
+          [
+            {
+              orderNumber,
+              userId: customer!._id,
+              status: "CONFIRMED",
+              paymentStatus: "PAID",
+              paymentMethod: "GATEWAY",
+              source: "POS",
+              subtotal,
+              discountTotal: discountAmount,
+              shippingFee: 0,
+              grandTotal,
+              couponCode: null,
+              pointsRedeemed: 0,
+              idempotencyKey: `pos-${orderNumber}`,
+              shipName: customer!.name,
+              shipPhone: data.customerPhone || "In-store",
+              shipLine1: "Counter sale (POS)",
+              shipLine2: null,
+              shipCity: "In-store",
+              shipState: "In-store",
+              shipPincode: "000000",
+              shipCountry: "India",
+              adminNote: data.note || null,
+              items: lines,
+              payment: {
+                method: "GATEWAY",
+                status: "PAID",
+                amount: grandTotal,
+                providerRef: `POS:${data.paymentMethod}`,
+                verifiedAt: now,
+              },
+              events: [
+                {
+                  status: "CONFIRMED",
+                  note: `Billed at counter via POS (${data.paymentMethod})`,
+                },
+              ],
+            },
+          ],
+          { session }
+        );
+        createdOrderId = String(order._id);
+      });
+    } finally {
+      await session.endSession();
+    }
+
+    // Rewards earn for registered customers (never for the walk-in account).
+    let pointsEarned = 0;
+    if (String(customer!._id) && customer!.email !== WALKIN_EMAIL) {
+      const earn = await accrueEarn(createdOrderId, "POS sale confirmed");
+      pointsEarned = earn.earned;
+    }
+
+    await audit(
+      {
+        actor: admin,
+        action: "admin.pos.checkout",
+        entityType: "Order",
+        entityId: createdOrderId,
+        metadata: { orderNumber, grandTotal, paymentMethod: data.paymentMethod, items: lines.length },
+      },
+      req
+    );
+
+    const populated = await Order.findById(createdOrderId).populate("userId", "name email").lean<any>();
+    return ok(
+      res,
+      {
+        order: serializeOrderDetail(populated),
+        pointsEarned,
+      },
+      201
+    );
   })
 );

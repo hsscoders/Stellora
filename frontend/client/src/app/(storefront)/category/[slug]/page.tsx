@@ -33,6 +33,7 @@ export default async function CategoryPage({
   const query = productQuerySchema.parse({
     minPrice: sp.minPrice ?? undefined,
     maxPrice: sp.maxPrice ?? undefined,
+    minRating: sp.minRating ?? undefined,
     inStock: sp.inStock ?? undefined,
     sort: sp.sort ?? undefined,
     page: sp.page ?? undefined,
@@ -42,6 +43,7 @@ export default async function CategoryPage({
     category: category.slug,
     minPrice: query.minPrice,
     maxPrice: query.maxPrice,
+    minRating: query.minRating,
     inStock: query.inStock ? "1" : undefined,
     sort: query.sort,
     page: query.page,
