@@ -11,10 +11,16 @@ import {
   ExternalLink,
   History,
   Info,
+  Keyboard,
   Loader2,
+  LockKeyhole,
+  LockOpen,
+  Maximize2,
   Minus,
   PackageOpen,
   Pause,
+  Pencil,
+  Percent,
   Plus,
   Printer,
   ReceiptText,
@@ -23,8 +29,13 @@ import {
   ShoppingBasket,
   Smartphone,
   Store,
+  Tag,
+  Truck,
+  UserRound,
+  UserRoundPlus,
   Volume2,
   VolumeX,
+  Wallet,
   X,
 } from "lucide-react";
 import { playPosSound, posSoundEnabled, setPosSoundEnabled, unlockAudio, getPosVolume, setPosVolume } from "@/lib/pos-sound";
@@ -84,6 +95,40 @@ interface BillLine {
 
 type PaymentMethod = "CASH" | "CARD" | "UPI";
 
+interface Tender {
+  method: PaymentMethod;
+  amount: number;
+}
+
+interface RegisterSession {
+  id: string;
+  terminalId: string;
+  status: "OPEN" | "CLOSED";
+  openedByName: string | null;
+  openingBalance: number;
+  openingNote: string | null;
+  openedAt: string;
+  countedBalance: number | null;
+  expectedCash: number | null;
+  variance: number | null;
+  closedAt: string | null;
+}
+
+interface RegisterLive {
+  expectedCash: number;
+  cashIn: number;
+  change: number;
+  nonCash: number;
+}
+
+interface CustomerHit {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  points: number;
+}
+
 interface PosOrderItem {
   productName: string;
   variantName: string;
@@ -111,6 +156,7 @@ interface ReceiptData {
   order: PosOrder;
   pointsEarned: number;
   method: PaymentMethod;
+  changeDue: number;
 }
 
 interface HeldBill {
@@ -121,6 +167,9 @@ interface HeldBill {
   customerEmail: string;
   note: string;
   paymentMethod: PaymentMethod;
+  taxPercent: string;
+  shippingFee: string;
+  couponCode: string;
 }
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Banknote }[] = [
@@ -147,7 +196,39 @@ export default function AdminPosPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [customerEmail, setCustomerEmail] = useState("");
   const [note, setNote] = useState("");
+  /* Stocky-style bill extras: tax %, flat shipping, coupon */
+  const [taxPercent, setTaxPercent] = useState("");
+  const [shippingFee, setShippingFee] = useState("");
+  const [couponCode, setCouponCode] = useState("");
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /* cash register (Stocky-style sessions) */
+  const [registerSession, setRegisterSession] = useState<RegisterSession | null>(null);
+  const [registerLive, setRegisterLive] = useState<RegisterLive | null>(null);
+  const [regOpen, setRegOpen] = useState(false);
+  const [regClose, setRegClose] = useState(false);
+  const [regOpeningBalance, setRegOpeningBalance] = useState("");
+  const [regOpeningNote, setRegOpeningNote] = useState("");
+  const [regCounted, setRegCounted] = useState("");
+  const [regClosingNote, setRegClosingNote] = useState("");
+  const [regBusy, setRegBusy] = useState(false);
+
+  /* Stocky-style payment checkout dialog */
+  const [payOpen, setPayOpen] = useState(false);
+  const [tenders, setTenders] = useState<Tender[]>([{ method: "CASH", amount: 0 }]);
+  const [saleNote, setSaleNote] = useState("");
+
+  /* customer quick-picker dialog */
+  const [custOpen, setCustOpen] = useState(false);
+  const [custQuery, setCustQuery] = useState("");
+  const [custHits, setCustHits] = useState<CustomerHit[] | null>(null);
+  const [customerName, setCustomerName] = useState<string | null>(null);
+
+  /* catalog category filter */
+  const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
+  const [catFilter, setCatFilter] = useState(""); // category slug
 
   /* dialogs */
   const [variantPicker, setVariantPicker] = useState<ApiProduct | null>(null);
@@ -173,13 +254,14 @@ export default function AdminPosPage() {
   const scanSeq = useRef(0);
   const lastScanRef = useRef<{ code: string; at: number } | null>(null);
 
-  const fetchProducts = useCallback(async (targetPage: number, q: string, append: boolean) => {
+  const fetchProducts = useCallback(async (targetPage: number, q: string, append: boolean, categoryId: string) => {
     const seq = ++seqRef.current;
     if (append) setLoadingMore(true);
     else setRefreshing(true);
     try {
       const params = new URLSearchParams({ page: String(targetPage) });
       if (q.trim()) params.set("q", q.trim());
+      if (categoryId) params.set("category", categoryId); // category slug
       const res = await fetch(`/api/products?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
       if (seq !== seqRef.current) return; // a newer request superseded this one
@@ -209,10 +291,28 @@ export default function AdminPosPage() {
   /* Debounced search (250ms) — also covers the initial load with query "" */
   useEffect(() => {
     const t = setTimeout(() => {
-      void fetchProducts(1, query, false);
+      void fetchProducts(1, query, false, catFilter);
     }, 250);
     return () => clearTimeout(t);
-  }, [query, fetchProducts]);
+  }, [query, catFilter, fetchProducts]);
+
+  /* Categories for the catalog filter chips (POS picker) */
+  useEffect(() => {
+    fetch("/api/admin/categories", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) =>
+        setCategories(
+          j.ok
+            ? j.data.map((c: { id: string; slug: string; name: string }) => ({
+                id: c.id,
+                slug: c.slug,
+                name: c.name,
+              }))
+            : []
+        )
+      )
+      .catch(() => {});
+  }, []);
 
   /* Receipt footer setting (optional, may be empty) */
   useEffect(() => {
@@ -242,6 +342,9 @@ export default function AdminPosPage() {
         tid = Math.random().toString(36).slice(2, 6).toUpperCase();
         sessionStorage.setItem("pos_terminal", tid);
       }
+      // sessionStorage reads are effect-only by definition; batched state
+      // updates here restore the per-window bill exactly once on mount.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTerminalId(tid);
       const saved = sessionStorage.getItem(`pos_bill_${tid}`);
       if (saved) {
@@ -254,6 +357,10 @@ export default function AdminPosPage() {
           if (p.paymentMethod === "CASH" || p.paymentMethod === "CARD" || p.paymentMethod === "UPI") {
             setPaymentMethod(p.paymentMethod);
           }
+          if (typeof p.taxPercent === "string") setTaxPercent(p.taxPercent);
+          if (typeof p.shippingFee === "string") setShippingFee(p.shippingFee);
+          if (typeof p.couponCode === "string") setCouponCode(p.couponCode);
+          if (p.customerName) setCustomerName(p.customerName);
         }
       }
       const savedHeld = sessionStorage.getItem(`pos_held_${tid}`);
@@ -281,10 +388,44 @@ export default function AdminPosPage() {
     try {
       sessionStorage.setItem(
         `pos_bill_${terminalId}`,
-        JSON.stringify({ lines: bill, discount, customerEmail, note, paymentMethod })
+        JSON.stringify({ lines: bill, discount, customerEmail, customerName, note, paymentMethod, taxPercent, shippingFee, couponCode })
       );
     } catch {}
-  }, [bill, discount, customerEmail, note, paymentMethod, hydrated, terminalId]);
+  }, [bill, discount, customerEmail, customerName, note, paymentMethod, taxPercent, shippingFee, couponCode, hydrated, terminalId]);
+
+  /* Cash register session — restore on load, refresh after each sale. */
+  const refreshRegister = useCallback(async (tid: string) => {
+    if (!tid) return;
+    try {
+      const res = await fetch(`/api/admin/pos/register/current?terminalId=${encodeURIComponent(tid)}`, {
+        cache: "no-store",
+      });
+      const json = await res.json();
+      if (json.ok) {
+        setRegisterSession(json.data.session as RegisterSession | null);
+        setRegisterLive(json.data.live ? (json.data.live as RegisterLive) : null);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    // refreshRegister resolves async; the rule can't see through it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (hydrated && terminalId) void refreshRegister(terminalId);
+  }, [hydrated, terminalId, refreshRegister]);
+
+
+  /* Customer quick-search for the bill picker (debounced) */
+  useEffect(() => {
+    if (!custOpen) return;
+    const t = setTimeout(() => {
+      fetch(`/api/admin/pos/customers?q=${encodeURIComponent(custQuery)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j) => setCustHits(j.ok ? (j.data as CustomerHit[]) : []))
+        .catch(() => setCustHits([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [custQuery, custOpen]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -320,8 +461,56 @@ export default function AdminPosPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* Keyboard shortcuts (Stocky-style): F2 search, F4 pay, F7 hold, F8 held
+     bills. Refs keep the listener stable across renders. */
+  const kbActionsRef = useRef({
+    focusSearch: () => {},
+    pay: () => {},
+    hold: () => {},
+    held: () => {},
+  });
+  useEffect(() => {
+    kbActionsRef.current = {
+      focusSearch: () => scanRef.current?.focus(),
+      pay: () => openPaymentDialog(),
+      hold: () => holdBill(),
+      held: () => setHeldOpen(true),
+    };
+  });
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const map: Record<string, keyof typeof kbActionsRef.current> = {
+        F2: "focusSearch",
+        F4: "pay",
+        F7: "hold",
+        F8: "held",
+      };
+      const action = map[e.key];
+      if (!action) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+        // still allow the shortcuts from fields except while typing text
+        if (action !== "focusSearch" && (t as HTMLInputElement).type === "text") return;
+      }
+      e.preventDefault();
+      kbActionsRef.current[action]();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void document.documentElement.requestFullscreen().catch(() => {
+        toast.error("Fullscreen is blocked by the browser");
+      });
+    }
+  }
+
 
   /* Camera scanning via the native BarcodeDetector API (Chrome/Edge).
      Graceful fallback: browsers without it just show a hint — USB scanners
@@ -341,9 +530,11 @@ export default function AdminPosPage() {
       }
     ).BarcodeDetector;
     if (!BD) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCamSupported(false);
       return;
     }
+     
     setCamSupported(true);
     (async () => {
       try {
@@ -388,7 +579,7 @@ export default function AdminPosPage() {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [camOpen]);
 
   /* ------------------------------ bill logic ------------------------------ */
@@ -398,10 +589,54 @@ export default function AdminPosPage() {
     [bill]
   );
   const discountNum = Math.round(Math.max(Number(discount) || 0, 0) * 100) / 100;
-  const discountInvalid = discountNum > subtotal;
-  const appliedDiscount = Math.min(discountNum, subtotal);
-  const grandTotal = Math.max(Math.round((subtotal - appliedDiscount) * 100) / 100, 0);
+  const couponDiscount = appliedCoupon ? Math.min(appliedCoupon.discount, subtotal) : 0;
+  const appliedDiscount = Math.min(discountNum + couponDiscount, subtotal);
+  const discountInvalid = discountNum + couponDiscount > subtotal;
+  const payableSubtotal = Math.max(subtotal - appliedDiscount, 0);
+  const taxNum = Math.max(Math.min(Number(taxPercent) || 0, 100), 0);
+  const taxTotal = Math.round(payableSubtotal * taxNum) / 100;
+  const shippingNum = Math.max(Number(shippingFee) || 0, 0);
+  const grandTotal = Math.max(Math.round((payableSubtotal + taxTotal + shippingNum) * 100) / 100, 0);
   const billCount = bill.reduce((n, l) => n + l.quantity, 0);
+
+  function editLinePrice(variantId: string, price: number) {
+    const line = bill.find((l) => l.variantId === variantId);
+    if (!line) return;
+    if (!Number.isFinite(price) || price < 0) return;
+    const clamped = Math.min(price, 999999);
+    setBill(bill.map((l) => (l.variantId === variantId ? { ...l, unitPrice: clamped } : l)));
+  }
+
+  async function applyCoupon() {
+    const code = couponCode.trim();
+    if (!code || couponBusy || bill.length === 0) return;
+    setCouponBusy(true);
+    try {
+      const res = await fetch(`/api/admin/pos/coupon?code=${encodeURIComponent(code)}&subtotal=${subtotal}`, {
+        cache: "no-store",
+      });
+      const json = await res.json();
+      if (json.ok && json.data?.valid) {
+        setAppliedCoupon({ code: json.data.code, discount: Number(json.data.discount) });
+        setCouponCode(json.data.code);
+        toast.success(`Coupon ${json.data.code} applied — saves ${formatINR(Number(json.data.discount))}`);
+        playPosSound("click");
+      } else {
+        setAppliedCoupon(null);
+        toast.error(json.data?.message ?? json.error?.message ?? "Coupon is not valid");
+        playPosSound("error");
+      }
+    } catch {
+      toast.error("Network error while validating the coupon");
+    } finally {
+      setCouponBusy(false);
+    }
+  }
+
+  function removeCoupon() {
+    setAppliedCoupon(null);
+    setCouponCode("");
+  }
 
   function addVariant(product: ApiProduct, v: ApiVariant) {
     if (!v.isActive || v.stock <= 0) {
@@ -501,7 +736,9 @@ export default function AdminPosPage() {
     }
   }
   const handleScanRef = useRef(handleScan);
-  handleScanRef.current = handleScan;
+  useEffect(() => {
+    handleScanRef.current = handleScan;
+  });
 
   function holdBill() {
     if (bill.length === 0) return;
@@ -513,6 +750,9 @@ export default function AdminPosPage() {
       customerEmail,
       note,
       paymentMethod,
+      taxPercent,
+      shippingFee,
+      couponCode,
     };
     setHeld([h, ...held].slice(0, 12));
     playPosSound("click");
@@ -526,6 +766,10 @@ export default function AdminPosPage() {
     setCustomerEmail(h.customerEmail);
     setNote(h.note);
     setPaymentMethod(h.paymentMethod);
+    setTaxPercent(h.taxPercent ?? "");
+    setShippingFee(h.shippingFee ?? "");
+    setAppliedCoupon(null);
+    setCouponCode(h.couponCode ?? "");
     setHeld(held.filter((x) => x.id !== h.id));
     playPosSound("click");
     setHeldOpen(false);
@@ -548,10 +792,85 @@ export default function AdminPosPage() {
     setBill([]);
     setDiscount("");
     setCustomerEmail("");
+    setCustomerName(null);
     setNote("");
+    setTaxPercent("");
+    setShippingFee("");
+    setAppliedCoupon(null);
+    setCouponCode("");
   }
 
-  async function charge() {
+  /* ------------------------------ cash register ------------------------------ */
+
+  async function openRegister() {
+    if (regBusy) return;
+    setRegBusy(true);
+    try {
+      const res = await fetch("/api/admin/pos/register/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          terminalId,
+          openingBalance: Number(regOpeningBalance) || 0,
+          note: regOpeningNote.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        toast.success("Register opened — good selling!");
+        playPosSound("success");
+        setRegOpen(false);
+        setRegOpeningBalance("");
+        setRegOpeningNote("");
+        await refreshRegister(terminalId);
+      } else {
+        toast.error(json.error?.message ?? "Could not open the register");
+      }
+    } catch {
+      toast.error("Network error — register not opened");
+    } finally {
+      setRegBusy(false);
+    }
+  }
+
+  async function closeRegister() {
+    if (regBusy) return;
+    setRegBusy(true);
+    try {
+      const res = await fetch("/api/admin/pos/register/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          terminalId,
+          countedBalance: Number(regCounted) || 0,
+          note: regClosingNote.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        const s = json.data.summary as { expectedCash: number; counted: number; variance: number };
+        const v = s.variance;
+        toast.success(
+          v === 0
+            ? "Register closed — drawer matches exactly. Perfect day!"
+            : `Register closed — variance ${v > 0 ? "+" : ""}${formatINR(v)} vs expected ${formatINR(s.expectedCash)}`
+        );
+        playPosSound("success");
+        setRegClose(false);
+        setRegCounted("");
+        setRegClosingNote("");
+        await refreshRegister(terminalId);
+      } else {
+        toast.error(json.error?.message ?? "Could not close the register");
+      }
+    } catch {
+      toast.error("Network error — register not closed");
+    } finally {
+      setRegBusy(false);
+    }
+  }
+
+  async function charge(withTenders: Tender[]) {
     if (busy) return;
     if (bill.length === 0) {
       toast.error("Bill is empty — add products first");
@@ -561,6 +880,18 @@ export default function AdminPosPage() {
       toast.error("Discount cannot exceed the subtotal");
       return;
     }
+    const cleaned = withTenders
+      .map((t) => ({ method: t.method, amount: Math.round(Number(t.amount) * 100) / 100 }))
+      .filter((t) => t.amount > 0);
+    const tenderSum = Math.round(cleaned.reduce((n, t) => n + t.amount, 0) * 100) / 100;
+    if (cleaned.length === 0) {
+      toast.error("Enter the amounts being paid");
+      return;
+    }
+    if (tenderSum + 0.011 < grandTotal) {
+      toast.error(`Tenders add up to ${formatINR(tenderSum)} but the total is ${formatINR(grandTotal)}`);
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/admin/pos/orders", {
@@ -568,8 +899,11 @@ export default function AdminPosPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: bill.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-          paymentMethod,
+          payments: cleaned,
           ...(discountNum > 0 ? { discountAmount: discountNum } : {}),
+          ...(taxNum > 0 ? { taxPercent: taxNum } : {}),
+          ...(shippingNum > 0 ? { shippingFee: shippingNum } : {}),
+          ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
           ...(customerEmail.trim() ? { customerEmail: customerEmail.trim() } : {}),
           ...(note.trim() ? { note: note.trim() } : {}),
         }),
@@ -578,12 +912,19 @@ export default function AdminPosPage() {
       if (json.ok) {
         const order = json.data.order as PosOrder;
         const pointsEarned = Number(json.data.pointsEarned ?? 0);
+        const changeDue = Number(json.data.changeDue ?? 0);
         playPosSound("success");
-        toast.success(`Order ${order.orderNumber} billed — ${formatINR(order.grandTotal)}`);
-        setReceipt({ order, pointsEarned, method: paymentMethod });
+        toast.success(
+          changeDue > 0
+            ? `Order ${order.orderNumber} billed — give ${formatINR(changeDue)} change`
+            : `Order ${order.orderNumber} billed — ${formatINR(order.grandTotal)}`
+        );
+        setReceipt({ order, pointsEarned, method: cleaned[0].method, changeDue });
+        setPayOpen(false);
         setBillOpen(false);
         resetBill();
-        void fetchProducts(1, query, false); // refresh stock badges
+        void fetchProducts(1, query, false, catFilter);
+        void refreshRegister(terminalId);
       } else {
         playPosSound("error");
         toast.error(json.error?.message ?? "Could not complete the sale");
@@ -594,6 +935,45 @@ export default function AdminPosPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /* Payment dialog helpers — Stocky-style checkout */
+
+  function openPaymentDialog() {
+    if (bill.length === 0) {
+      toast.error("Bill is empty — add products first");
+      return;
+    }
+    if (discountInvalid) {
+      toast.error("Discount cannot exceed the subtotal");
+      return;
+    }
+    setTenders([{ method: paymentMethod, amount: grandTotal }]);
+    setSaleNote(note);
+    playPosSound("click");
+    setPayOpen(true);
+  }
+
+  const tenderSum = Math.round(tenders.reduce((n, t) => n + (Number(t.amount) || 0), 0) * 100) / 100;
+  const balanceDue = Math.round(Math.max(grandTotal - tenderSum, 0) * 100) / 100;
+  const changeForCustomer = Math.round(Math.max(tenderSum - grandTotal, 0) * 100) / 100;
+
+  function updateTender(idx: number, patch: Partial<Tender>) {
+    setTenders(tenders.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+  }
+
+  function addTender() {
+    if (tenders.length >= 4) return;
+    setTenders([...tenders, { method: "CASH", amount: balanceDue > 0 ? balanceDue : 0 }]);
+  }
+
+  function removeTender(idx: number) {
+    if (tenders.length === 1) return;
+    setTenders(tenders.filter((_, i) => i !== idx));
+  }
+
+  function setTenderExact(idx: number) {
+    updateTender(idx, { amount: grandTotal });
   }
 
   /* ------------------------------ bill panel ------------------------------ */
@@ -668,8 +1048,19 @@ export default function AdminPosPage() {
                     >
                       <Plus className="h-3 w-3" />
                     </Button>
-                    <span className="tnum ml-1 text-[11px] text-muted-foreground">
-                      {formatINR(l.unitPrice)} each
+                    {/* inline unit-price override (Stocky's per-line price edit) */}
+                    <span className="ml-1 inline-flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                      <Pencil className="h-3 w-3 shrink-0" aria-hidden />
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="decimal"
+                        value={l.unitPrice}
+                        aria-label={`Unit price of ${l.productName}`}
+                        onChange={(e) => editLinePrice(l.variantId, Number(e.target.value))}
+                        className="tnum w-16 rounded border border-border bg-transparent px-1 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40"
+                      />
                     </span>
                   </div>
                 </div>
@@ -703,97 +1094,196 @@ export default function AdminPosPage() {
         </div>
         {appliedDiscount > 0 && (
           <div className="flex justify-between text-rose-600 dark:text-rose-400">
-            <span>Discount</span>
+            <span>
+              Discount{appliedCoupon ? ` (${appliedCoupon.code})` : ""}
+            </span>
             <span className="tnum">−{formatINR(appliedDiscount)}</span>
+          </div>
+        )}
+        {taxTotal > 0 && (
+          <div className="flex justify-between text-muted-foreground">
+            <span>Tax ({taxNum}%)</span>
+            <span className="tnum">{formatINR(taxTotal)}</span>
+          </div>
+        )}
+        {shippingNum > 0 && (
+          <div className="flex justify-between text-muted-foreground">
+            <span>Shipping</span>
+            <span className="tnum">{formatINR(shippingNum)}</span>
           </div>
         )}
         <div className="flex items-baseline justify-between pt-1">
           <span className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Grand total
+            {payOpen ? "Total payable" : "Grand total"}
           </span>
           <span className="tnum font-serif text-2xl font-semibold">{formatINR(grandTotal)}</span>
         </div>
       </div>
 
-      {/* discount */}
-      <div className="space-y-1.5">
-        <Label htmlFor={`${idPrefix}-discount`}>Discount (₹, optional)</Label>
-        <Input
-          id={`${idPrefix}-discount`}
-          type="number"
-          min={0}
-          step={1}
-          inputMode="decimal"
-          value={discount}
-          onChange={(e) => setDiscount(e.target.value)}
-          placeholder="0"
-        />
-        {discountInvalid && (
-          <p className="text-xs text-rose-600 dark:text-rose-400">
-            Discount cannot exceed the subtotal ({formatINR(subtotal)}).
-          </p>
-        )}
-      </div>
-
-      {/* payment method */}
-      <div className="space-y-1.5">
-        <Label>Payment method</Label>
-        <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted/40 p-1">
-          {PAYMENT_METHODS.map(({ value, label, icon: Icon }) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={paymentMethod === value}
-              onClick={() => {
-                setPaymentMethod(value);
-                playPosSound("click");
-              }}
-              className={`flex items-center justify-center gap-1.5 rounded-md px-2 py-2.5 text-xs font-semibold transition ${
-                paymentMethod === value
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
-              }`}
-            >
-              <Icon className="h-4 w-4" /> {label}
-            </button>
-          ))}
+      {/* discount + tax + shipping — Stocky-style bill adjustments */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-discount`} className="text-[11px] text-muted-foreground">
+            Discount ₹
+          </Label>
+          <Input
+            id={`${idPrefix}-discount`}
+            type="number"
+            min={0}
+            step={1}
+            inputMode="decimal"
+            value={discount}
+            onChange={(e) => setDiscount(e.target.value)}
+            placeholder="0"
+            className="h-9"
+          />
         </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-tax`} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Percent className="h-3 w-3" /> Tax %
+          </Label>
+          <Input
+            id={`${idPrefix}-tax`}
+            type="number"
+            min={0}
+            max={100}
+            step={0.5}
+            inputMode="decimal"
+            value={taxPercent}
+            onChange={(e) => setTaxPercent(e.target.value)}
+            placeholder="0"
+            className="h-9"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-shipping`} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Truck className="h-3 w-3" /> Ship ₹
+          </Label>
+          <Input
+            id={`${idPrefix}-shipping`}
+            type="number"
+            min={0}
+            step={1}
+            inputMode="decimal"
+            value={shippingFee}
+            onChange={(e) => setShippingFee(e.target.value)}
+            placeholder="0"
+            className="h-9"
+          />
+        </div>
+      </div>
+      {discountInvalid && (
+        <p className="text-xs text-rose-600 dark:text-rose-400">
+          Discount cannot exceed the subtotal ({formatINR(subtotal)}).
+        </p>
+      )}
+
+      {/* promo code */}
+      <div className="space-y-1.5">
+        <Label htmlFor={`${idPrefix}-coupon`} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <Tag className="h-3 w-3" /> Promo code
+        </Label>
+        {appliedCoupon ? (
+          <div className="flex items-center justify-between rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm">
+            <span className="flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
+              <Tag className="h-3.5 w-3.5" /> {appliedCoupon.code} — saves {formatINR(couponDiscount)}
+            </span>
+            <button
+              type="button"
+              aria-label="Remove coupon"
+              onClick={removeCoupon}
+              className="rounded-full p-1 text-muted-foreground transition hover:bg-accent hover:text-destructive"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-1.5">
+            <Input
+              id={`${idPrefix}-coupon`}
+              value={couponCode}
+              onChange={(e) => setCouponCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void applyCoupon();
+                }
+              }}
+              placeholder="Enter code"
+              className="h-9"
+              disabled={bill.length === 0}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 shrink-0 rounded-md px-4"
+              disabled={couponBusy || bill.length === 0 || !couponCode.trim()}
+              onClick={() => void applyCoupon()}
+            >
+              {couponBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* customer + note */}
       <div className="space-y-1.5">
-        <Label htmlFor={`${idPrefix}-email`}>Customer email (optional)</Label>
-        <Input
-          id={`${idPrefix}-email`}
-          type="email"
-          value={customerEmail}
-          onChange={(e) => setCustomerEmail(e.target.value)}
-          placeholder="Registered customer email (optional — earns points)"
-        />
+        <Label htmlFor={`${idPrefix}-email`} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <UserRound className="h-3 w-3" /> Customer
+          {customerName && customerEmail && (
+            <span className="ml-1 font-medium normal-case tracking-normal text-foreground">
+              · {customerName}
+            </span>
+          )}
+        </Label>
+        <div className="flex gap-1.5">
+          <Input
+            id={`${idPrefix}-email`}
+            type="email"
+            value={customerEmail}
+            onChange={(e) => setCustomerEmail(e.target.value)}
+            placeholder="Walk-in customer (optional)"
+            className="h-9"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 shrink-0 rounded-md px-3"
+            title="Pick a registered customer"
+            onClick={() => {
+              playPosSound("click");
+              setCustQuery("");
+              setCustHits(null);
+              setCustOpen(true);
+            }}
+          >
+            <UserRoundPlus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor={`${idPrefix}-note`}>Note (optional)</Label>
+        <Label htmlFor={`${idPrefix}-note`} className="text-[11px] text-muted-foreground">
+          Sale note (optional)
+        </Label>
         <Input
           id={`${idPrefix}-note`}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder="e.g. gift-wrapped, regular customer"
+          className="h-9"
         />
       </div>
 
       <Button
         type="button"
         disabled={busy || bill.length === 0 || discountInvalid}
-        onClick={() => void charge()}
+        onClick={openPaymentDialog}
         className="h-12 w-full rounded-full bg-primary text-base font-semibold hover:bg-primary/90"
       >
-        {busy ? (
-          <>
-            <Loader2 className="h-5 w-5 animate-spin" /> Billing…
-          </>
-        ) : (
-          <>Charge {formatINR(grandTotal)}</>
-        )}
+        <Wallet className="h-5 w-5" />
+        Pay Now {formatINR(grandTotal)}
       </Button>
     </div>
   );
@@ -817,11 +1307,66 @@ export default function AdminPosPage() {
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* cash register chip — Stocky-style open/close */}
+          <button
+            type="button"
+            onClick={() => {
+              playPosSound("click");
+              if (registerSession) {
+                setRegCounted("");
+                setRegClosingNote("");
+                setRegClose(true);
+              } else {
+                setRegOpen(true);
+              }
+            }}
+            className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${
+              registerSession
+                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400"
+                : "border-amber-500/50 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
+            }`}
+            title={
+              registerSession
+                ? `Register OPEN since ${formatDateTime(registerSession.openedAt)} — click to count and close`
+                : "Register CLOSED — click to open with an opening float"
+            }
+          >
+            {registerSession ? <LockOpen className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}
+            {registerSession ? "REGISTER OPEN" : "REGISTER CLOSED"}
+            {registerSession && registerLive && (
+              <span className="tnum rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] text-white">
+                {formatINR(registerLive.expectedCash)}
+              </span>
+            )}
+          </button>
           {terminalId && (
             <Badge variant="outline" className="tnum shrink-0" title="This cashier window's isolated terminal id">
               Window T-{terminalId}
             </Badge>
           )}
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0 rounded-full"
+            aria-label="Keyboard shortcuts"
+            title="Shortcuts: F2 search · F4 pay · F7 hold · F8 held bills"
+            onClick={() => {
+              playPosSound("click");
+              toast.info("Shortcuts — F2: focus scanner/search · F4: pay · F7: hold bill · F8: held bills");
+            }}
+          >
+            <Keyboard className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0 rounded-full"
+            aria-label="Toggle fullscreen"
+            title="Fullscreen (clean counter display)"
+            onClick={toggleFullscreen}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -943,6 +1488,40 @@ export default function AdminPosPage() {
             )}
           </div>
 
+          {/* category chips + live product count (Stocky-style catalog filter) */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              aria-pressed={catFilter === ""}
+              onClick={() => {
+                setCatFilter("");
+                playPosSound("click");
+              }}
+              className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                catFilter === "" ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              All categories
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                aria-pressed={catFilter === c.slug}
+                onClick={() => {
+                  setCatFilter(catFilter === c.slug ? "" : c.slug);
+                  playPosSound("click");
+                }}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  catFilter === c.slug ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
+                }`}
+              >
+                {c.name}
+              </button>
+            ))}
+            <span className="tnum ml-auto text-xs text-muted-foreground">{total} products</span>
+          </div>
+
           {products === null ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -968,6 +1547,13 @@ export default function AdminPosPage() {
                   const price = active.length
                     ? Math.min(...active.map((v) => Number(v.price)))
                     : 0;
+                  // Discount badge — highest % off among variants with a compare-at price
+                  const dealPct = active.reduce((best, v) => {
+                    const cp = v.compareAtPrice == null ? null : Number(v.compareAtPrice);
+                    if (!cp || cp <= Number(v.price)) return best;
+                    const pct = Math.round(((cp - Number(v.price)) / cp) * 100);
+                    return Math.max(best, pct);
+                  }, 0);
                   const out = stock === 0;
                   return (
                     <button
@@ -989,6 +1575,11 @@ export default function AdminPosPage() {
                           className="object-cover transition group-hover:scale-105"
                         />
                       </div>
+                      {dealPct > 0 && (
+                        <span className="absolute left-2 top-2 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow">
+                          −{dealPct}%
+                        </span>
+                      )}
                       <p className="line-clamp-1 text-sm font-medium">{p.name}</p>
                       <div className="mt-1 flex items-baseline justify-between gap-1">
                         <span className="tnum text-sm font-semibold">{formatINR(price)}</span>
@@ -1018,7 +1609,7 @@ export default function AdminPosPage() {
                 <Button
                   variant="outline"
                   disabled={loadingMore}
-                  onClick={() => void fetchProducts(page + 1, query, true)}
+                  onClick={() => void fetchProducts(page + 1, query, true, catFilter)}
                   className="w-full rounded-full"
                 >
                   {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : "Load more"}
@@ -1204,6 +1795,362 @@ export default function AdminPosPage() {
         </DialogContent>
       </Dialog>
 
+      {/* ===== Stocky-style payment checkout ===== */}
+      <Dialog open={payOpen} onOpenChange={(o) => !o && !busy && setPayOpen(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-4.5 w-4.5 text-primary" /> Payment Checkout
+            </DialogTitle>
+            <DialogDescription>
+              Take cash, card and UPI in any combination — change is calculated automatically.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* transaction summary + breakdown */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-center">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total</p>
+              <p className="tnum mt-0.5 font-serif text-lg font-semibold">{formatINR(grandTotal)}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-center">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Balance</p>
+              <p className={`tnum mt-0.5 font-serif text-lg font-semibold ${balanceDue > 0 ? "text-amber-600 dark:text-amber-400" : ""}`}>
+                {formatINR(balanceDue)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-center">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Change</p>
+              <p className="tnum mt-0.5 font-serif text-lg font-semibold text-sky-600 dark:text-sky-400">
+                {formatINR(changeForCustomer)}
+              </p>
+            </div>
+          </div>
+
+          {/* tenders */}
+          <div className="stellora-scroll max-h-64 space-y-2.5 overflow-y-auto">
+            {tenders.map((t, idx) => (
+              <div key={idx} className="rounded-lg border border-border p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                      {idx + 1}
+                    </span>
+                    Payment #{idx + 1}
+                  </p>
+                  {tenders.length > 1 && (
+                    <button
+                      type="button"
+                      aria-label={`Remove payment ${idx + 1}`}
+                      className="rounded-full p-1 text-muted-foreground transition hover:bg-accent hover:text-destructive"
+                      onClick={() => removeTender(idx)}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1 rounded-md border border-border bg-muted/40 p-1">
+                  {PAYMENT_METHODS.map(({ value, label, icon: Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={t.method === value}
+                      onClick={() => {
+                        updateTender(idx, { method: value });
+                        playPosSound("click");
+                      }}
+                      className={`flex items-center justify-center gap-1 rounded px-2 py-1.5 text-xs font-semibold transition ${
+                        t.method === value
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" /> {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    step={1}
+                    inputMode="decimal"
+                    value={t.amount || ""}
+                    onChange={(e) => updateTender(idx, { amount: Number(e.target.value) })}
+                    placeholder="0"
+                    aria-label={`Amount for payment ${idx + 1}`}
+                    className="h-9 tnum"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 shrink-0 rounded-md px-3 text-xs"
+                    onClick={() => setTenderExact(idx)}
+                    title="Fill the remaining balance"
+                  >
+                    Exact
+                  </Button>
+                </div>
+                {/* quick cash — Stocky's tender buttons */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {[100, 200, 500, 2000].map((noteAmt) => (
+                    <button
+                      key={noteAmt}
+                      type="button"
+                      onClick={() => updateTender(idx, { amount: (Number(t.amount) || 0) + noteAmt })}
+                      className="tnum rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground transition hover:border-primary hover:text-primary"
+                    >
+                      +{noteAmt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full text-xs"
+              disabled={tenders.length >= 4}
+              onClick={addTender}
+            >
+              <Plus className="h-3.5 w-3.5" /> Split payment
+            </Button>
+            <p className="text-xs text-muted-foreground tnum">
+              Tendered {formatINR(tenderSum)} / {formatINR(grandTotal)}
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1 rounded-full"
+              disabled={busy}
+              onClick={() => setPayOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="flex-1 rounded-full bg-emerald-600 text-white hover:bg-emerald-600/90"
+              disabled={busy || balanceDue > 0}
+              onClick={() => void charge(tenders)}
+            >
+              {busy ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Completing…
+                </>
+              ) : balanceDue > 0 ? (
+                `Balance ${formatINR(balanceDue)} left`
+              ) : (
+                <>✓ Complete Payment</>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== register: open ===== */}
+      <Dialog open={regOpen} onOpenChange={setRegOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LockOpen className="h-4 w-4 text-emerald-600" /> Open Register
+            </DialogTitle>
+            <DialogDescription>
+              Terminal T-{terminalId} — count the opening float in the cash drawer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="reg-opening">Opening balance (₹)</Label>
+              <Input
+                id="reg-opening"
+                type="number"
+                min={0}
+                step={1}
+                inputMode="decimal"
+                value={regOpeningBalance}
+                onChange={(e) => setRegOpeningBalance(e.target.value)}
+                placeholder="0"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="reg-opening-note">Notes (optional)</Label>
+              <Input
+                id="reg-opening-note"
+                value={regOpeningNote}
+                onChange={(e) => setRegOpeningNote(e.target.value)}
+                placeholder="e.g. morning shift, ₹500 float"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1 rounded-full" onClick={() => setRegOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 rounded-full bg-emerald-600 text-white hover:bg-emerald-600/90"
+                disabled={regBusy}
+                onClick={() => void openRegister()}
+              >
+                {regBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Open Register"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== register: close (count + variance) ===== */}
+      <Dialog open={regClose} onOpenChange={setRegClose}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LockKeyhole className="h-4 w-4 text-amber-600" /> Close Register
+            </DialogTitle>
+            <DialogDescription>
+              Count the cash in the drawer — the difference is your variance.
+            </DialogDescription>
+          </DialogHeader>
+          {registerSession && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-md border border-border bg-muted/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Opening float</p>
+                  <p className="tnum font-semibold">{formatINR(registerSession.openingBalance)}</p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                    {formatDateTime(registerSession.openedAt)} · {registerSession.openedByName ?? "—"}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border bg-muted/40 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Expected in drawer</p>
+                  <p className="tnum font-semibold text-emerald-700 dark:text-emerald-400">
+                    {formatINR(registerLive?.expectedCash ?? registerSession.openingBalance)}
+                  </p>
+                  {registerLive && (
+                    <p className="mt-0.5 text-[10px] text-muted-foreground tnum">
+                      cash +{formatINR(registerLive.cashIn)} · change −{formatINR(registerLive.change)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="reg-counted">Counted cash (₹)</Label>
+                <Input
+                  id="reg-counted"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="decimal"
+                  value={regCounted}
+                  onChange={(e) => setRegCounted(e.target.value)}
+                  placeholder="0"
+                  autoFocus
+                />
+                {regCounted !== "" && registerLive && (
+                  <p
+                    className={`tnum text-xs ${
+                      Number(regCounted) - (registerLive.expectedCash ?? 0) === 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : Number(regCounted) > (registerLive.expectedCash ?? 0)
+                          ? "text-sky-600 dark:text-sky-400"
+                          : "text-rose-600 dark:text-rose-400"
+                    }`}
+                  >
+                    Variance: {Number(regCounted) - (registerLive.expectedCash ?? 0) > 0 ? "+" : ""}
+                    {formatINR(Number(regCounted) - (registerLive.expectedCash ?? 0))}
+                    {Number(regCounted) - (registerLive.expectedCash ?? 0) === 0 ? " — balanced" : ""}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="reg-close-note">Notes (optional)</Label>
+                <Input
+                  id="reg-close-note"
+                  value={regClosingNote}
+                  onChange={(e) => setRegClosingNote(e.target.value)}
+                  placeholder="e.g. end of shift"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => setRegClose(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 rounded-full"
+                  disabled={regBusy}
+                  onClick={() => void closeRegister()}
+                >
+                  {regBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Close Register"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== customer quick-picker ===== */}
+      <Dialog open={custOpen} onOpenChange={setCustOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserRound className="h-4 w-4" /> Attach customer
+            </DialogTitle>
+            <DialogDescription>
+              Registered customers earn Stellora points on every counter sale.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={custQuery}
+              onChange={(e) => setCustQuery(e.target.value)}
+              placeholder="Search by name, email or phone…"
+              className="pl-9"
+              autoFocus
+            />
+          </div>
+          <div className="stellora-scroll max-h-64 space-y-1.5 overflow-y-auto">
+            {custHits === null ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+            ) : custHits.length === 0 ? (
+              <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                No customers match. You can still type any email in the bill panel.
+              </p>
+            ) : (
+              custHits.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setCustomerEmail(c.email);
+                    setCustomerName(c.name);
+                    setCustOpen(false);
+                    playPosSound("click");
+                    toast.success(`${c.name} attached — ${c.points} points`);
+                  }}
+                  className="flex w-full items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5 text-left text-sm transition hover:border-primary/60 hover:bg-accent"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{c.name}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {c.email}
+                      {c.phone ? ` · ${c.phone}` : ""}
+                    </span>
+                  </span>
+                  <span className="tnum shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                    {c.points} pts
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* receipt dialog */}
       <Dialog open={!!receipt} onOpenChange={(o) => !o && setReceipt(null)}>
         <DialogContent className="sm:max-w-sm">
@@ -1247,6 +2194,12 @@ export default function AdminPosPage() {
                       : ""}
                   </span>
                 </div>
+                {receipt.changeDue > 0 && (
+                  <div className="flex justify-between gap-2 font-semibold">
+                    <span>Change due</span>
+                    <span className="tnum">{formatINR(receipt.changeDue)}</span>
+                  </div>
+                )}
               </div>
 
               <div className="my-3 border-t border-dashed border-border" />

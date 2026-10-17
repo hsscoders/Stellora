@@ -1,6 +1,6 @@
 import { Router } from "express";
 import mongoose from "mongoose";
-import { Product, Category, Order, User, Coupon, HomepageBanner, SiteSetting, ShippingRate, StockMovement, AuditLog, ContactMessage, Session, RestockAlert } from "../models";
+import { Product, Category, Order, User, Coupon, HomepageBanner, SiteSetting, ShippingRate, StockMovement, AuditLog, ContactMessage, Session, RestockAlert, CashSession } from "../models";
 import { ok, fail, handle, assertSameOrigin, HttpError } from "../lib/http";
 import { requireAdmin } from "../lib/auth";
 import {
@@ -12,6 +12,7 @@ import { slugify, generateOrderNumber } from "../lib/utils";
 import { hashPassword } from "../lib/password";
 import { audit } from "../services/audit";
 import { accrueEarn } from "../services/loyalty";
+import { validateCoupon } from "../services/pricing";
 import { escapeRegex, serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
 import { getAutomationConfig, schedulerSnapshot, triggerJob, isJobId } from "../services/scheduler";
@@ -1628,9 +1629,47 @@ adminRouter.post(
     }
     subtotal = Math.round(subtotal * 100) / 100;
 
-    const discountAmount = Math.min(data.discountAmount ?? 0, subtotal);
-    const grandTotal = Math.round((subtotal - discountAmount) * 100) / 100;
-    if (grandTotal < 0) return fail(res, "VALIDATION_ERROR", "Invalid discount amount.", 422);
+    // Coupon — the same engine the storefront uses, applied to the bill subtotal.
+    let couponDiscount = 0;
+    let appliedCouponCode: string | null = null;
+    if (data.couponCode) {
+      try {
+        const result = await validateCoupon(
+          data.couponCode,
+          subtotal,
+          customer && customer.email !== WALKIN_EMAIL ? String(customer._id) : null
+        );
+        couponDiscount = result.discount;
+        appliedCouponCode = result.coupon.code;
+      } catch (err) {
+        const message = err instanceof HttpError ? err.message : "Coupon is not valid.";
+        return fail(res, "COUPON_INVALID", message, 422);
+      }
+    }
+
+    const discountAmount = Math.min((data.discountAmount ?? 0) + couponDiscount, subtotal);
+    const payableSubtotal = Math.max(subtotal - discountAmount, 0);
+    // GST-style tax on the discounted subtotal + flat shipping (both POS inputs).
+    const taxPercent = data.taxPercent ?? 0;
+    const taxTotal = Math.round(payableSubtotal * taxPercent) / 100;
+    const shippingFee = Math.round((data.shippingFee ?? 0) * 100) / 100;
+    const grandTotal = Math.round((payableSubtotal + taxTotal + shippingFee) * 100) / 100;
+
+    // Split tenders (Stocky-style): validate the sum covers the grand total.
+    // Single-method bills stay on the paymentMethod default.
+    const tenders = (data.payments ?? [{ method: data.paymentMethod, amount: grandTotal }]).map(
+      (p) => ({ method: p.method, amount: Math.round(p.amount * 100) / 100 })
+    );
+    const tenderSum = Math.round(tenders.reduce((n, p) => n + p.amount, 0) * 100) / 100;
+    if (tenderSum + 0.011 < grandTotal) {
+      return fail(
+        res,
+        "VALIDATION_ERROR",
+        `Split payments add up to ${tenderSum.toFixed(2)} but the total is ${grandTotal.toFixed(2)}.`,
+        422
+      );
+    }
+    const changeDue = Math.round(Math.max(tenderSum - grandTotal, 0) * 100) / 100;
 
     const orderNumber = generateOrderNumber();
     const now = new Date();
@@ -1684,9 +1723,9 @@ adminRouter.post(
               source: "POS",
               subtotal,
               discountTotal: discountAmount,
-              shippingFee: 0,
+              shippingFee,
               grandTotal,
-              couponCode: null,
+              couponCode: appliedCouponCode,
               pointsRedeemed: 0,
               idempotencyKey: `pos-${orderNumber}`,
               shipName: customer!.name,
@@ -1703,13 +1742,17 @@ adminRouter.post(
                 method: "GATEWAY",
                 status: "PAID",
                 amount: grandTotal,
-                providerRef: `POS:${data.paymentMethod}`,
+                // Machine-parseable tender breakdown for the cash-register report:
+                // POS:CASH:500.00+UPI:358.50|CHG:8.50
+                providerRef: `POS:${tenders.map((t) => `${t.method}:${t.amount.toFixed(2)}`).join("+")}${
+                  changeDue > 0 ? `|CHG:${changeDue.toFixed(2)}` : ""
+                }`,
                 verifiedAt: now,
               },
               events: [
                 {
                   status: "CONFIRMED",
-                  note: `Billed at counter via POS (${data.paymentMethod})`,
+                  note: `Billed at counter via POS (${tenders.map((t) => t.method).join(" + ")})`,
                 },
               ],
             },
@@ -1717,6 +1760,19 @@ adminRouter.post(
           { session }
         );
         createdOrderId = String(order._id);
+
+        // Coupon accounting — mirror the online checkout (usage + redemption).
+        if (appliedCouponCode) {
+          await Coupon.updateOne({ code: appliedCouponCode }, { $inc: { timesUsed: 1 } }, { session });
+          const couponDoc = await Coupon.findOne({ code: appliedCouponCode }).select("_id").session(session);
+          if (couponDoc) {
+            await Coupon.updateOne(
+              { _id: couponDoc._id },
+              { $push: { redemptions: { orderId: order._id, userId: customer!._id, amount: discountAmount } } },
+              { session }
+            );
+          }
+        }
       });
     } finally {
       await session.endSession();
@@ -1735,7 +1791,16 @@ adminRouter.post(
         action: "admin.pos.checkout",
         entityType: "Order",
         entityId: createdOrderId,
-        metadata: { orderNumber, grandTotal, paymentMethod: data.paymentMethod, items: lines.length },
+        metadata: {
+          orderNumber,
+          grandTotal,
+          tenders,
+          changeDue,
+          couponCode: appliedCouponCode,
+          taxPercent,
+          shippingFee,
+          items: lines.length,
+        },
       },
       req
     );
@@ -1746,9 +1811,219 @@ adminRouter.post(
       {
         order: serializeOrderDetail(populated),
         pointsEarned,
+        changeDue,
       },
       201
     );
+  })
+);
+
+/* ================= POS cash register (Stocky-style sessions) ================= */
+
+/** Parse "POS:CASH:500.00+UPI:100.00|CHG:8.50" → cash in/out for the drawer. */
+function parsePosCash(providerRef: string): { cashIn: number; change: number } | null {
+  if (!providerRef.startsWith("POS:")) return null;
+  const [tenderPart, changePart] = providerRef.split("|");
+  let cashIn = 0;
+  for (const t of tenderPart.slice(4).split("+")) {
+    const [method, amount] = t.split(":");
+    if (method === "CASH") cashIn += Number(amount) || 0;
+  }
+  const change = changePart?.startsWith("CHG:") ? Number(changePart.slice(4)) || 0 : 0;
+  return { cashIn, change };
+}
+
+/** One OPEN session per terminal — opening a second one is rejected. */
+adminRouter.post(
+  "/admin/pos/register/open",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const terminalId = String(req.body?.terminalId ?? "").trim().slice(0, 16);
+    if (!terminalId) return fail(res, "VALIDATION_ERROR", "Terminal id is required.", 422);
+    const openingBalance = Math.max(Number(req.body?.openingBalance) || 0, 0);
+    const note = String(req.body?.note ?? "").trim().slice(0, 300) || null;
+
+    const existing = await CashSession.findOne({ terminalId, status: "OPEN" }).lean<any>();
+    if (existing) {
+      return fail(res, "CONFLICT", "This terminal already has an open register session.", 409);
+    }
+    const [doc] = await CashSession.create([
+      {
+        terminalId,
+        status: "OPEN",
+        openedById: admin.id,
+        openedByName: admin.name ?? admin.email,
+        openingBalance,
+        openingNote: note,
+        openedAt: new Date(),
+      },
+    ]);
+    await audit(
+      {
+        actor: admin,
+        action: "admin.pos.register.open",
+        entityType: "CashSession",
+        entityId: String(doc._id),
+        metadata: { terminalId, openingBalance },
+      },
+      req
+    );
+    return ok(res, { session: JSON.parse(JSON.stringify(doc)) }, 201);
+  })
+);
+
+adminRouter.get(
+  "/admin/pos/register/current",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const terminalId = String(req.query.terminalId ?? "").trim().slice(0, 16);
+    if (!terminalId) return fail(res, "VALIDATION_ERROR", "Terminal id is required.", 422);
+    const session = await CashSession.findOne({ terminalId, status: "OPEN" }).lean<any>();
+    if (!session) return ok(res, { session: null });
+    // Live drawer math: opening float + cash sales − change paid out.
+    const orders = await Order.find({
+      source: "POS",
+      createdAt: { $gte: session.openedAt },
+    })
+      .select("payment.providerRef")
+      .lean<any[]>();
+    let cashIn = 0;
+    let change = 0;
+    let nonCash = 0;
+    for (const o of orders) {
+      const parsed = parsePosCash(o.payment?.providerRef ?? "");
+      if (!parsed) continue;
+      cashIn += parsed.cashIn;
+      change += parsed.change;
+      // non-cash tenders, parsed from the same machine-readable ref
+      const ref: string = o.payment?.providerRef ?? "";
+      for (const t of ref.split("|")[0].slice(4).split("+")) {
+        const [method, amount] = t.split(":");
+        if (method && method !== "CASH") nonCash += Number(amount) || 0;
+      }
+    }
+    const expectedCash = Math.round((session.openingBalance + cashIn - change) * 100) / 100;
+    return ok(res, {
+      session: JSON.parse(JSON.stringify(session)),
+      live: {
+        expectedCash,
+        cashIn: Math.round(cashIn * 100) / 100,
+        change: Math.round(change * 100) / 100,
+        nonCash: Math.round(nonCash * 100) / 100,
+      },
+    });
+  })
+);
+
+adminRouter.post(
+  "/admin/pos/register/close",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const terminalId = String(req.body?.terminalId ?? "").trim().slice(0, 16);
+    if (!terminalId) return fail(res, "VALIDATION_ERROR", "Terminal id is required.", 422);
+    const counted = Math.max(Number(req.body?.countedBalance) || 0, 0);
+    const note = String(req.body?.note ?? "").trim().slice(0, 300) || null;
+
+    const session = await CashSession.findOne({ terminalId, status: "OPEN" });
+    if (!session) return fail(res, "NOT_FOUND", "No open register session for this terminal.", 404);
+
+    const orders = await Order.find({
+      source: "POS",
+      createdAt: { $gte: session.openedAt },
+    })
+      .select("payment.providerRef")
+      .lean<any[]>();
+    let cashIn = 0;
+    let change = 0;
+    for (const o of orders) {
+      const parsed = parsePosCash(o.payment?.providerRef ?? "");
+      if (parsed) {
+        cashIn += parsed.cashIn;
+        change += parsed.change;
+      }
+    }
+    const expectedCash = Math.round((session.openingBalance + cashIn - change) * 100) / 100;
+    const variance = Math.round((counted - expectedCash) * 100) / 100;
+
+    session.status = "CLOSED";
+    session.countedBalance = counted;
+    session.expectedCash = expectedCash;
+    session.cashSales = Math.round(cashIn * 100) / 100;
+    session.variance = variance;
+    session.closingNote = note;
+    session.closedAt = new Date();
+    await session.save();
+
+    await audit(
+      {
+        actor: admin,
+        action: "admin.pos.register.close",
+        entityType: "CashSession",
+        entityId: String(session._id),
+        metadata: { terminalId, counted, expectedCash, variance },
+      },
+      req
+    );
+    return ok(res, {
+      session: JSON.parse(JSON.stringify(session)),
+      summary: { expectedCash, counted, variance, cashIn: Math.round(cashIn * 100) / 100, change: Math.round(change * 100) / 100 },
+    });
+  })
+);
+
+/* ================= POS customer quick-search (bill picker) ================= */
+
+adminRouter.get(
+  "/admin/pos/customers",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const q = (req.query.q as string | undefined)?.trim() ?? "";
+    const where: Record<string, unknown> = { role: "CUSTOMER", isActive: true };
+    if (q) {
+      where.$or = [
+        { name: new RegExp(escapeRegex(q), "i") },
+        { email: new RegExp(escapeRegex(q), "i") },
+        { phone: new RegExp(escapeRegex(q), "i") },
+      ];
+    }
+    const users = await User.find(where)
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .select("name email phone loyaltyPoints")
+      .lean<any[]>();
+    return ok(
+      res,
+      users.map((u) => ({
+        id: String(u._id),
+        name: u.name,
+        email: u.email,
+        phone: u.phone ?? null,
+        points: u.loyaltyPoints ?? 0,
+      }))
+    );
+  })
+);
+
+/* ================= POS coupon preview (cart-free validation) ================= */
+
+adminRouter.get(
+  "/admin/pos/coupon",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const code = String(req.query.code ?? "").trim();
+    const subtotal = Math.max(Number(req.query.subtotal) || 0, 0);
+    if (!code) return fail(res, "VALIDATION_ERROR", "Enter a coupon code.", 422);
+    if (subtotal <= 0) return fail(res, "VALIDATION_ERROR", "Add items to the bill first.", 422);
+    try {
+      // The walk-in identity can't earn per-user limits, so validate anonymously.
+      const result = await validateCoupon(code, subtotal, null);
+      return ok(res, { valid: true, code: result.coupon.code, discount: result.discount });
+    } catch (err) {
+      const message = err instanceof HttpError ? err.message : "Coupon is not valid.";
+      return ok(res, { valid: false, message });
+    }
   })
 );
 

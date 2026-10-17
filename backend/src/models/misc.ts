@@ -111,3 +111,29 @@ const WebhookEventSchema = new Schema(
 );
 
 export const WebhookEvent = model("WebhookEvent", WebhookEventSchema);
+
+/* ---------- CashSession (POS cash register — Stocky-style open/close) ---------- */
+
+const CashSessionSchema = new Schema(
+  {
+    terminalId: { type: String, required: true, trim: true, maxlength: 16 },
+    status: { type: String, enum: ["OPEN", "CLOSED"], default: "OPEN", index: true },
+    openedById: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    openedByName: { type: String, default: null },
+    openingBalance: { type: Number, default: 0, min: 0 },
+    openingNote: { type: String, default: null, maxlength: 300 },
+    countedBalance: { type: Number, default: null, min: 0 },
+    expectedCash: { type: Number, default: null, min: 0 },
+    cashSales: { type: Number, default: null, min: 0 },
+    variance: { type: Number, default: null },
+    closingNote: { type: String, default: null, maxlength: 300 },
+    openedAt: { type: Date, required: true },
+    closedAt: { type: Date, default: null },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: "cashsessions" }
+);
+
+CashSessionSchema.index({ terminalId: 1, status: 1 });
+CashSessionSchema.index({ openedAt: -1 });
+
+export const CashSession = model("CashSession", CashSessionSchema);

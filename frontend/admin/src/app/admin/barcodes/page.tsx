@@ -107,6 +107,12 @@ interface BcCfg {
   showNumber: boolean; // human-readable digits under the bars
   storeName: string;
   borders: boolean;
+  /* Stocky-style fine tuning */
+  fontScale: number; // text size multiplier (0.7–1.5)
+  barScale: number; // barcode height multiplier (0.5–1.6)
+  numScale: number; // barcode number size multiplier (0.8–1.6)
+  fontWeight: "normal" | "bold";
+  fontFamily: "Arial" | "Georgia" | "monospace";
 }
 
 const DEFAULT_CFG: BcCfg = {
@@ -127,7 +133,76 @@ const DEFAULT_CFG: BcCfg = {
   showNumber: true,
   storeName: "",
   borders: true,
+  fontScale: 1,
+  barScale: 1,
+  numScale: 1,
+  fontWeight: "bold",
+  fontFamily: "Arial",
 };
+
+/* Stocky-style sheet presets — one click maps a commercial label stock onto
+   paper + label + margins. The engine then computes the real cols×rows that
+   fit, so every preset stays WYSIWYG-correct on the chosen sheet. */
+const SHEET_PRESETS: {
+  id: string;
+  name: string;
+  paper: PaperId;
+  label: LabelId;
+  lw: number;
+  lh: number;
+  margin: number;
+  gap: number;
+}[] = [
+  { id: "p40", name: "40-up · 45.7×25.5", paper: "A4", label: "custom", lw: 45.7, lh: 25.5, margin: 5, gap: 1 },
+  { id: "p30", name: "30-up · 66.7×25.4", paper: "A4", label: "custom", lw: 66.7, lh: 25.4, margin: 5, gap: 0 },
+  { id: "p24", name: "24-up · 63×33.9", paper: "A4", label: "custom", lw: 63, lh: 33.9, margin: 6, gap: 1 },
+  { id: "p20", name: "20-up · 101.6×25.4", paper: "A4", label: "custom", lw: 101.6, lh: 25.4, margin: 3, gap: 0 },
+  { id: "p18", name: "18-up · 63.5×46.6", paper: "A4", label: "custom", lw: 63.5, lh: 46.6, margin: 6, gap: 1 },
+  { id: "p14", name: "14-up · 101.6×33.9", paper: "A4", label: "custom", lw: 101.6, lh: 33.9, margin: 3, gap: 0 },
+  { id: "p12", name: "12-up · 63.5×72", paper: "A4", label: "custom", lw: 63.5, lh: 72, margin: 6, gap: 1 },
+  { id: "p10", name: "10-up · 101.6×50.8", paper: "A4", label: "custom", lw: 101.6, lh: 50.8, margin: 3, gap: 0 },
+  { id: "s5025", name: "Stickers · 50×25", paper: "A4", label: "50x25", lw: 50, lh: 25, margin: 5, gap: 0 },
+  { id: "s5030", name: "Stickers · 50×30", paper: "A4", label: "50x30", lw: 50, lh: 30, margin: 5, gap: 0 },
+];
+
+/* Stocky-style design templates — display toggles + type scale in one tap. */
+const DESIGN_TEMPLATES: {
+  id: string;
+  name: string;
+  desc: string;
+  patch: Partial<BcCfg>;
+}[] = [
+  {
+    id: "t1",
+    name: "Template 1",
+    desc: "Name, Barcode, Number, Price",
+    patch: { showName: true, showNumber: true, showPrice: true, showVariant: false, showSku: false, fontScale: 1, barScale: 1, numScale: 1, fontWeight: "bold" },
+  },
+  {
+    id: "t2",
+    name: "Template 2",
+    desc: "Name & Price only",
+    patch: { showName: true, showNumber: false, showPrice: true, showVariant: false, showSku: false, fontScale: 1.1, barScale: 1, fontWeight: "bold" },
+  },
+  {
+    id: "t3",
+    name: "Template 3",
+    desc: "Barcode only",
+    patch: { showName: false, showNumber: false, showPrice: false, showVariant: false, showSku: false, fontScale: 1, barScale: 1.2 },
+  },
+  {
+    id: "t4",
+    name: "Template 4",
+    desc: "Large fonts (readable at arm's length)",
+    patch: { showName: true, showNumber: true, showPrice: true, showVariant: false, showSku: false, fontScale: 1.25, barScale: 1.15, numScale: 1.2, fontWeight: "bold" },
+  },
+  {
+    id: "t5",
+    name: "Template 5",
+    desc: "Compact (small accessories)",
+    patch: { showName: true, showNumber: true, showPrice: false, showVariant: true, showSku: true, fontScale: 0.85, barScale: 0.85, numScale: 0.9 },
+  },
+];
 
 function loadCfg(): BcCfg {
   if (typeof window === "undefined") return DEFAULT_CFG;
@@ -200,12 +275,14 @@ function LabelBox({
   const value = cfg.source === "ean13" ? (item.barcode ?? "") : item.sku;
   const format = cfg.source === "ean13" ? "EAN13" : "CODE128";
   const pad = labelH >= 30 ? 1 : 0.6;
-  const storeFs = clampN(labelH * 0.115, 4.5, 8);
-  const nameFs = clampN(labelH * 0.16, 5.5, 11);
-  const subFs = clampN(labelH * 0.135, 5, 9.5);
-  const skuFs = clampN(labelH * 0.12, 4.5, 8.5);
-  const numFs = clampN(labelH * 0.14, 5, 9.5);
-  const barH = clampN(labelH * (cfg.showNumber ? 0.32 : 0.42), 8, 52);
+  const fs = cfg.fontScale || 1;
+  const fam = cfg.fontFamily === "monospace" ? "'Sarasa Mono SC', monospace" : cfg.fontFamily === "Georgia" ? "Georgia, serif" : "Arial, sans-serif";
+  const storeFs = clampN(labelH * 0.115 * fs, 4.5, 10);
+  const nameFs = clampN(labelH * 0.16 * fs, 5.5, 13);
+  const subFs = clampN(labelH * 0.135 * fs, 5, 11.5);
+  const skuFs = clampN(labelH * 0.12 * fs, 4.5, 10);
+  const numFs = clampN(labelH * 0.14 * fs * (cfg.numScale || 1), 5, 12);
+  const barH = clampN(labelH * (cfg.showNumber ? 0.32 : 0.42) * (cfg.barScale || 1), 6, 60);
 
   return (
     <div
@@ -223,18 +300,21 @@ function LabelBox({
         {cfg.storeName ? (
           <p
             className="w-full truncate text-center font-semibold uppercase leading-tight tracking-wide"
-            style={{ fontSize: `${storeFs}px` }}
+            style={{ fontSize: `${storeFs}px`, fontFamily: fam, fontWeight: cfg.fontWeight === "bold" ? 700 : 400 }}
           >
             {cfg.storeName}
           </p>
         ) : null}
         {cfg.showName ? (
-          <p className="w-full truncate text-center font-semibold leading-tight" style={{ fontSize: `${nameFs}px` }}>
+          <p
+            className="w-full truncate text-center leading-tight"
+            style={{ fontSize: `${nameFs}px`, fontFamily: fam, fontWeight: cfg.fontWeight === "bold" ? 700 : 400 }}
+          >
             {item.productName}
           </p>
         ) : null}
         {cfg.showVariant || cfg.showPrice ? (
-          <p className="w-full truncate text-center leading-tight" style={{ fontSize: `${subFs}px` }}>
+          <p className="w-full truncate text-center leading-tight" style={{ fontSize: `${subFs}px`, fontFamily: fam }}>
             {cfg.showVariant ? item.variantName : ""}
             {cfg.showVariant && cfg.showPrice ? " · " : ""}
             {cfg.showPrice ? formatINR(item.price) : ""}
@@ -250,7 +330,7 @@ function LabelBox({
           )}
         </div>
         {cfg.showSku ? (
-          <p className="w-full truncate text-center font-mono leading-none" style={{ fontSize: `${skuFs}px` }}>
+          <p className="w-full truncate text-center leading-none" style={{ fontSize: `${skuFs}px`, fontFamily: fam }}>
             {item.sku}
           </p>
         ) : null}
@@ -271,9 +351,14 @@ export default function AdminBarcodesPage() {
   const [assigning, setAssigning] = useState(false);
   const [cfg, setCfg] = useState<BcCfg>(DEFAULT_CFG);
   const [hydrated, setHydrated] = useState(false);
+  /* Stocky-style: per-variant quantity (default 1), plus preview zoom */
+  const [perQty, setPerQty] = useState<Record<string, number>>({});
+  const [zoom, setZoom] = useState(1); // 1 | 1.5 | 2 — preview only, print stays 1:1
 
   /* Persisted print configuration — survives reloads and machines. */
   useEffect(() => {
+    // localStorage config restore must happen post-mount; once per page load.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCfg(loadCfg());
     setHydrated(true);
   }, []);
@@ -323,6 +408,8 @@ export default function AdminBarcodesPage() {
   }, []);
 
   useEffect(() => {
+    // fetchAll flips loading state before its first await — intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchAll();
   }, [fetchAll]);
 
@@ -377,9 +464,9 @@ export default function AdminBarcodesPage() {
   const rows = paper.roll ? 1 : Math.max(1, Math.floor((usableH + gap + 0.01) / (labelH + gap)));
   const perPage = Math.max(1, cols * rows);
 
-  const copiesNum = Math.min(Math.max(Math.round(Number(cfg.copies) || 1), 1), 100);
+  const copiesNum = 1; // per-variant quantities drive the run now
 
-  /* Build the label run: selection × filter × copies. */
+  /* Build the label run: selection × filter × per-variant qty. */
   const labels = useMemo(() => {
     const out: LabelItem[] = [];
     const q = query.trim().toLowerCase();
@@ -389,7 +476,8 @@ export default function AdminBarcodesPage() {
         if (!v.isActive) continue;
         if (!selected.has(v.id)) continue;
         if (q && !`${p.name} ${v.name} ${v.sku}`.toLowerCase().includes(q)) continue;
-        for (let i = 0; i < copiesNum; i += 1) {
+        const qty = Math.min(Math.max(Math.round(perQty[v.id] ?? cfg.copies ?? 1), 1), 100);
+        for (let i = 0; i < qty; i += 1) {
           out.push({
             key: `${v.id}-${i}`,
             variantId: v.id,
@@ -403,7 +491,39 @@ export default function AdminBarcodesPage() {
       }
     }
     return out.slice(0, MAX_LABELS);
-  }, [products, selected, query, copiesNum]);
+  }, [products, selected, query, perQty, cfg.copies]);
+
+  /* Selected variants (with qty) for the Stocky-style quantity table */
+  const selectedRows = useMemo(() => {
+    if (!products) return [];
+    const rows: { variantId: string; productName: string; variantName: string; sku: string; qty: number }[] = [];
+    for (const p of products) {
+      for (const v of p.variants) {
+        if (v.isActive && selected.has(v.id)) {
+          rows.push({
+            variantId: v.id,
+            productName: p.name,
+            variantName: v.name,
+            sku: v.sku,
+            qty: Math.min(Math.max(Math.round(perQty[v.id] ?? cfg.copies ?? 1), 1), 100),
+          });
+        }
+      }
+    }
+    return rows;
+  }, [products, selected, perQty, cfg.copies]);
+
+  function setQty(variantId: string, qty: number) {
+    const clamped = Math.min(Math.max(Math.round(qty) || 1, 1), 100);
+    setPerQty((prev) => ({ ...prev, [variantId]: clamped }));
+  }
+
+  function setAllQty(qty: number) {
+    const clamped = Math.min(Math.max(Math.round(qty) || 1, 1), 100);
+    const next: Record<string, number> = {};
+    for (const id of selected) next[id] = clamped;
+    setPerQty((prev) => ({ ...prev, ...next }));
+  }
 
   const sheetPages = useMemo(() => chunk(labels, perPage), [labels, perPage]);
 
@@ -455,9 +575,43 @@ export default function AdminBarcodesPage() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const scale = Math.min(1, avail / (pageW * MM));
+  const scale = Math.min(1, avail / (pageW * MM)) * zoom;
 
   /* ---------------- selection helpers ---------------- */
+
+  /** Stocky-style print: sheets are cloned into a clean popup and the print
+      dialog opens automatically — the main tab is never disturbed. */
+  function printPopup() {
+    const sheets = document.querySelector(".bc-sheets");
+    if (!sheets) return;
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (!win) {
+      toast.error("Popup blocked — allow popups to print labels");
+      return;
+    }
+    const css = `
+      @page { size: ${pageW}mm ${pageH}mm; margin: 0; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; background: #fff; }
+      .bc-sheets { display: flex; flex-direction: column; align-items: center; gap: 5mm; }
+      .bc-sheet { break-after: page; page-break-after: always; overflow: hidden; }
+      .bc-sheet:last-child { break-after: auto; page-break-after: auto; }
+      svg { display: block; }
+    `;
+    // clone at 1:1 (preview transform is on .bc-sheet, which we reset via CSS)
+    const clone = sheets.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(".bc-sheet").forEach((el) => {
+      (el as HTMLElement).style.transform = "none";
+      (el as HTMLElement).style.boxShadow = "none";
+    });
+    clone.querySelectorAll(".no-print").forEach((el) => el.remove());
+    win.document.write(
+      `<!doctype html><html><head><title>Stellora — Barcode Labels</title><style>${css}</style></head><body>${clone.outerHTML}</body></html>`
+    );
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 350);
+  }
 
   function toggleVariant(id: string) {
     setSelected((prev) => {
@@ -587,6 +741,33 @@ export default function AdminBarcodesPage() {
               ) : null}
             </div>
 
+            {/* Stocky-style sheet presets — one tap maps a label stock */}
+            <div className="space-y-1.5">
+              <Label>Sheet presets (N per sheet)</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {SHEET_PRESETS.map((pr) => (
+                  <button
+                    key={pr.id}
+                    type="button"
+                    onClick={() =>
+                      setCfg((c) => ({
+                        ...c,
+                        paper: pr.paper,
+                        label: pr.label,
+                        lw: pr.lw,
+                        lh: pr.lh,
+                        margin: pr.margin,
+                        gap: pr.gap,
+                      }))
+                    }
+                    className="rounded-full border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition hover:border-primary hover:text-primary"
+                  >
+                    {pr.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* paper + label sizing */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -646,7 +827,7 @@ export default function AdminBarcodesPage() {
               </div>
             ) : null}
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="bc-margin">Margin (mm)</Label>
                 <Input id="bc-margin" type="number" min={0} max={15} value={cfg.margin} onChange={(e) => set("margin", Number(e.target.value))} inputMode="numeric" />
@@ -655,9 +836,41 @@ export default function AdminBarcodesPage() {
                 <Label htmlFor="bc-gap">Gap (mm)</Label>
                 <Input id="bc-gap" type="number" min={0} max={10} value={cfg.gap} onChange={(e) => set("gap", Number(e.target.value))} inputMode="numeric" />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="bc-copies">Copies</Label>
+            </div>
+
+            {/* copies for all selected — quick action over the per-variant qty table */}
+            <div className="flex items-end gap-2">
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="bc-copies">Qty for all selected</Label>
                 <Input id="bc-copies" type="number" min={1} max={100} value={cfg.copies} onChange={(e) => set("copies", Number(e.target.value))} inputMode="numeric" />
+              </div>
+              <Button type="button" variant="outline" size="sm" className="h-9 rounded-md px-3 text-xs" onClick={() => setAllQty(Number(cfg.copies) || 1)}>
+                Apply to all
+              </Button>
+            </div>
+
+            {/* Stocky-style design templates — display + type scale in one tap */}
+            <div className="space-y-1.5">
+              <Label>Label design templates</Label>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                {DESIGN_TEMPLATES.map((t) => {
+                  const active = Object.entries(t.patch).every(
+                    ([k, v]) => cfg[k as keyof BcCfg] === v
+                  );
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setCfg((c) => ({ ...c, ...t.patch }))}
+                      className={`rounded-md border px-2 py-1.5 text-left transition ${
+                        active ? "border-primary bg-primary/10" : "border-border hover:border-primary/50 hover:bg-accent"
+                      }`}
+                    >
+                      <span className={`block text-[11px] font-semibold ${active ? "text-primary" : ""}`}>{t.name}</span>
+                      <span className="block text-[10px] leading-tight text-muted-foreground">{t.desc}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -698,6 +911,47 @@ export default function AdminBarcodesPage() {
               />
             </div>
 
+            {/* Stocky-style fine tuning — type + barcode metrics */}
+            <details className="rounded-md border border-border/70 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Fine tuning (advanced)
+              </summary>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="bc-fs" className="text-[11px]">Font size ×{cfg.fontScale.toFixed(2)}</Label>
+                  <input id="bc-fs" type="range" min={0.7} max={1.5} step={0.05} value={cfg.fontScale} onChange={(e) => set("fontScale", Number(e.target.value))} className="w-full accent-primary" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="bc-bs" className="text-[11px]">Barcode height ×{cfg.barScale.toFixed(2)}</Label>
+                  <input id="bc-bs" type="range" min={0.5} max={1.6} step={0.05} value={cfg.barScale} onChange={(e) => set("barScale", Number(e.target.value))} className="w-full accent-primary" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="bc-ns" className="text-[11px]">Number size ×{cfg.numScale.toFixed(2)}</Label>
+                  <input id="bc-ns" type="range" min={0.8} max={1.6} step={0.05} value={cfg.numScale} onChange={(e) => set("numScale", Number(e.target.value))} className="w-full accent-primary" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px]">Font weight</Label>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(["normal", "bold"] as const).map((w) => (
+                      <Button key={w} type="button" size="sm" variant={cfg.fontWeight === w ? "default" : "outline"} className="h-7 rounded-full text-[11px] capitalize" onClick={() => set("fontWeight", w)}>
+                        {w}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-[11px]">Font family</Label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(["Arial", "Georgia", "monospace"] as const).map((f) => (
+                      <Button key={f} type="button" size="sm" variant={cfg.fontFamily === f ? "default" : "outline"} className="h-7 rounded-full text-[11px]" onClick={() => set("fontFamily", f)}>
+                        {f === "monospace" ? "Mono" : f}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </details>
+
             <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-2.5">
               <Button type="button" variant="outline" size="sm" className="rounded-full text-xs" onClick={selectAllFiltered}>
                 <CheckSquare className="h-3.5 w-3.5" /> Select all filtered ({totalLabelable})
@@ -716,7 +970,7 @@ export default function AdminBarcodesPage() {
                 {labels.length >= MAX_LABELS ? " (capped)" : ""} · {cols}×{rows} per sheet ·{" "}
                 {sheetPages.length} sheet{sheetPages.length === 1 ? "" : "s"}
               </p>
-              <Button size="sm" className="rounded-full" disabled={labels.length === 0 || overflow} onClick={() => window.print()}>
+              <Button size="sm" className="rounded-full" disabled={labels.length === 0 || overflow} onClick={printPopup}>
                 <Printer className="h-4 w-4" /> Print
               </Button>
             </div>
@@ -781,6 +1035,59 @@ export default function AdminBarcodesPage() {
 
         {/* RIGHT — live sheet preview */}
         <section ref={wrapRef} className="min-w-0">
+          {/* Stocky-style selected-products quantity table */}
+          {selectedRows.length > 0 && (
+            <div className="no-print mb-4 rounded-lg border border-border/70 bg-card">
+              <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Selected products ({selectedRows.length}) — set print quantity
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 rounded-full text-xs text-destructive hover:text-destructive"
+                  onClick={() => setSelected(new Set())}
+                >
+                  Reset
+                </Button>
+              </div>
+              <div className="stellora-scroll max-h-56 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <th className="px-4 py-1.5 font-medium">Product</th>
+                      <th className="px-4 py-1.5 font-medium">Code</th>
+                      <th className="px-4 py-1.5 text-right font-medium">Quantity</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/70">
+                    {selectedRows.map((r) => (
+                      <tr key={r.variantId}>
+                        <td className="max-w-56 truncate px-4 py-1.5">
+                          {r.productName}
+                          <span className="ml-1 text-[11px] text-muted-foreground">· {r.variantName}</span>
+                        </td>
+                        <td className="px-4 py-1.5 font-mono text-xs text-muted-foreground">{r.sku}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={r.qty}
+                            onChange={(e) => setQty(r.variantId, Number(e.target.value))}
+                            aria-label={`Print quantity for ${r.productName} ${r.variantName}`}
+                            className="tnum ml-auto w-16 rounded border border-border bg-transparent px-2 py-1 text-right text-xs focus:outline-none focus:ring-1 focus:ring-primary/40"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {overflow ? (
             <div className="no-print mb-4 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -812,9 +1119,27 @@ export default function AdminBarcodesPage() {
             </div>
           ) : (
             <div className="rounded-lg border border-border/70 bg-card p-4">
-              <p className="no-print mb-3 text-xs text-muted-foreground">
-                1:1 WYSIWYG preview · print at 100% scale, margins “None”, paper “{paper.name}”.
-              </p>
+              <div className="no-print mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  1:1 WYSIWYG preview · print at 100% scale, margins “None”, paper “{paper.name}”.
+                </p>
+                {/* Stocky-style zoom — preview only, print stays 1:1 */}
+                <div className="flex items-center gap-1" role="group" aria-label="Preview zoom">
+                  {[1, 1.5, 2].map((z) => (
+                    <button
+                      key={z}
+                      type="button"
+                      aria-pressed={zoom === z}
+                      onClick={() => setZoom(z)}
+                      className={`tnum rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                        zoom === z ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
+                      }`}
+                    >
+                      {z * 100}%
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="bc-sheets flex flex-col items-center gap-5">
                 {sheetPages.map((pageItems, pi) => (
                   <div key={pi} className="flex flex-col items-center">

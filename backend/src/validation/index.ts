@@ -130,7 +130,22 @@ export const posCheckoutSchema = z.object({
     )
     .min(1, "Add at least one item to the bill"),
   paymentMethod: z.enum(["CASH", "CARD", "UPI"]).default("CASH"),
+  // Stocky-style split checkout: each tender is method + amount. When present,
+  // paymentMethod is ignored; the split rows are authoritative.
+  payments: z
+    .array(
+      z.object({
+        method: z.enum(["CASH", "CARD", "UPI"]),
+        amount: z.coerce.number().positive("Split amounts must be positive"),
+      })
+    )
+    .min(1, "At least one payment is required")
+    .max(4, "Maximum 4 split payments")
+    .optional(),
   discountAmount: z.coerce.number().min(0).optional(),
+  taxPercent: z.coerce.number().min(0).max(100).optional(),
+  shippingFee: z.coerce.number().min(0).optional(),
+  couponCode: z.string().trim().max(40).optional().or(z.literal("")),
   customerEmail: z.string().trim().toLowerCase().email().optional().or(z.literal("")),
   customerPhone: z.string().trim().max(15).optional().or(z.literal("")),
   note: z.string().trim().max(300).optional().or(z.literal("")),
