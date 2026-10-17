@@ -1,9 +1,11 @@
-import type { NextConfig } from "next";
+// Plain-JS config (.mjs) on purpose: `next start` loads a .ts config through
+// SWC, and on hosts where the native SWC binary can't load (old glibc) the
+// server would crash at boot. .mjs loads without SWC.
+/** @type {import('next').NextConfig} */
 
 const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
 // Admin console origin. Local dev: the sibling Next app on :3001.
-// On Netlify: set ADMIN_URL to the admin site's own URL
-// (e.g. https://stellora-admin.netlify.app) so /admin-console/* proxies there.
+// Production: the sibling Next app on :3001 (proxied through the storefront).
 const ADMIN = process.env.ADMIN_URL ?? "http://127.0.0.1:3001";
 
 const securityHeaders = [
@@ -19,7 +21,7 @@ const securityHeaders = [
   { key: "X-DNS-Prefetch-Control", value: "on" },
 ];
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   reactStrictMode: false,
   // Dev preview: serve original images directly. The on-demand sharp optimizer
   // makes first loads crawl in dev (each 1080px JPEG re-encoded per unique URL),

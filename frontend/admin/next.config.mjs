@@ -1,8 +1,11 @@
-import type { NextConfig } from "next";
+// Plain-JS config (.mjs) on purpose: `next start` loads a .ts config through
+// SWC, and on hosts where the native SWC binary can't load (old glibc) the
+// server would crash at boot. .mjs loads without SWC.
+/** @type {import('next').NextConfig} */
 
 const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   reactStrictMode: false,
   basePath: "/admin-console",
   // Serve admin images as-is. The production image optimizer self-fetches
