@@ -1,8 +1,22 @@
 import type { MetadataRoute } from "next";
+import { fetchSeoConfig, resolveSiteUrl } from "@/lib/seo";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+export const dynamic = "force-dynamic";
 
-export default function robots(): MetadataRoute.Robots {
+/**
+ * robots.txt — honours the admin panel's index/follow switches
+ * (Admin → Marketing → SEO & Rankings). "noindex site" fully blocks crawlers.
+ */
+export default async function robots(): Promise<MetadataRoute.Robots> {
+  const seo = await fetchSeoConfig();
+  const siteUrl = resolveSiteUrl(seo);
+
+  if (!seo.robotsIndex) {
+    return {
+      rules: [{ userAgent: "*", disallow: "/" }],
+    };
+  }
+
   return {
     rules: [
       {
@@ -11,6 +25,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/admin-console", "/account", "/checkout", "/api/", "/login", "/register"],
       },
     ],
-    sitemap: `${SITE_URL}/sitemap.xml`,
+    sitemap: `${siteUrl}/sitemap.xml`,
   };
 }

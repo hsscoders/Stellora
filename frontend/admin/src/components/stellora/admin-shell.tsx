@@ -35,6 +35,7 @@ import {
   ChevronRight,
   AlertTriangle,
   Barcode,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 import { formatINR } from "@/lib/utils";
@@ -84,6 +85,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/admin/banners", label: "Banners", icon: ImageIcon },
       { href: "/admin/shipping", label: "Shipping", icon: Truck },
+      { href: "/admin/seo", label: "SEO & Rankings", icon: TrendingUp, isNew: true },
     ],
   },
   {

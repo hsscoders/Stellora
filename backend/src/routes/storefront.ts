@@ -148,12 +148,30 @@ storefrontRouter.get(
   })
 );
 
+// SECURITY: payment.* keys (gateway secrets) are managed ONLY through the
+// masked /admin/payments/* endpoints and must NEVER be exposed publicly.
+// seo.config likewise has its own dedicated endpoint (/api/seo).
+const isInternalSettingKey = (key: string) =>
+  key.startsWith("payment.") || key === "seo.config";
+
 storefrontRouter.get(
   "/settings",
   handle(async (_req, res) => {
     const { SiteSetting } = await import("../models");
     const rows = await SiteSetting.find().sort({ key: 1 }).lean<{ key: string; value: string; updatedAt: Date }[]>();
-    return ok(res, rows.map((r) => ({ key: r.key, value: r.value, updatedAt: r.updatedAt })));
+    return ok(res, rows.filter((r) => !isInternalSettingKey(r.key)).map((r) => ({ key: r.key, value: r.value, updatedAt: r.updatedAt })));
+  })
+);
+
+// Public SEO configuration — powers <head> meta tags, JSON-LD structured
+// data, robots.txt and the sitemap. Every field is publishable by design
+// (verification tokens are literally <meta name="google-site-verification">
+// content, so secrecy is not a property this endpoint needs).
+storefrontRouter.get(
+  "/seo",
+  handle(async (_req, res) => {
+    const { getSeoConfig } = await import("../services/seo-config");
+    return ok(res, await getSeoConfig());
   })
 );
 

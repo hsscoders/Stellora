@@ -17,6 +17,7 @@ import { escapeRegex, serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
 import { getAutomationConfig, schedulerSnapshot, triggerJob, isJobId } from "../services/scheduler";
 import { getGatewayConfig, buildGatewayStatus, PAYMENT_SETTING_KEYS } from "../services/gateway-config";
+import { getSeoConfig, saveSeoConfig } from "../services/seo-config";
 import { testGatewayConnection } from "../services/payments";
 import { env } from "../env";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
@@ -1351,8 +1352,10 @@ adminRouter.post(
 
 // Payment-gateway keys live in the same SiteSetting collection but are
 // managed ONLY through /admin/payments/* — they are masked there and must
-// never leak through the generic settings endpoints.
-const isPaymentSecretKey = (key: string) => key.startsWith("payment.");
+// never leak through the generic settings endpoints. seo.config likewise
+// has its own dedicated /admin/seo endpoints below.
+const isPaymentSecretKey = (key: string) =>
+  key.startsWith("payment.") || key === "seo.config";
 
 adminRouter.get(
   "/admin/settings",
@@ -1385,6 +1388,39 @@ adminRouter.put(
       req
     );
     return ok(res, { updated: Object.keys(data).length });
+  })
+);
+
+/* ================= SEO (website-wide, admin-controlled) ================= */
+
+adminRouter.get(
+  "/admin/seo",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    return ok(res, await getSeoConfig());
+  })
+);
+
+adminRouter.put(
+  "/admin/seo",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    if (typeof req.body !== "object" || req.body === null || Array.isArray(req.body)) {
+      throw new HttpError("VALIDATION", "SEO settings must be a JSON object.", 400);
+    }
+    const saved = await saveSeoConfig(req.body);
+    await audit(
+      {
+        actor: admin,
+        action: "admin.seo.update",
+        entityType: "SiteSetting",
+        entityId: "seo.config",
+        metadata: { title: saved.defaultTitle, keywords: saved.keywords.length, cities: saved.citiesServed.length },
+      },
+      req
+    );
+    return ok(res, saved);
   })
 );
 

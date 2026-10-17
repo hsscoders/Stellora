@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BadgeCheck, Banknote, RotateCcw, ShieldCheck, Star, Truck } from "lucide-react";
 import { apiProduct, apiProducts, apiProductReviews, apiProductQuestions, apiMe } from "@/lib/server-api";
+import { fetchSeoConfig } from "@/lib/seo";
 import { ProductCard } from "@/components/stellora/product-card";
 import { WishlistButton } from "@/components/stellora/wishlist-button";
 import { ProductGallery } from "@/components/stellora/product-detail-client";
@@ -31,18 +32,19 @@ async function getProduct(slug: string) {
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const product = await getProduct(slug);
+  const [product, seo] = await Promise.all([getProduct(slug), fetchSeoConfig()]);
   if (!product) return { title: "Product" };
   const v = product.variants[0];
   return {
     title: product.name,
     description:
       product.shortDescription ??
-      `Shop ${product.name} at Stellora — premium quality, carefully packed, delivered across India.`,
+      `Shop ${product.name} at ${seo.businessName || seo.siteName} — premium quality, carefully packed, delivered across India.`,
+    keywords: [...seo.keywords, product.name.toLowerCase()].slice(0, 60),
     alternates: { canonical: `/product/${product.slug}` },
     openGraph: {
       type: "website",
-      title: `${product.name} · Stellora`,
+      title: `${product.name} · ${seo.siteName}`,
       description: product.shortDescription ?? undefined,
       images: product.images[0]?.url ? [{ url: product.images[0].url }] : undefined,
     },
