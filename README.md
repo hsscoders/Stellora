@@ -56,7 +56,7 @@ stellora/
 |---|---|
 | Frontend | Next.js 16 (App Router) + TypeScript 5, Tailwind CSS 4 + shadcn/ui, Playfair Display + Manrope |
 | Admin | Next.js 16, `basePath: /admin-console`, served behind the frontend proxy |
-| Backend | **Express 5 + Mongoose 8** (TypeScript), run with Bun (Node-compatible) |
+| Backend | **Express 5 + Mongoose 8** (TypeScript), run with Node + tsx (Bun also supported) |
 | Process management | **PM2** — `ecosystem.config.js` runs api + admin + web with auto-restart and unified logs |
 | Payments | Built-in demo gateway (Card/UPI simulation, HMAC-SHA256 signature handshake, decline rules) — **Razorpay-ready**: set `PAYMENTS_ENABLED=true`, `PAYMENT_PROVIDER=razorpay` + API keys in `backend/.env` |
 | Database | **MongoDB Atlas** (`mongodb+srv://…cluster0.tse9ruk.mongodb.net/stellora`) |
@@ -65,25 +65,31 @@ stellora/
 | Security | RBAC guards, ownership checks, rate limiting, same-origin checks (proxy-aware), security headers, upload magic-byte validation, audit logging |
 | Order integrity | MongoDB multi-document transactions, conditional atomic stock decrements, idempotency keys, embedded price snapshots |
 
-## Quick Start (development)
+## Quick Start (development — Windows / macOS / Linux)
+
+Requirements: **Node.js 20.9+** (LTS 22 recommended) and a MongoDB Atlas URI.
 
 ```bash
-# 1. Backend — configure and seed
+# 1. Install all three apps (npm workspaces — single command at the repo root)
+npm install
+
+# 2. Configure the backend
 cd backend
-cp .env.example .env            # fill in your MongoDB Atlas URI
-bun install
-bun src/seed.ts                 # fictional dev data, clearly labelled
-
-# 2. Frontend (client + admin)
-cd ../frontend/client && bun install
-cd ../admin && bun install
-
-# 3. Run everything (from the repo root)
+cp .env.example .env              # fill in your MongoDB Atlas URI
 cd ..
-bun run dev                     # frontend :3000 · admin :3001 · api :4000
+
+# 3. Seed the database (fictional dev data, clearly labelled)
+npm run seed
+
+# 4. Run everything (storefront :3000 · admin :3001 · api :4000)
+npm run dev
 ```
 
 Open `http://localhost:3000` — the admin console is at `http://localhost:3000/admin-console` (redirects to login when signed out).
+
+Works identically on Windows (cmd/PowerShell), macOS and Linux — all dev/start
+scripts are cross-platform Node commands. PM2 (`npm run pm2:start`) is the
+production process manager on Linux hosts.
 
 ### Test accounts (development only — from `backend/.env`)
 | Role | Email | Password |
@@ -92,6 +98,32 @@ Open `http://localhost:3000` — the admin console is at `http://localhost:3000/
 | Customer | `customer@stellora.local` | `Customer#2026` |
 
 > **Change these immediately in any real deployment.**
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm install` | Install dependencies for backend + client + admin (workspaces) |
+| `npm run dev` | Run all three apps in dev mode (concurrently, hot-reload) |
+| `npm run build` | Production build of storefront + admin console |
+| `npm start` | Run the production stack (expects `npm run build` first) |
+| `npm run seed` | Seed the database (products, categories, coupons, banners) |
+| `npm run typecheck` | TypeScript check across all three apps |
+| `npm run lint` | ESLint for both frontends |
+| `npm run pm2:start` | Start the stack under PM2 with auto-restart (Linux hosts) |
+| `npm run build:backend` | Compile backend TypeScript to `dist/` (used by cPanel Passenger) |
+
+Bun remains fully supported: every workspace also ships `dev:bun` / `start:bun` /
+`db:seed:bun` variants.
+
+## Production & Deployment
+
+See **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** for:
+- Complete environment-variable reference
+- **aaPanel (Linux VPS)** step-by-step: install → PM2 → nginx reverse proxy → SSL
+- **cPanel**: both the Terminal+PM2 path and the Application Manager (Passenger)
+  three-subdomain setup, with startup files in `deploy/cpanel/`
+- Post-deployment security checklist
 
 ## Production Notes
 
