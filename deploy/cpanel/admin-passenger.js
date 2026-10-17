@@ -13,7 +13,7 @@
  *   NODE_ENV    = production
  *
  * Passenger sets PORT automatically. The admin app serves under its basePath
- * /admin-console (configured in next.config.ts) — open admin.yourdomain.com/admin-console.
+ * /admin-console (configured in next.config.mjs) — open admin.yourdomain.com/admin-console.
  */
 process.chdir(__dirname);
 
