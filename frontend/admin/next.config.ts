@@ -19,12 +19,18 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: false },
   async rewrites() {
     return [
-      // Direct access on :3001 — proxy API calls to the backend.
-      // When served through the frontend proxy on :3000, the frontend's own
-      // rewrite handles /api before this one is consulted.
+      // Direct access on :3001 — proxy API calls to the backend, in BOTH
+      // spellings: the basePath'd one (client XHRs via the api() helper) and
+      // the bare one (relative <Image>/media URLs, which never get the
+      // basePath). basePath:false keeps a source unprefixed; the second pair
+      // is auto-prefixed by Next to /admin-console/….
+      { source: "/api/:path*", destination: `${BACKEND}/api/:path*`, basePath: false },
+      { source: "/uploads/:path*", destination: `${BACKEND}/api/media/:path*`, basePath: false },
+      // Static product/banner art lives in the storefront's public/ — on the
+      // admin origin, Next only serves public under the basePath, so bounce
+      // the bare /images/* paths to the basePath'd public route (self-fetch).
+      { source: "/images/:path*", destination: `http://127.0.0.1:${process.env.PORT ?? 3001}/admin-console/images/:path*`, basePath: false },
       { source: "/api/:path*", destination: `${BACKEND}/api/:path*` },
-      // Legacy uploaded-media URLs (older rows stored /uploads/<name>) — mirror
-      // the storefront's mapping so the admin never shows a broken image.
       { source: "/uploads/:path*", destination: `${BACKEND}/api/media/:path*` },
     ];
   },

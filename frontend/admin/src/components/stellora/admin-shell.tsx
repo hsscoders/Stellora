@@ -63,7 +63,7 @@ const NAV_SECTIONS: NavSection[] = [
     section: "Selling",
     items: [
       { href: "/admin/pos", label: "Point of Sale", icon: Store, isNew: true },
-      { href: "/admin/barcodes", label: "Barcode Studio", icon: Barcode, isNew: true },
+      { href: "/admin/barcodes", label: "Print Labels", icon: Barcode, isNew: true },
       { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
       { href: "/admin/returns", label: "Returns & Exchanges", icon: RotateCcw },
       { href: "/admin/coupons", label: "Coupons", icon: Ticket },
@@ -818,6 +818,13 @@ export function AdminShell({
     .find((n) =>
       n.href === "/admin" ? pathname === "/admin" : pathname === n.href || pathname.startsWith(`${n.href}/`)
     );
+
+  /* KIOSK MODE — the POS terminal is a dedicated full-screen app, exactly like
+     Stocky's register: no sidebar, no topbar, no page padding. The checkout
+     counter owns every pixel so cashiers can't wander into the admin. */
+  if (pathname.startsWith("/admin/pos")) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-screen bg-muted/25">
