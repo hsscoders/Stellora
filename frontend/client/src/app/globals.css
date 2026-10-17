@@ -760,3 +760,42 @@
   .toast-card { animation: none; }
   .toast-progress { animation-duration: 1s !important; opacity: 0.4; }
 }
+
+/* ============================================================
+   Nav sidebar (mobile drawer) — premium menu additions
+   Owned by components/stellora/nav-sidebar.tsx. Append-only.
+   ============================================================ */
+
+/* Staggered fade-up entrance for drawer sections. The per-section delay
+   is set inline (60ms steps, capped at ~360ms). The base state is fully
+   visible — the animation only plays on entrance — so content never
+   depends on CSS/JS running to be readable. */
+@keyframes nav-sidebar-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.nav-sidebar-item {
+  animation: nav-sidebar-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Hidden scrollbar for the horizontal collections chip row */
+.nav-sidebar-scroll-x {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.nav-sidebar-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* Reduced motion: disable the drawer's entrance animations entirely */
+@media (prefers-reduced-motion: reduce) {
+  .nav-sidebar-item {
+    animation: none;
+  }
+}

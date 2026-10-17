@@ -9,7 +9,6 @@ import {
   Search,
   Menu,
   UserRound,
-  X,
   LogOut,
   Package,
   Gem,
@@ -19,15 +18,11 @@ import {
   Award,
   ChevronRight,
   Gift,
-  Truck,
-  Phone,
-  CircleHelp,
-  Instagram,
-  Facebook,
   Star,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { ThemeToggle } from "@/components/stellora/theme-toggle";
+import { NavSidebar } from "@/components/stellora/nav-sidebar";
 import { SearchSuggest } from "@/components/stellora/search-suggest";
 import { Button } from "@/components/ui/button";
 import {
@@ -147,20 +142,6 @@ export function Header({ announcement }: { announcement: string | null }) {
         return () => window.clearTimeout(timeout);
       })
       .catch(() => {});
-  }, [mobileOpen]);
-
-  // Lock body scroll while the mobile drawer is open (Escape closes it).
-  // The drawer itself closes on link clicks / backdrop tap / route changes
-  // handled by the menu's onClick handlers.
-  useEffect(() => {
-    if (!mobileOpen) return;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMobileOpen(false);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = "";
-      window.removeEventListener("keydown", onKey);
-    };
   }, [mobileOpen]);
 
   const signOut = async () => {
@@ -370,149 +351,20 @@ export function Header({ announcement }: { announcement: string | null }) {
 
       {/* Mobile menu — rendered OUTSIDE <header> on purpose: the header's
           backdrop-blur creates a containing block that would trap the fixed
-          drawer to the header's box, leaving the panel transparent/broken. */}
+          drawer to the header's box, leaving the panel transparent/broken.
+          NavSidebar owns the body-scroll-lock + Escape-key effects itself. */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-[70] lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
-          <div
-            className="drawer-backdrop absolute inset-0 bg-foreground/45 backdrop-blur-sm"
-            onClick={() => setMobileOpen(false)}
-          />
-          <div className="drawer-panel absolute inset-y-0 left-0 flex w-80 max-w-[85vw] flex-col bg-background p-6 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <span className="font-serif text-xl tracking-[0.18em]">STELLORA</span>
-              <button aria-label="Close menu" onClick={() => setMobileOpen(false)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <nav className="stellora-scroll mt-6 flex flex-1 flex-col gap-5 overflow-y-auto pb-4" onClick={() => setMobileOpen(false)}>
-              <section>
-                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Shop by category
-                </p>
-                <div className="mt-2 space-y-0.5">
-                  {megaCategories.map((c) => {
-                    const Icon = CATEGORY_ICONS[c.slug] ?? ShoppingBag;
-                    return (
-                      <Link
-                        key={c.slug}
-                        href={`/category/${c.slug}`}
-                        className="group flex items-center gap-3 rounded-lg px-2 py-2.5 transition hover:bg-accent"
-                      >
-                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        <span className="flex-1 text-[15px] font-medium">{c.name}</span>
-                        <span className="text-xs text-muted-foreground tnum">
-                          {c._count?.products ?? 0}
-                        </span>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-primary" />
-                      </Link>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section>
-                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Collections
-                </p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {COLLECTIONS.map((col) => (
-                    <Link
-                      key={col.label}
-                      href={col.href}
-                      className="flex flex-col gap-2 rounded-xl border border-border/70 bg-card p-3 transition hover:border-primary/40"
-                    >
-                      <col.icon className="h-4 w-4 text-primary" />
-                      <span className="text-[13px] font-medium leading-tight">{col.label}</span>
-                    </Link>
-                  ))}
-                </div>
-              </section>
-
-              <Link
-                href="/shop"
-                className="flex items-center gap-2.5 rounded-xl brand-gradient px-4 py-3 text-sm font-medium text-primary-foreground"
-              >
-                <Gift className="h-4 w-4" />
-                Offers live — WELCOME10 &amp; FLAT200
-                <ChevronRight className="ml-auto h-4 w-4" />
-              </Link>
-
-              <section>
-                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Account &amp; orders
-                </p>
-                <div className="mt-2 space-y-0.5">
-                  {[
-                    { href: "/account", label: user ? "My Account & Rewards" : "Sign In", icon: UserRound },
-                    { href: "/account/orders", label: "My Orders", icon: Package },
-                    { href: "/wishlist", label: "Wishlist", icon: Heart },
-                    { href: "/track-order", label: "Track Order", icon: Truck },
-                  ].map((row) => (
-                    <Link
-                      key={row.href}
-                      href={row.href}
-                      className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-[15px] transition hover:bg-accent"
-                    >
-                      <row.icon className="h-4 w-4 text-primary" /> {row.label}
-                    </Link>
-                  ))}
-                </div>
-              </section>
-
-              <section>
-                <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Help
-                </p>
-                <div className="mt-2 space-y-0.5">
-                  {[
-                    { href: "/support", label: "Support Hub", icon: CircleHelp },
-                    { href: "/contact", label: "Contact Us", icon: Phone },
-                  ].map((row) => (
-                    <Link
-                      key={row.href}
-                      href={row.href}
-                      className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-[15px] transition hover:bg-accent"
-                    >
-                      <row.icon className="h-4 w-4 text-primary" /> {row.label}
-                    </Link>
-                  ))}
-                </div>
-              </section>
-
-              {(socials.instagram || socials.facebook || socials.whatsapp) && (
-                <section>
-                  <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Follow us
-                  </p>
-                  <div className="mt-2 flex gap-2 px-1" onClick={(e) => e.stopPropagation()}>
-                    {socials.instagram && (
-                      <a href={socials.instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:border-primary hover:text-primary">
-                        <Instagram className="h-4 w-4" />
-                      </a>
-                    )}
-                    {socials.facebook && (
-                      <a href={socials.facebook} target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:border-primary hover:text-primary">
-                        <Facebook className="h-4 w-4" />
-                      </a>
-                    )}
-                    {socials.whatsapp && (
-                      <a href={socials.whatsapp.startsWith("http") ? socials.whatsapp : `https://wa.me/${socials.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp" className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:border-primary hover:text-primary">
-                        <Phone className="h-4 w-4" />
-                      </a>
-                    )}
-                  </div>
-                </section>
-              )}
-            </nav>
-            <div className="border-t border-border pt-4">
-              <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
-                Stellora · Premium Finds
-              </p>
-            </div>
-          </div>
-        </div>
+        <NavSidebar
+          open
+          onClose={() => setMobileOpen(false)}
+          onOpenSearch={() => {
+            setMobileOpen(false);
+            setSearchOpen(true);
+          }}
+          user={user}
+          categories={megaCategories}
+          socials={socials}
+        />
       )}
     </>
   );
