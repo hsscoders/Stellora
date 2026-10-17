@@ -111,7 +111,6 @@ export default function AdminBannersPage() {
             {rows.map((b) => (
               <TableRow key={b.id}>
                 <TableCell>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={b.imageUrl} alt="" className="h-10 w-24 rounded object-cover" />
                   <p className="mt-1.5 font-medium">{b.title}</p>
                   {b.subtitle && <p className="max-w-64 truncate text-xs text-muted-foreground">{b.subtitle}</p>}
