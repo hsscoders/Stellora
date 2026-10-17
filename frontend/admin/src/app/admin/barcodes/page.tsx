@@ -504,7 +504,7 @@ export default function AdminBarcodesPage() {
   function saveLayout() {
     const name = layoutName.trim();
     if (!name) {
-      toast.error("Pehle layout ka naam likho");
+      toast.error("Enter a layout name first");
       return;
     }
     persistLayouts([...layouts.filter((l) => l.name !== name), { id: `l-${Date.now()}`, name, cfg }]);

@@ -26,7 +26,20 @@ export function AuthForm({
     setBusy(true);
     setErrors({});
     const form = new FormData(e.currentTarget);
-    const payload = Object.fromEntries(form.entries());
+    const raw = Object.fromEntries(form.entries()) as Record<string, string>;
+
+    /* Mobile-first payloads: login/forgot send one `identifier`; register
+       always sends the phone and only includes the email when given. */
+    let payload: Record<string, string>;
+    if (mode === "login") {
+      payload = { identifier: (raw.identifier ?? "").trim(), password: raw.password ?? "" };
+    } else if (mode === "register") {
+      payload = { name: raw.name ?? "", phone: raw.phone ?? "", password: raw.password ?? "" };
+      const email = (raw.email ?? "").trim();
+      if (email) payload.email = email;
+    } else {
+      payload = { identifier: (raw.identifier ?? "").trim() };
+    }
 
     const url =
       mode === "login"
@@ -48,10 +61,10 @@ export function AuthForm({
         return;
       }
       if (mode === "forgot") {
-        toast.success("Check your inbox for the reset link.", {
+        toast.success("If we found your account, the reset link has been sent.", {
           description: json.data.devLink
-            ? "Dev mode: SMTP is not configured — the reset link is also printed in the server log."
-            : undefined,
+            ? "Dev mode: SMTP is not configured — the reset link is also printed in the server logs."
+            : "The reset link goes to the email address. For mobile-only accounts, please contact the shop.",
           duration: 8000,
         });
         if (json.data.devLink) {
@@ -60,7 +73,7 @@ export function AuthForm({
         return;
       }
       await refreshCart();
-      toast.success(mode === "login" ? "Welcome back!" : "Account created. Welcome to Stellora!");
+      toast.success(mode === "login" ? "Welcome back!" : "Account created! Welcome to Stellora.");
       // The admin console is a SEPARATE Next.js app behind a rewrite proxy.
       // router.push() soft-navigates across the rewrite boundary and fails
       // silently (user stays stuck on /login) — a hard navigation is required.
@@ -87,32 +100,77 @@ export function AuthForm({
           {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
         </div>
       )}
-      <div>
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          name="email"
-          type="email"
-          required
-          autoComplete="email"
-          placeholder="you@example.com"
-        />
-        {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
-      </div>
-      {mode === "register" && (
+
+      {/* Mobile-first: the phone number leads on register; login/forgot take
+          one identifier that accepts both mobile numbers and emails. */}
+      {mode === "register" ? (
         <div>
-          <Label htmlFor="phone">Phone (optional)</Label>
-          <Input id="phone" name="phone" autoComplete="tel" placeholder="98000 00000" />
+          <Label htmlFor="phone">
+            Mobile number <span className="text-destructive">*</span>
+          </Label>
+          <div className="relative">
+            <span className="text-muted-foreground pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold">
+              +91
+            </span>
+            <Input
+              id="phone"
+              name="phone"
+              type="tel"
+              inputMode="numeric"
+              required
+              autoComplete="tel-national"
+              maxLength={10}
+              placeholder="98765 43210"
+              className="pl-12 tnum"
+            />
+          </div>
+          <p className="text-muted-foreground mt-1 text-xs">
+            Order updates and the latest shop news will be sent to this number.
+          </p>
           {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone}</p>}
         </div>
+      ) : (
+        <div>
+          <Label htmlFor="identifier">
+            {mode === "login" ? "Mobile number or Email" : "Mobile number or Email"}
+          </Label>
+          <Input
+            id="identifier"
+            name="identifier"
+            required
+            autoComplete={mode === "login" ? "username" : "email"}
+            placeholder="98765 43210  ·  or  ·  you@example.com"
+          />
+          {errors.identifier && <p className="mt-1 text-xs text-destructive">{errors.identifier}</p>}
+          {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
+        </div>
       )}
+
+      {/* Email is now the optional second line on register — most shop
+          customers only keep a mobile number. */}
+      {mode === "register" && (
+        <div>
+          <Label htmlFor="email">
+            Email <span className="text-muted-foreground font-normal">(optional)</span>
+          </Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="email"
+            placeholder="you@example.com"
+          />
+          {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
+        </div>
+      )}
+
       {mode !== "forgot" && (
         <div>
           <div className="flex items-center justify-between">
             <Label htmlFor="password">Password</Label>
             {mode === "login" && (
-              <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-                Forgot password?
+              <Link href="/forgot-password" className="text-primary text-xs hover:underline">
+                Forgot your password?
               </Link>
             )}
           </div>
@@ -125,7 +183,7 @@ export function AuthForm({
             placeholder="••••••••"
           />
           {mode === "register" && (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-muted-foreground mt-1 text-xs">
               At least 8 characters with a letter and a number.
             </p>
           )}
@@ -134,8 +192,8 @@ export function AuthForm({
       )}
 
       {errors.devLink && (
-        <div className="rounded-md border border-border bg-accent/60 p-3 text-xs break-all">
-          <p className="font-medium text-accent-foreground">Dev mode reset link (SMTP not configured):</p>
+        <div className="bg-accent/60 border-border rounded-md border p-3 text-xs break-all">
+          <p className="text-accent-foreground font-medium">Dev mode reset link (SMTP not configured):</p>
           <a className="text-primary underline" href={errors.devLink}>
             {errors.devLink}
           </a>
@@ -145,7 +203,7 @@ export function AuthForm({
       <Button
         type="submit"
         disabled={busy}
-        className="w-full rounded-full bg-primary py-6 text-sm tracking-wide hover:bg-primary/90"
+        className="bg-primary hover:bg-primary/90 w-full rounded-full py-6 text-sm tracking-wide"
       >
         {busy
           ? "Please wait…"
@@ -155,6 +213,12 @@ export function AuthForm({
               ? "Create Account"
               : "Send Reset Link"}
       </Button>
+
+      {mode === "register" && (
+        <p className="text-muted-foreground text-center text-xs leading-relaxed">
+          You can also create an account with just a mobile number — email is optional.
+        </p>
+      )}
     </form>
   );
 }

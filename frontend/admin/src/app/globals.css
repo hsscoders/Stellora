@@ -195,8 +195,9 @@
 }
 
 /* ============================================================
-   Premium toast system — sonner custom cards (see ui/notify.tsx)
-   Kind-tinted icon chip, glass card, gold progress bar, action pill.
+   Premium toast system v2 — theme-woven (see ui/notify.tsx)
+   Popover surface + kind-coloured accent spine + tinted icon
+   bubble + hairline progress. Kind colours re-tune in .dark.
    ============================================================ */
 [data-sonner-toast].toast-slot {
   background: transparent !important;
@@ -206,59 +207,55 @@
   border-radius: 0 !important;
 }
 .toast-card {
+  /* kind colour — re-declared per kind below, always theme-paired */
+  --toast-kind: var(--primary);
+  --toast-kind-soft: color-mix(in srgb, var(--primary) 13%, transparent);
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  width: 344px;
-  max-width: calc(100vw - 40px);
-  padding: 14px 40px 16px 14px;
+  gap: 11px;
+  width: 356px;
+  max-width: calc(100vw - 32px);
+  padding: 13px 40px 15px 17px;
   border-radius: 16px;
-  background: color-mix(in srgb, var(--popover) 86%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-  box-shadow: 0 24px 48px -20px rgb(0 0 0 / 0.5), 0 4px 12px -4px rgb(0 0 0 / 0.22);
-  backdrop-filter: blur(16px) saturate(1.5);
+  background: var(--popover);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 16px 40px -16px rgb(0 0 0 / 0.38);
   overflow: hidden;
-  animation: toast-card-in 0.32s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+  animation: toast-card-in 0.38s cubic-bezier(0.21, 1.02, 0.73, 1) both;
 }
-.toast-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 60%, transparent), transparent);
-  opacity: 0.8;
+.dark .toast-card {
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.03) inset,
+    0 18px 44px -14px rgb(0 0 0 / 0.75);
 }
 @keyframes toast-card-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.toast-accent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--toast-kind);
+  opacity: 0.9;
 }
 .toast-icon {
   flex: none;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  color: #fff;
+  width: 30px;
+  height: 30px;
   margin-top: 1px;
-}
-.toast-card[data-kind="success"] .toast-icon {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 92%, #fff), color-mix(in srgb, var(--accent) 74%, #000));
-  color: #201507;
-  box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--accent) 65%, transparent);
-}
-.toast-card[data-kind="error"] .toast-icon {
-  background: linear-gradient(135deg, #ef5350, #b3261e);
-  box-shadow: 0 8px 18px -8px rgb(179 38 30 / 0.6);
-}
-.toast-card[data-kind="warning"] .toast-icon {
-  background: linear-gradient(135deg, #ffb74d, #c77700);
-  box-shadow: 0 8px 18px -8px rgb(199 119 0 / 0.55);
-}
-.toast-card[data-kind="info"] .toast-icon {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 82%, #fff), var(--primary));
-  box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--primary) 65%, transparent);
+  border-radius: 10px;
+  color: var(--toast-kind);
+  background: var(--toast-kind-soft);
+  border: 1px solid color-mix(in srgb, var(--toast-kind) 26%, transparent);
 }
 .toast-body { min-width: 0; flex: 1; }
 .toast-title {
@@ -272,7 +269,7 @@
   margin-top: 3px;
   font-size: 12.5px;
   line-height: 1.5;
-  color: color-mix(in srgb, var(--foreground) 60%, transparent);
+  color: color-mix(in srgb, var(--foreground) 62%, transparent);
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -286,9 +283,9 @@
   margin-top: 10px;
   padding: 5px 12px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: color-mix(in srgb, var(--accent) 80%, var(--foreground));
+  border: 1px solid color-mix(in srgb, var(--toast-kind) 34%, transparent);
+  background: var(--toast-kind-soft);
+  color: var(--toast-kind);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -298,8 +295,8 @@
 }
 .toast-action:hover {
   transform: translateY(-1px);
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
-  box-shadow: 0 6px 14px -6px color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--toast-kind) 22%, transparent);
+  box-shadow: 0 6px 14px -6px color-mix(in srgb, var(--toast-kind) 60%, transparent);
 }
 .toast-close {
   position: absolute;
@@ -321,12 +318,12 @@
 .toast-media { position: relative; flex: none; display: block; margin-top: 1px; }
 .toast-media img {
   display: block;
-  width: 46px;
-  height: 46px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
   object-fit: cover;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
 }
 .toast-media-dot {
   position: absolute;
@@ -337,34 +334,65 @@
   width: 17px;
   height: 17px;
   border-radius: 999px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 92%, #fff), color-mix(in srgb, var(--accent) 74%, #000));
-  color: #201507;
+  background: var(--toast-kind);
+  color: #fff;
   border: 2px solid var(--popover);
 }
 .toast-progress {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  top: 0;
   height: 2.5px;
   transform-origin: left;
   animation-name: toast-progress;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
   pointer-events: none;
+  background: var(--toast-kind);
+  opacity: 0.85;
 }
-.toast-card[data-kind="success"] .toast-progress { background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 25%, transparent)); }
-.toast-card[data-kind="error"] .toast-progress { background: linear-gradient(90deg, #ef5350, transparent); }
-.toast-card[data-kind="warning"] .toast-progress { background: linear-gradient(90deg, #ffb74d, transparent); }
-.toast-card[data-kind="info"] .toast-progress { background: linear-gradient(90deg, var(--primary), transparent); }
 @keyframes toast-progress { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 [data-sonner-toast]:hover .toast-progress { animation-play-state: paused; }
+
+/* Kind palettes — light + dark tuned so both stay crisp */
+.toast-card[data-kind="success"] { --toast-kind: #16803c; --toast-kind-soft: color-mix(in srgb, #16803c 12%, transparent); }
+.toast-card[data-kind="error"]   { --toast-kind: #c2352b; --toast-kind-soft: color-mix(in srgb, #c2352b 11%, transparent); }
+.toast-card[data-kind="warning"] { --toast-kind: #b45309; --toast-kind-soft: color-mix(in srgb, #b45309 13%, transparent); }
+.toast-card[data-kind="info"]    { --toast-kind: var(--primary); --toast-kind-soft: color-mix(in srgb, var(--primary) 13%, transparent); }
+.dark .toast-card[data-kind="success"] { --toast-kind: #4ade80; --toast-kind-soft: color-mix(in srgb, #4ade80 14%, transparent); }
+.dark .toast-card[data-kind="error"]   { --toast-kind: #f87171; --toast-kind-soft: color-mix(in srgb, #f87171 13%, transparent); }
+.dark .toast-card[data-kind="warning"] { --toast-kind: #fbbf24; --toast-kind-soft: color-mix(in srgb, #fbbf24 13%, transparent); }
+
+/* Phones: toasts sit bottom-centre, full width, above the finger */
+@media (max-width: 640px) {
+  .toast-card { width: calc(100vw - 24px); }
+  [data-sonner-toaster] {
+    left: 12px !important;
+    right: 12px !important;
+  }
+}
+
+/* Admin mobile bottom nav clearance — toasts never hide behind the nav bar */
+@media (max-width: 1023px) {
+  [data-sonner-toaster] {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+
+/* Touch devices: keep every field at 16px — iOS Safari zooms any smaller
+   input on focus, which made forms feel broken on the shop phones. */
+@media (pointer: coarse) {
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast-card { animation: none; }
   .toast-progress { animation-duration: 1s !important; opacity: 0.4; }
-}
-@media (max-width: 480px) {
-  .toast-card { width: calc(100vw - 32px); border-radius: 14px; }
 }
 
 /* ---------- Admin shell (Stellora-12) ---------- */

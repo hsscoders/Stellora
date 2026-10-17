@@ -16,7 +16,16 @@ export function ContactForm() {
     e.preventDefault();
     setBusy(true);
     setErrors({});
-    const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+    const raw = Object.fromEntries(new FormData(e.currentTarget).entries()) as Record<string, string>;
+    /* Mobile-first: the phone leads; email only travels when provided. */
+    const payload: Record<string, string> = {
+      name: raw.name ?? "",
+      phone: raw.phone ?? "",
+      subject: raw.subject ?? "",
+      message: raw.message ?? "",
+    };
+    const email = (raw.email ?? "").trim();
+    if (email) payload.email = email;
     const res = await fetch("/api/contact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -57,10 +66,34 @@ export function ContactForm() {
           {errors.name && <p className="mt-1 text-xs text-destructive">{errors.name}</p>}
         </div>
         <div>
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" name="email" type="email" required />
-          {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
+          <Label htmlFor="phone">
+            Mobile number <span className="text-destructive">*</span>
+          </Label>
+          <div className="relative">
+            <span className="text-muted-foreground pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold">
+              +91
+            </span>
+            <Input
+              id="phone"
+              name="phone"
+              type="tel"
+              inputMode="numeric"
+              required
+              maxLength={10}
+              autoComplete="tel-national"
+              placeholder="98765 43210"
+              className="pl-12 tnum"
+            />
+          </div>
+          {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone}</p>}
         </div>
+      </div>
+      <div>
+        <Label htmlFor="email">
+          Email <span className="text-muted-foreground font-normal">(optional)</span>
+        </Label>
+        <Input id="email" name="email" type="email" placeholder="you@example.com" />
+        {errors.email && <p className="mt-1 text-xs text-destructive">{errors.email}</p>}
       </div>
       <div>
         <Label htmlFor="subject">Subject</Label>
@@ -75,7 +108,7 @@ export function ContactForm() {
       <Button
         type="submit"
         disabled={busy}
-        className="rounded-full bg-primary px-8 hover:bg-primary/90"
+        className="bg-primary hover:bg-primary/90 rounded-full px-8"
       >
         {busy ? "Sending…" : "Send Message"}
       </Button>

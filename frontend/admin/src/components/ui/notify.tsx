@@ -1,14 +1,13 @@
 "use client";
 
 /**
- * Stellora premium toast system.
+ * Stellora premium toast system — v2 (theme-woven).
  *
- * A brand-consistent layer over sonner: every notification renders a
- * `PremiumToast` card (kind-tinted icon chip, gold progress bar, optional
- * action pill, hover-pause, swipe-to-dismiss via sonner) instead of the
- * bare default toast. Import `toast` from here everywhere — the call
- * signature matches sonner's (`toast.success(msg, { description, action })`)
- * so existing call sites upgrade automatically.
+ * Every notification renders a `PremiumToast` card drawn straight from the
+ * theme tokens: popover surface, kind-coloured accent spine, soft tinted
+ * icon bubble, hairline progress. Fully dark-mode aware — the kind colours
+ * themselves re-tune in `.dark`. Import `toast` from here everywhere — the
+ * call signature matches sonner's, so existing call sites upgrade for free.
  */
 import * as React from "react";
 import { toast as sonner } from "sonner";
@@ -26,10 +25,10 @@ export type NotifyOptions = {
 type Kind = "success" | "error" | "info" | "warning";
 
 const KIND_ICON: Record<Kind, React.ReactNode> = {
-  success: <Check size={16} strokeWidth={3.2} />,
-  error: <X size={16} strokeWidth={3.2} />,
-  info: <Info size={16} strokeWidth={2.6} />,
-  warning: <TriangleAlert size={16} strokeWidth={2.6} />,
+  success: <Check size={15} strokeWidth={3.2} />,
+  error: <X size={15} strokeWidth={3.2} />,
+  info: <Info size={15} strokeWidth={2.6} />,
+  warning: <TriangleAlert size={15} strokeWidth={2.6} />,
 };
 
 function PremiumToast({
@@ -51,6 +50,7 @@ function PremiumToast({
 }) {
   return (
     <div className="toast-card" data-kind={kind} role="status">
+      <span className="toast-accent" aria-hidden="true" />
       {media ? (
         <span className="toast-media" aria-hidden="true">
           <img src={media} alt="" />

@@ -6,7 +6,7 @@ import { requireAdmin } from "../lib/auth";
 import {
   productSchema, categorySchema, couponSchema, bannerSchema,
   shippingRateSchema, inventoryAdjustSchema, adminUserSchema, settingsSchema,
-  posCheckoutSchema, paymentConfigSchema, paymentTestSchema,
+  posCheckoutSchema, paymentConfigSchema, paymentTestSchema, normalizePhone,
 } from "../validation";
 import { slugify, generateOrderNumber } from "../lib/utils";
 import { hashPassword } from "../lib/password";
@@ -1667,13 +1667,18 @@ adminRouter.post(
     const admin = await requireAdmin(req);
     const data = posCheckoutSchema.parse(req.body);
 
-    // Resolve the customer: registered user by email, else the shared
-    // walk-in account (Order.userId is required by the schema).
-    let customer: { _id: any; name: string; email: string } | null = null;
-    if (data.customerEmail) {
+    // Resolve the customer: attached by mobile number (mobile-first shop) or
+    // email — else the shared walk-in account (Order.userId is required).
+    let customer: { _id: any; name: string; email: string | null; phone?: string | null } | null = null;
+    if (data.customerPhone) {
+      customer = await User.findOne({ phone: data.customerPhone })
+        .select("_id name email phone")
+        .lean<{ _id: any; name: string; email: string | null; phone?: string | null } | null>();
+    }
+    if (!customer && data.customerEmail) {
       customer = await User.findOne({ email: data.customerEmail })
-        .select("_id name email")
-        .lean<{ _id: any; name: string; email: string } | null>();
+        .select("_id name email phone")
+        .lean<{ _id: any; name: string; email: string | null; phone?: string | null } | null>();
     }
     if (!customer) {
       customer = await User.findOneAndUpdate(
@@ -2123,6 +2128,180 @@ adminRouter.get(
         points: u.loyaltyPoints ?? 0,
       }))
     );
+  })
+);
+
+/* ================= POS quick customer create (name + mobile) ================ */
+
+adminRouter.post(
+  "/admin/pos/customers",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const name = String(req.body?.name ?? "").trim().slice(0, 80);
+    const phone = normalizePhone(String(req.body?.phone ?? ""));
+    const emailRaw = String(req.body?.email ?? "").trim().toLowerCase();
+    const email = emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw : null;
+    if (name.length < 2) return fail(res, "VALIDATION_ERROR", "Customer name is required.", 422);
+    if (!phone) return fail(res, "VALIDATION_ERROR", "Enter a valid 10-digit mobile number.", 422);
+
+    const dup = await User.findOne({ $or: [{ phone }, ...(email ? [{ email }] : [])] }).lean<any>();
+    if (dup) {
+      return fail(
+        res,
+        "CONFLICT",
+        dup.phone === phone
+          ? "This mobile number is already registered."
+          : "This email is already registered.",
+        409
+      );
+    }
+
+    // Counter-created customers get an unusable random password — they can set
+    // one later via the storefront's forgot-password flow (or in person).
+    const [user] = await User.create([
+      {
+        name,
+        phone,
+        /* undefined (not null) — the sparse unique email index skips ABSENT
+           fields but collides on explicit nulls. */
+        email: email || undefined,
+        role: "CUSTOMER",
+        passwordHash: await hashPassword(randomBytes(24).toString("hex")),
+      },
+    ]);
+    await audit(
+      {
+        actor: admin,
+        action: "admin.pos.customer.create",
+        entityType: "User",
+        entityId: String(user._id),
+        metadata: { name, phone, email },
+      },
+      req
+    );
+    return ok(
+      res,
+      { customer: { id: String(user._id), name: user.name, email: user.email, phone: user.phone, points: 0 } },
+      201
+    );
+  })
+);
+
+/* ================= POS live feed — real-time stock + today strip ============
+   The terminal polls this every few seconds while visible. `since` scopes the
+   stock diff: every StockMovement after `since` marks a variant as changed,
+   and the CURRENT stock of exactly those variants is returned. Also carries
+   the day summary (IST business day) so the header chips stay live. */
+
+adminRouter.get(
+  "/admin/pos/live",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const terminalId = String(req.query.terminalId ?? "").trim().slice(0, 16);
+    const sinceRaw = String(req.query.since ?? "");
+    const sinceMs = Date.parse(sinceRaw);
+    const since = Number.isFinite(sinceMs) ? new Date(sinceMs) : new Date(Date.now() - 15 * 60 * 1000);
+    const now = new Date();
+
+    // Which variants moved since the last poll?
+    const moves = await StockMovement.find({ createdAt: { $gte: since } })
+      .select("variantId")
+      .limit(1000)
+      .lean<{ variantId: any }[]>();
+    const changedIds = Array.from(new Set(moves.map((m) => String(m.variantId))));
+    const stocks: { variantId: string; stock: number }[] = [];
+    if (changedIds.length > 0) {
+      const prods = await Product.find({ "variants._id": { $in: changedIds } })
+        .select("variants._id variants.stock")
+        .lean<any[]>();
+      const wanted = new Set(changedIds);
+      for (const p of prods) {
+        for (const v of p.variants ?? []) {
+          if (wanted.has(String(v._id))) {
+            stocks.push({ variantId: String(v._id), stock: Number(v.stock) || 0 });
+          }
+        }
+      }
+    }
+
+    // IST business-day bounds (the shop runs on Asia/Kolkata)
+    const IST = 5.5 * 60 * 60 * 1000;
+    const istMidnight = new Date(Math.floor((now.getTime() + IST) / 86400000) * 86400000 - IST);
+
+    const todayOrders = await Order.find({
+      createdAt: { $gte: istMidnight },
+      status: { $ne: "CANCELLED" },
+    })
+      .select("grandTotal payment.providerRef items")
+      .lean<any[]>();
+    let revenue = 0;
+    let itemsSold = 0;
+    let cashSales = 0;
+    let nonCashSales = 0;
+    let posCount = 0;
+    for (const o of todayOrders) {
+      revenue += Number(o.grandTotal) || 0;
+      itemsSold += (o.items ?? []).reduce((s: number, i: any) => s + (Number(i.quantity) || 0), 0);
+      const ref: string = o.payment?.providerRef ?? "";
+      if (ref.startsWith("POS:")) {
+        posCount += 1;
+        const parsed = parsePosCash(ref);
+        if (parsed) cashSales += parsed.cashIn - parsed.change;
+        for (const t of ref.split("|")[0].slice(4).split("+")) {
+          const [method, amount] = t.split(":");
+          if (method && method !== "CASH") nonCashSales += Number(amount) || 0;
+        }
+      }
+    }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+
+    // Register state for this terminal (same math as /register/current)
+    let session: any = null;
+    let live: { expectedCash: number; cashIn: number; change: number; nonCash: number } | null = null;
+    if (terminalId) {
+      session = await CashSession.findOne({ terminalId, status: "OPEN" }).lean<any>();
+      if (session) {
+        const regOrders = await Order.find({ source: "POS", createdAt: { $gte: session.openedAt } })
+          .select("payment.providerRef")
+          .lean<any[]>();
+        let cashIn = 0;
+        let change = 0;
+        let nonCash = 0;
+        for (const o of regOrders) {
+          const parsed = parsePosCash(o.payment?.providerRef ?? "");
+          if (!parsed) continue;
+          cashIn += parsed.cashIn;
+          change += parsed.change;
+          const ref: string = o.payment?.providerRef ?? "";
+          for (const t of ref.split("|")[0].slice(4).split("+")) {
+            const [method, amount] = t.split(":");
+            if (method && method !== "CASH") nonCash += Number(amount) || 0;
+          }
+        }
+        live = {
+          expectedCash: Math.round((session.openingBalance + cashIn - change) * 100) / 100,
+          cashIn: r2(cashIn),
+          change: r2(change),
+          nonCash: r2(nonCash),
+        };
+      }
+    }
+
+    return ok(res, {
+      at: now.toISOString(),
+      stocks,
+      today: {
+        orders: todayOrders.length,
+        posOrders: posCount,
+        revenue: r2(revenue),
+        cashSales: r2(Math.max(cashSales, 0)),
+        nonCashSales: r2(nonCashSales),
+        itemsSold,
+      },
+      session: session ? JSON.parse(JSON.stringify(session)) : null,
+      live,
+    });
   })
 );
 

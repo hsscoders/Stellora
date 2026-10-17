@@ -37,7 +37,8 @@ export default function TrackOrderPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         orderNumber: form.get("orderNumber"),
-        email: form.get("email"),
+        /* One contact field — mobile number (most common) or the checkout email. */
+        contact: (form.get("contact") as string) ?? "",
       }),
     });
     const json = await res.json();
@@ -59,8 +60,8 @@ export default function TrackOrderPage() {
         </div>
         <h1 className="mt-5 font-serif text-4xl font-medium">Track Your Order</h1>
         <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
-          Enter your order number and the email used at checkout to see live, server-verified
-          status.
+          Enter your order number and the mobile number or email you used at checkout to see
+          live, server-verified status.
         </p>
       </div>
 
@@ -70,8 +71,14 @@ export default function TrackOrderPage() {
           <Input id="orderNumber" name="orderNumber" required placeholder="STL-2026-XXXXXX" />
         </div>
         <div>
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" name="email" type="email" required placeholder="you@example.com" />
+          <Label htmlFor="contact">Mobile number or Email</Label>
+          <Input
+            id="contact"
+            name="contact"
+            required
+            autoComplete="tel"
+            placeholder="98765 43210 · or · you@example.com"
+          />
         </div>
         <Button
           type="submit"

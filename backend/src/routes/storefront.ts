@@ -148,6 +148,29 @@ storefrontRouter.get(
   })
 );
 
+/* Lightweight live-stock check for the product page — the storefront polls
+   this every few seconds while the tab is visible so "only 2 left"/"out of
+   stock" badges never show stale numbers when the shop sells at the counter. */
+storefrontRouter.get(
+  "/products/:slug/stock",
+  handle(async (req, res) => {
+    const product = await Product.findOne({ slug: req.params.slug, status: "ACTIVE" })
+      .select("variants._id variants.stock variants.isActive")
+      .lean<any>();
+    if (!product) {
+      return res.status(404).json({ ok: false, error: { code: "NOT_FOUND", message: "Product not found." } });
+    }
+    return ok(
+      res,
+      (product.variants ?? []).map((v: any) => ({
+        id: String(v._id),
+        stock: Number(v.stock) || 0,
+        isActive: !!v.isActive,
+      }))
+    );
+  })
+);
+
 // SECURITY: payment.* keys (gateway secrets) are managed ONLY through the
 // masked /admin/payments/* endpoints and must NEVER be exposed publicly.
 // seo.config likewise has its own dedicated endpoint (/api/seo).

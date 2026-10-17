@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { getCurrentUserClient } from "@/lib/client-auth";
 
 export default function ProfilePage() {
-  const [user, setUser] = useState<{ name: string; email: string; phone: string | null } | null>(null);
+  const [user, setUser] = useState<{ name: string; email: string | null; phone: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -78,15 +78,40 @@ export default function ProfilePage() {
               <Label htmlFor="name">Name</Label>
               <Input id="name" name="name" defaultValue={user.name} required minLength={2} />
             </div>
+            {/* Mobile-first shop: the phone leads the profile; email stays a
+                read-only secondary (it cannot be changed without support). */}
             <div>
-              <Label htmlFor="phone">Phone</Label>
-              <Input id="phone" name="phone" defaultValue={user.phone ?? ""} placeholder="98000 00000" />
+              <Label htmlFor="phone">
+                Mobile number <span className="text-destructive">*</span>
+              </Label>
+              <div className="relative">
+                <span className="text-muted-foreground pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold">
+                  +91
+                </span>
+                <Input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={10}
+                  required
+                  autoComplete="tel-national"
+                  defaultValue={user.phone ?? ""}
+                  placeholder="98765 43210"
+                  className="pl-12 tnum"
+                />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Order updates are sent to this number.
+              </p>
             </div>
             <div>
-              <Label>Email</Label>
-              <Input value={user.email} disabled />
+              <Label>
+                Email <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input value={user.email ?? "— no email on this account —"} disabled />
             </div>
-            <Button type="submit" disabled={busy} className="rounded-full bg-primary hover:bg-primary/90">
+            <Button type="submit" disabled={busy} className="bg-primary hover:bg-primary/90 rounded-full">
               {busy ? "Saving…" : "Save changes"}
             </Button>
           </form>

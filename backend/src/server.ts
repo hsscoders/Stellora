@@ -80,7 +80,8 @@ app.post(
     const data = contactSchema.parse(req.body);
     await ContactMessage.create({
       name: data.name,
-      email: data.email,
+      phone: data.phone,
+      email: data.email ?? null,
       subject: data.subject,
       message: data.message,
     });

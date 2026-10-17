@@ -2,7 +2,7 @@ import { Router } from "express";
 import { Order, User } from "../models";
 import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireUser, getCurrentUser, readCartKey } from "../lib/auth";
-import { checkoutSchema, trackOrderSchema } from "../validation";
+import { checkoutSchema, trackOrderSchema, normalizePhone } from "../validation";
 import { createOrderFromCart } from "../services/orders";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
 import { validateCoupon } from "../services/pricing";
@@ -156,7 +156,7 @@ export function serializeOrderDetail(o: any) {
   };
 }
 
-/* ---------- Public order tracking (order number + email) ---------- */
+/* ---------- Public order tracking (order number + email or mobile) ---------- */
 
 commerceRouter.post(
   "/track",
@@ -171,14 +171,23 @@ commerceRouter.post(
     const order = await Order.findOne({ orderNumber }).lean<any>();
     if (!order) {
       return fail(res, "NOT_FOUND",
-        "We could not find an order with that order number and email combination.",
+        "We could not find an order with that order number and contact combination.",
         404
       );
     }
-    const owner = await User.findById(order.userId).select("email").lean<{ email: string } | null>();
-    if (!owner || owner.email !== data.email) {
+
+    /* Mobile-first: the guest may verify with the mobile number they left at
+       checkout (shipPhone) or the account email — both stay one-way hashed
+       against the actual record, no enumeration either way. */
+    const contact = (data.contact ?? data.email ?? "").trim();
+    const phoneCandidate = normalizePhone(contact);
+    const owner = await User.findById(order.userId).select("email").lean<{ email: string | null } | null>();
+    const shipPhone = normalizePhone(order.shipPhone ?? "");
+    const emailMatch = !!owner?.email && !!contact && owner.email === contact.toLowerCase();
+    const phoneMatch = !!phoneCandidate && !!shipPhone && phoneCandidate === shipPhone;
+    if (!emailMatch && !phoneMatch) {
       return fail(res, "NOT_FOUND",
-        "We could not find an order with that order number and email combination.",
+        "We could not find an order with that order number and contact combination.",
         404
       );
     }

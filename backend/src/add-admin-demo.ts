@@ -1,6 +1,6 @@
 /**
  * Add/refresh the demo admin login (database insert — bypasses register-time
- * password complexity rules on purpose, "abhi ke liye" demo credential).
+ * password complexity rules on purpose, temporary demo credential).
  *
  * Run: cd backend && bun src/add-admin-demo.ts
  *

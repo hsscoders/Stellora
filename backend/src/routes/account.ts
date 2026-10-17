@@ -18,9 +18,9 @@ accountRouter.put(
       user.id,
       { name: data.name, phone: data.phone || null },
       { new: true }
-    ).lean<{ _id: any; name: string; phone: string | null; email: string }>();
+    ).lean<{ _id: any; name: string; phone: string | null; email: string | null }>();
     await audit({ actor: user, action: "account.profile_update", entityType: "User", entityId: user.id }, req);
-    return ok(res, { id: String(updated!._id), name: updated!.name, phone: updated!.phone ?? null, email: updated!.email });
+    return ok(res, { id: String(updated!._id), name: updated!.name, phone: updated!.phone ?? null, email: updated!.email ?? null });
   })
 );
 

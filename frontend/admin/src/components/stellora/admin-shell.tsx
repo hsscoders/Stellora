@@ -101,7 +101,7 @@ const NAV_SECTIONS: NavSection[] = [
 
 const NAV_FLAT: NavItem[] = NAV_SECTIONS.flatMap((s) => s.items);
 
-export type AdminShellUser = { name: string; email: string; role: string };
+export type AdminShellUser = { name: string; email: string | null; role: string };
 
 function initialsOf(name: string) {
   const parts = name.trim().split(/\s+/).slice(0, 2);
@@ -252,7 +252,7 @@ function UserBlock({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-semibold text-foreground">{user.name}</span>
           <span className="block truncate text-[10px] leading-tight text-muted-foreground">
-            {user.email}
+            {user.email ?? "—"}
           </span>
         </span>
         <span className="shrink-0 rounded-full border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-primary">
@@ -299,7 +299,7 @@ type SearchProduct = {
   isActive: boolean;
   imageUrl: string | null;
 };
-type SearchCustomer = { id: string; name: string; email: string; createdAt: string };
+type SearchCustomer = { id: string; name: string; email: string | null; createdAt: string };
 type SearchResults = {
   orders: SearchOrder[];
   products: SearchProduct[];
@@ -476,7 +476,7 @@ function GlobalSearch({ autoFocus = false }: { autoFocus?: boolean }) {
           items: results.customers.map((c) => ({
             to: "/admin/customers",
             title: c.name,
-            meta: <span className="truncate">{c.email}</span>,
+            meta: <span className="truncate">{c.email ?? "—"}</span>,
           })),
         },
       ].filter((g) => g.items.length > 0)

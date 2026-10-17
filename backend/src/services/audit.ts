@@ -4,7 +4,8 @@ import { HttpError } from "../lib/http";
 interface AuditInput {
   actor?: {
     id: string;
-    email: string;
+    /* Mobile-first shop: accounts may have no email (phone-only users). */
+    email: string | null;
     name: string;
     role: string;
     phone: string | null;

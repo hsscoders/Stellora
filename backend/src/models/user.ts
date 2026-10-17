@@ -40,7 +40,18 @@ const WishlistSchema = new Schema(
 
 const UserSchema = new Schema(
   {
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    /* Mobile-first shop: email is now OPTIONAL — customers register with a
+       phone number. Uniqueness comes from a sparse unique index, which only
+       skips documents where the field is ABSENT — an explicit null still
+       collides. So code must omit the email field (undefined), never write
+       null (same rule as Cart.userId in models/commerce.ts). */
+    email: {
+      type: String,
+      unique: true,
+      sparse: true,
+      lowercase: true,
+      trim: true,
+    },
     passwordHash: { type: String, required: true },
     name: { type: String, required: true, trim: true },
     phone: { type: String, default: null, trim: true },
@@ -60,5 +71,6 @@ const UserSchema = new Schema(
 );
 
 UserSchema.index({ email: "text" });
+UserSchema.index({ phone: 1 }, { sparse: true });
 
 export const User = model("User", UserSchema);

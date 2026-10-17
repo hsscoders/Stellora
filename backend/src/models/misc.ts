@@ -67,7 +67,9 @@ export const SiteSetting = model("SiteSetting", SiteSettingSchema);
 const ContactMessageSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, lowercase: true, trim: true },
+    /* Mobile-first: customers mostly leave a phone number; email is optional. */
+    phone: { type: String, default: null, trim: true },
+    email: { type: String, default: null, lowercase: true, trim: true },
     subject: { type: String, required: true, trim: true },
     message: { type: String, required: true },
     status: { type: String, enum: ["NEW", "HANDLED"], default: "NEW" },

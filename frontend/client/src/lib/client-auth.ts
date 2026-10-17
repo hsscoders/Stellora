@@ -2,7 +2,7 @@
 export async function getCurrentUserClient(): Promise<{
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   role: string;
 } | null> {

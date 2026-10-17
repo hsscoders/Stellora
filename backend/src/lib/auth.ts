@@ -17,7 +17,8 @@ const cookieBase = {
 
 export type SessionUser = {
   id: string;
-  email: string;
+  /* Mobile-first shop: accounts may exist with only a phone number. */
+  email: string | null;
   name: string;
   role: "CUSTOMER" | "ADMIN";
   phone: string | null;
@@ -64,7 +65,7 @@ export async function getCurrentUser(req: Request): Promise<SessionUser | null> 
   if (!user || !user.isActive) return null;
   return {
     id: String(user._id),
-    email: user.email,
+    email: user.email ?? null,
     name: user.name,
     role: user.role,
     phone: user.phone ?? null,

@@ -194,6 +194,7 @@ export default async function ProductPage({
               productId={product.id}
               imageUrl={product.images[0]?.url ?? null}
               productName={product.name}
+              slug={product.slug}
             />
           </div>
 

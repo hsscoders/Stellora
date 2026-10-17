@@ -132,9 +132,19 @@ interface RegisterLive {
 interface CustomerHit {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string | null;
   points: number;
+}
+
+/* Today strip (IST business day, served by /api/admin/pos/live) */
+interface TodayStats {
+  orders: number;
+  posOrders: number;
+  revenue: number;
+  cashSales: number;
+  nonCashSales: number;
+  itemsSold: number;
 }
 
 interface PosOrderItem {
@@ -175,6 +185,7 @@ interface HeldBill {
   lines: BillLine[];
   discount: string;
   customerEmail: string;
+  customerPhone: string;
   customerName: string | null;
   note: string;
   paymentMethod: PaymentMethod;
@@ -221,9 +232,15 @@ export default function AdminPosPage() {
 
   /* bill */
   const [bill, setBill] = useState<BillLine[]>([]);
+  const billRef = useRef<BillLine[]>([]);
+  useEffect(() => {
+    billRef.current = bill;
+  }, [bill]);
   const [discount, setDiscount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [customerEmail, setCustomerEmail] = useState("");
+  /* Mobile-first shop: the phone number is the primary customer handle. */
+  const [customerPhone, setCustomerPhone] = useState("");
   const [note, setNote] = useState("");
   /* Stocky-style bill extras: tax %, flat shipping, coupon */
   const [taxPercent, setTaxPercent] = useState("");
@@ -257,13 +274,24 @@ export default function AdminPosPage() {
   const [custQuery, setCustQuery] = useState("");
   const [custHits, setCustHits] = useState<CustomerHit[] | null>(null);
   const [customerName, setCustomerName] = useState<string | null>(null);
+  /* quick customer create (name + mobile) — new customer at the counter */
+  const [custCreateOpen, setCustCreateOpen] = useState(false);
+  const [custNewName, setCustNewName] = useState("");
+  const [custNewPhone, setCustNewPhone] = useState("");
+  const [custNewEmail, setCustNewEmail] = useState("");
+  const [custNewBusy, setCustNewBusy] = useState(false);
+
+  /* live feed — today strip */
+  const [today, setToday] = useState<TodayStats | null>(null);
 
   /* catalog category filter */
   const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
   const [catFilter, setCatFilter] = useState(""); // category slug
 
   /* dialogs */
-  const [variantPicker, setVariantPicker] = useState<ApiProduct | null>(null);
+  const [variantPickerId, setVariantPickerId] = useState<string | null>(null);
+  /* Derived from the live products list so open-dialog stock stays current. */
+  const variantPicker = products?.find((p) => p.id === variantPickerId) ?? null;
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [billOpen, setBillOpen] = useState(false);
   const [receiptFooter, setReceiptFooter] = useState("");
@@ -393,6 +421,7 @@ export default function AdminPosPage() {
           setBill(p.lines as BillLine[]);
           setDiscount(typeof p.discount === "string" ? p.discount : "");
           setCustomerEmail(typeof p.customerEmail === "string" ? p.customerEmail : "");
+          setCustomerPhone(typeof p.customerPhone === "string" ? p.customerPhone : "");
           setNote(typeof p.note === "string" ? p.note : "");
           if (typeof p.paymentMethod === "string") setPaymentMethod(p.paymentMethod as PaymentMethod);
           if (typeof p.taxPercent === "string") setTaxPercent(p.taxPercent);
@@ -426,10 +455,10 @@ export default function AdminPosPage() {
     try {
       sessionStorage.setItem(
         `pos_bill_${terminalId}`,
-        JSON.stringify({ lines: bill, discount, customerEmail, customerName, note, paymentMethod, taxPercent, shippingFee, couponCode })
+        JSON.stringify({ lines: bill, discount, customerEmail, customerPhone, customerName, note, paymentMethod, taxPercent, shippingFee, couponCode })
       );
     } catch {}
-  }, [bill, discount, customerEmail, customerName, note, paymentMethod, taxPercent, shippingFee, couponCode, hydrated, terminalId]);
+  }, [bill, discount, customerEmail, customerPhone, customerName, note, paymentMethod, taxPercent, shippingFee, couponCode, hydrated, terminalId]);
 
   /* Cash register session — restore on load, refresh after each sale. */
   const refreshRegister = useCallback(async (tid: string) => {
@@ -451,6 +480,103 @@ export default function AdminPosPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (hydrated && terminalId) void refreshRegister(terminalId);
   }, [hydrated, terminalId, refreshRegister]);
+
+  /* ---------------------- live feed — real-time updates ----------------------
+     Polls /admin/pos/live every few seconds while the tab is visible. One
+     call carries: changed variant stocks (from StockMovement), today's
+     business strip, and the live cash-register state. Stock drops made by
+     the website, another counter, or an inventory adjust land here within
+     seconds — catalog tiles, the open bill and the register chip all follow. */
+  const lastFeedAtRef = useRef(new Date(Date.now() - 60_000).toISOString());
+  const applyLiveFeed = useCallback(async () => {
+    if (!terminalId) return;
+    try {
+      const res = await fetch(
+        `${api("/api/admin/pos/live")}?terminalId=${encodeURIComponent(terminalId)}&since=${encodeURIComponent(lastFeedAtRef.current)}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json();
+      if (!json.ok) return;
+      lastFeedAtRef.current = typeof json.data.at === "string" ? json.data.at : lastFeedAtRef.current;
+      if (json.data.today) setToday(json.data.today as TodayStats);
+      if (json.data.session !== undefined) {
+        setRegisterSession((json.data.session ?? null) as RegisterSession | null);
+        setRegisterLive((json.data.live ?? null) as RegisterLive | null);
+      }
+      const stocks = (json.data.stocks ?? []) as { variantId: string; stock: number }[];
+      if (stocks.length === 0) return;
+      const stockMap = new Map(stocks.map((s) => [s.variantId, s.stock]));
+      /* catalog tiles follow silently */
+      setProducts((prev) =>
+        prev
+          ? prev.map((p) => {
+              let changed = false;
+              const variants = p.variants.map((v) => {
+                const ns = stockMap.get(v.id);
+                if (ns !== undefined && ns !== v.stock) {
+                  changed = true;
+                  return { ...v, stock: ns };
+                }
+                return v;
+              });
+              return changed ? { ...p, variants } : p;
+            })
+          : prev
+      );
+      /* bill safety — a counter/website sale can shrink stock under an open
+         line; clamp it instead of failing at charge time */
+      const billNow = billRef.current;
+      let billTouched = false;
+      const nextBill: BillLine[] = [];
+      for (const l of billNow) {
+        const ns = stockMap.get(l.variantId);
+        if (ns === undefined) {
+          nextBill.push(l);
+          continue;
+        }
+        if (ns <= 0) {
+          playPosSound("error");
+          toast.warning(`${l.productName} (${l.variantName}) is out of stock — removed from the bill`, {
+            action: { label: "OK", onClick: () => {} },
+          });
+          billTouched = true;
+          continue;
+        }
+        if (ns < l.quantity) {
+          playPosSound("error");
+          toast.warning(`${l.productName}: only ${ns} left — quantity adjusted`);
+          nextBill.push({ ...l, quantity: ns, stock: ns });
+          billTouched = true;
+          continue;
+        }
+        if (ns !== l.stock) {
+          nextBill.push({ ...l, stock: ns });
+          billTouched = true;
+          continue;
+        }
+        nextBill.push(l);
+      }
+      if (billTouched) setBill(nextBill);
+    } catch {
+      /* transient network hiccup — next tick retries */
+    }
+  }, [terminalId]);
+
+  useEffect(() => {
+    if (!hydrated || !terminalId) return;
+    let alive = true;
+    const tick = () => {
+      if (alive && document.visibilityState === "visible") void applyLiveFeed();
+    };
+    tick();
+    const iv = window.setInterval(tick, 6000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      alive = false;
+      window.clearInterval(iv);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [hydrated, terminalId, applyLiveFeed]);
 
   /* Customer quick-search for the bill picker (debounced) */
   useEffect(() => {
@@ -740,7 +866,7 @@ export default function AdminPosPage() {
       toast.error(`${p.name} is out of stock`);
     } else {
       playPosSound("click");
-      setVariantPicker(p);
+      setVariantPickerId(p.id);
     }
   }
 
@@ -796,6 +922,7 @@ export default function AdminPosPage() {
       lines: bill,
       discount,
       customerEmail,
+      customerPhone,
       customerName,
       note,
       paymentMethod,
@@ -806,13 +933,14 @@ export default function AdminPosPage() {
     setHeld([h, ...held].slice(0, 12));
     playPosSound("click");
     resetBill();
-    toast.success("Bill held — start the next customer");
+    toast.success("Bill held — ready for the next customer");
   }
 
   function resumeBill(h: HeldBill) {
     setBill(h.lines);
     setDiscount(h.discount);
     setCustomerEmail(h.customerEmail);
+    setCustomerPhone(h.customerPhone ?? "");
     setNote(h.note);
     setPaymentMethod(h.paymentMethod);
     setTaxPercent(h.taxPercent ?? "");
@@ -842,6 +970,7 @@ export default function AdminPosPage() {
     setBill([]);
     setDiscount("");
     setCustomerEmail("");
+    setCustomerPhone("");
     setCustomerName(null);
     setNote("");
     setTaxPercent("");
@@ -959,6 +1088,7 @@ export default function AdminPosPage() {
           ...(shippingNum > 0 ? { shippingFee: shippingNum } : {}),
           ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
           ...(customerEmail.trim() ? { customerEmail: customerEmail.trim() } : {}),
+          ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
           ...((note.trim() || saleNote.trim()) ? { note: [note.trim(), saleNote.trim()].filter(Boolean).join(" · ") } : {}),
         }),
       });
@@ -1041,6 +1171,54 @@ export default function AdminPosPage() {
     updateTender(idx, { amount: grandTotal });
   }
 
+  /* New customer at the counter — just a name and mobile. Backend creates the
+     account (random unusable password) and returns the picker-shaped hit. */
+  async function quickCreateCustomer() {
+    if (custNewBusy) return;
+    const name = custNewName.trim();
+    const phone = custNewPhone.replace(/\D/g, "");
+    if (name.length < 2) {
+      toast.error("Enter the customer's name");
+      return;
+    }
+    if (phone.length !== 10) {
+      toast.error("Enter a 10-digit mobile number");
+      return;
+    }
+    setCustNewBusy(true);
+    try {
+      const res = await fetch(`${api("/api/admin/pos/customers")}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          phone,
+          ...(custNewEmail.trim() ? { email: custNewEmail.trim() } : {}),
+        }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        const c = json.data.customer as CustomerHit;
+        setCustomerEmail(c.email ?? "");
+        setCustomerPhone(c.phone ?? "");
+        setCustomerName(c.name);
+        setCustCreateOpen(false);
+        setCustOpen(false);
+        setCustNewName("");
+        setCustNewPhone("");
+        setCustNewEmail("");
+        playPosSound("success");
+        toast.success(`${c.name} added — the sale attaches to this number`);
+      } else {
+        toast.error(json.error?.message ?? "Could not add the customer");
+      }
+    } catch {
+      toast.error("Network error — could not add the customer");
+    } finally {
+      setCustNewBusy(false);
+    }
+  }
+
   /* Numbered pagination window (Stocky-style page chips) — max 7 buttons. */
   const pageWindow = useMemo(() => {
     const win: (number | "…")[] = [];
@@ -1094,8 +1272,8 @@ export default function AdminPosPage() {
           }}
           className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 font-semibold transition ${
             registerSession
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-              : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+              : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300 dark:hover:bg-rose-900/40"
           }`}
           title={
             registerSession
@@ -1113,7 +1291,7 @@ export default function AdminPosPage() {
             {registerSession ? "OPEN" : "CLOSED"}
           </span>
           {registerSession && registerLive && (
-            <span className="tnum rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+            <span className="tnum rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
               {formatINR(registerLive.expectedCash)}
             </span>
           )}
@@ -1130,6 +1308,29 @@ export default function AdminPosPage() {
             <span className="block text-[11px] font-semibold">Stellora Flagship · T-{terminalId}</span>
           </span>
         </span>
+
+        {/* TODAY strip — live business pulse (IST day, refreshes with the feed) */}
+        {today && (
+          <span
+            className="hidden h-9 shrink-0 items-center gap-3 rounded-lg border border-border bg-card px-3 md:inline-flex"
+            title="Today's business (IST) — updates live"
+          >
+            <span className="leading-tight">
+              <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Today · Bills</span>
+              <span className="tnum block text-[11px] font-bold">{today.orders}</span>
+            </span>
+            <span className="h-5 w-px bg-border" />
+            <span className="leading-tight">
+              <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Sales</span>
+              <span className="tnum block text-[11px] font-bold text-primary">{formatINR(today.revenue)}</span>
+            </span>
+            <span className="h-5 w-px bg-border" />
+            <span className="leading-tight">
+              <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Items</span>
+              <span className="tnum block text-[11px] font-bold">{today.itemsSold}</span>
+            </span>
+          </span>
+        )}
 
         {/* categories dropdown */}
         <select
@@ -1151,7 +1352,7 @@ export default function AdminPosPage() {
 
         <span className="min-w-2 flex-1" />
 
-        {/* customer chip */}
+        {/* customer chip — mobile-first: phone leads */}
         <button
           type="button"
           onClick={() => {
@@ -1161,17 +1362,22 @@ export default function AdminPosPage() {
             setCustOpen(true);
           }}
           className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-2.5 transition hover:border-primary/40 hover:bg-accent"
-          title="Attach a registered customer"
+          title="Attach customer — by mobile number"
         >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-[11px] font-bold text-emerald-700">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-[11px] font-bold text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
             {(customerName ?? "W").charAt(0).toUpperCase()}
           </span>
           <span className="leading-tight">
-            <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-rose-500">Customer</span>
+            <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-rose-500 dark:text-rose-400">Customer</span>
             <span className="block max-w-28 truncate text-[11px] font-semibold">
               {customerName ?? "walk-in-customer"}
             </span>
           </span>
+          {customerPhone && (
+            <span className="tnum rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-bold text-foreground/70">
+              {customerPhone}
+            </span>
+          )}
         </button>
 
         {/* currency chip */}
@@ -1253,7 +1459,7 @@ export default function AdminPosPage() {
                   resetBill();
                   toast.info("Cart cleared");
                 }}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-500 transition hover:bg-rose-100 disabled:opacity-40"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-500 transition hover:bg-rose-100 disabled:opacity-40 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-900/40"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -1336,7 +1542,7 @@ export default function AdminPosPage() {
                         <button
                           type="button"
                           aria-label={`Remove ${l.productName} from bill`}
-                          className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600"
+                          className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
                           onClick={() => {
                             playPosSound("remove");
                             setBill(bill.filter((x) => x.variantId !== l.variantId));
@@ -1410,7 +1616,7 @@ export default function AdminPosPage() {
               </div>
             </div>
             {discountInvalid && (
-              <p className="text-[11px] font-medium text-rose-600">
+              <p className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
                 Discount cannot exceed the subtotal ({formatINR(subtotal)}).
               </p>
             )}
@@ -1456,7 +1662,7 @@ export default function AdminPosPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-9 shrink-0 rounded-lg border-rose-200 px-4 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                  className="h-9 shrink-0 rounded-lg border-rose-200 px-4 text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:border-rose-900 dark:text-rose-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300"
                   onClick={removeCoupon}
                 >
                   <X className="h-3.5 w-3.5" /> Remove
@@ -1474,7 +1680,7 @@ export default function AdminPosPage() {
               )}
             </div>
             {appliedCoupon && (
-              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700">
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300">
                 <Ticket className="mr-1 inline h-3.5 w-3.5" />
                 {appliedCoupon.code} saves {formatINR(couponDiscount)}
               </p>
@@ -1483,7 +1689,7 @@ export default function AdminPosPage() {
 
           {/* footer bar — Online · synced | actions | TOTAL PAYABLE + Pay Now */}
           <div className="flex shrink-0 items-center gap-2 border-t border-border bg-card px-3 py-2.5">
-            <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-emerald-600 xl:inline-flex">
+            <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 xl:inline-flex">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Online · synced
             </span>
             <div className="flex items-center gap-1">
@@ -1546,7 +1752,7 @@ export default function AdminPosPage() {
               grid live; a scanner's Enter (or the Scan button) bills the code */}
           <div
             className={`flex shrink-0 items-center gap-2 border-b bg-card px-3 py-2 transition-colors ${
-              scanFlash === "err" ? "bg-rose-50" : scanFlash === "ok" ? "bg-emerald-50" : ""
+              scanFlash === "err" ? "bg-rose-50 dark:bg-rose-950/50" : scanFlash === "ok" ? "bg-emerald-50 dark:bg-emerald-950/50" : ""
             }`}
           >
             <div className="relative min-w-0 flex-1">
@@ -1643,6 +1849,11 @@ export default function AdminPosPage() {
                         {dealPct > 0 && (
                           <span className="tnum absolute left-1.5 top-1.5 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow">
                             −{dealPct}%
+                          </span>
+                        )}
+                        {!out && stock > 0 && stock <= 3 && (
+                          <span className="tnum absolute right-1.5 top-1.5 rounded-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white shadow">
+                            {stock} left
                           </span>
                         )}
                         {out && (
@@ -1790,7 +2001,7 @@ export default function AdminPosPage() {
       </Sheet>
 
       {/* variant picker */}
-      <Dialog open={!!variantPicker} onOpenChange={(o) => !o && setVariantPicker(null)}>
+      <Dialog open={!!variantPicker} onOpenChange={(o) => !o && setVariantPickerId(null)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{variantPicker?.name}</DialogTitle>
@@ -1806,7 +2017,7 @@ export default function AdminPosPage() {
                   disabled={v.stock <= 0}
                   onClick={() => {
                     if (variantPicker) addVariant(variantPicker, v);
-                    setVariantPicker(null);
+                    setVariantPickerId(null);
                   }}
                   className={`flex w-full items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5 text-left text-sm transition ${
                     v.stock <= 0
@@ -1820,7 +2031,7 @@ export default function AdminPosPage() {
                   </span>
                   <span className="shrink-0 text-right">
                     <span className="tnum block font-bold text-primary">{formatINR(Number(v.price))}</span>
-                    <span className={`tnum block text-[11px] ${v.stock <= 0 ? "text-rose-600" : "text-muted-foreground"}`}>
+                    <span className={`tnum block text-[11px] ${v.stock <= 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}>
                       {v.stock <= 0 ? "Out of stock" : `${v.stock} in stock`}
                     </span>
                   </span>
@@ -1911,15 +2122,15 @@ export default function AdminPosPage() {
         </DialogContent>
       </Dialog>
 
-      {/* customer quick-picker */}
+      {/* customer quick-picker — mobile-first (phone leads) + counter quick-add */}
       <Dialog open={custOpen} onOpenChange={setCustOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserRound className="h-4 w-4" /> Attach customer
+              <UserRound className="h-4 w-4" /> Add customer
             </DialogTitle>
             <DialogDescription>
-              Registered customers earn Stellora points on every counter sale.
+              Search by mobile number — registered customers earn loyalty points.
             </DialogDescription>
           </DialogHeader>
           <div className="relative">
@@ -1927,7 +2138,7 @@ export default function AdminPosPage() {
             <Input
               value={custQuery}
               onChange={(e) => setCustQuery(e.target.value)}
-              placeholder="Search by name, email or phone…"
+              placeholder="Name, mobile or email…"
               className="rounded-lg pl-9"
               autoFocus
             />
@@ -1937,7 +2148,7 @@ export default function AdminPosPage() {
               <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
             ) : custHits.length === 0 ? (
               <p className="rounded-lg border border-dashed border-input p-4 text-center text-sm text-muted-foreground">
-                No customers match. You can still bill walk-ins without an email.
+                No customer found. Add a new customer instantly with the button below.
               </p>
             ) : (
               custHits.map((c) => (
@@ -1945,7 +2156,8 @@ export default function AdminPosPage() {
                   key={c.id}
                   type="button"
                   onClick={() => {
-                    setCustomerEmail(c.email);
+                    setCustomerEmail(c.email ?? "");
+                    setCustomerPhone(c.phone ?? "");
                     setCustomerName(c.name);
                     setCustOpen(false);
                     playPosSound("click");
@@ -1955,17 +2167,97 @@ export default function AdminPosPage() {
                 >
                   <span className="min-w-0">
                     <span className="block truncate font-semibold">{c.name}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
-                      {c.email}
-                      {c.phone ? ` · ${c.phone}` : ""}
+                    <span className="block truncate text-[11px] text-muted-foreground tnum">
+                      {c.phone ? `+91 ${c.phone}` : c.email || "—"}
+                      {c.phone && c.email ? ` · ${c.email}` : ""}
                     </span>
                   </span>
-                  <span className="tnum shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                  <span className="tnum shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
                     {c.points} pts
                   </span>
                 </button>
               ))
             )}
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+            <p className="text-[11px] leading-tight text-muted-foreground">
+              New customer? Just a name and mobile number — done in 10 seconds.
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              className={`h-9 shrink-0 rounded-lg px-4 text-[12px] font-semibold ${BRAND.solid}`}
+              onClick={() => {
+                setCustOpen(false);
+                setCustCreateOpen(true);
+              }}
+            >
+              <UserRoundPlus className="h-3.5 w-3.5" /> New customer
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* quick customer create — name + mobile (mobile-first shop) */}
+      <Dialog open={custCreateOpen} onOpenChange={setCustCreateOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserRoundPlus className="h-4 w-4" /> New customer
+            </DialogTitle>
+            <DialogDescription>
+              The account is created instantly — the customer can log in with this mobile number.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="cust-new-name">Name</Label>
+              <Input
+                id="cust-new-name"
+                value={custNewName}
+                onChange={(e) => setCustNewName(e.target.value)}
+                placeholder="Customer's name"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cust-new-phone">
+                Mobile number <span className="text-destructive">*</span>
+              </Label>
+              <div className="relative">
+                <span className="text-muted-foreground pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold">
+                  +91
+                </span>
+                <Input
+                  id="cust-new-phone"
+                  value={custNewPhone}
+                  onChange={(e) => setCustNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  inputMode="numeric"
+                  placeholder="98765 43210"
+                  className="tnum pl-12"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cust-new-email">
+                Email <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Input
+                id="cust-new-email"
+                value={custNewEmail}
+                onChange={(e) => setCustNewEmail(e.target.value)}
+                type="email"
+                placeholder="you@example.com"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="h-10 flex-1 rounded-xl" onClick={() => setCustCreateOpen(false)}>
+                Cancel
+              </Button>
+              <Button className={`h-10 flex-1 rounded-xl ${BRAND.solid}`} disabled={custNewBusy} onClick={() => void quickCreateCustomer()}>
+                {custNewBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add customer"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -2004,32 +2296,32 @@ export default function AdminPosPage() {
                 </p>
                 <div className="mt-2.5 space-y-2">
                   <div className="flex items-center gap-2.5 rounded-lg bg-card px-2.5 py-2 shadow-sm">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
                       <Check className="h-4 w-4" strokeWidth={3} />
                     </span>
                     <span className="leading-tight">
                       <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Paying</span>
-                      <span className="tnum block text-[14px] font-extrabold text-emerald-600">{formatINR(Math.min(tenderSum, grandTotal))}</span>
+                      <span className="tnum block text-[14px] font-extrabold text-emerald-600 dark:text-emerald-400">{formatINR(Math.min(tenderSum, grandTotal))}</span>
                     </span>
                   </div>
                   <div className="flex items-center gap-2.5 rounded-lg bg-card px-2.5 py-2 shadow-sm">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
                       <Wallet className="h-4 w-4" />
                     </span>
                     <span className="leading-tight">
                       <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Balance</span>
-                      <span className={`tnum block text-[14px] font-extrabold ${balanceDue > 0 ? "text-amber-600" : "text-muted-foreground"}`}>
+                      <span className={`tnum block text-[14px] font-extrabold ${balanceDue > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
                         {formatINR(balanceDue)}
                       </span>
                     </span>
                   </div>
                   <div className="flex items-center gap-2.5 rounded-lg bg-card px-2.5 py-2 shadow-sm">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-100 text-sky-600">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-100 text-sky-600 dark:bg-sky-950/60 dark:text-sky-400">
                       <HandCoins className="h-4 w-4" />
                     </span>
                     <span className="leading-tight">
                       <span className="block text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Change</span>
-                      <span className="tnum block text-[14px] font-extrabold text-sky-600">{formatINR(changeForCustomer)}</span>
+                      <span className="tnum block text-[14px] font-extrabold text-sky-600 dark:text-sky-400">{formatINR(changeForCustomer)}</span>
                     </span>
                   </div>
                 </div>
@@ -2051,7 +2343,7 @@ export default function AdminPosPage() {
                       <button
                         type="button"
                         aria-label={`Remove payment ${idx + 1}`}
-                        className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600"
+                        className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/60 dark:hover:text-rose-400"
                         onClick={() => removeTender(idx)}
                       >
                         <X className="h-4 w-4" />
@@ -2319,7 +2611,7 @@ export default function AdminPosPage() {
                 </div>
                 <div className="rounded-xl border border-border bg-muted/60 p-3">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Expected in drawer</p>
-                  <p className="tnum font-bold text-emerald-600">
+                  <p className="tnum font-bold text-emerald-600 dark:text-emerald-400">
                     {formatINR(registerLive?.expectedCash ?? registerSession.openingBalance)}
                   </p>
                   {registerLive && (
@@ -2398,7 +2690,7 @@ export default function AdminPosPage() {
           </DialogHeader>
 
           {receipt && (
-            <div className="pos-receipt stellora-scroll max-h-[55vh] overflow-y-auto rounded-xl border border-border bg-card p-5 font-mono text-[11px] leading-relaxed text-black">
+            <div className="pos-receipt stellora-scroll max-h-[55vh] overflow-y-auto rounded-xl border border-border bg-white p-5 font-mono text-[11px] leading-relaxed text-black">
               {/* header */}
               <div className="text-center">
                 <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary font-serif text-xl font-bold text-white">
@@ -2409,6 +2701,7 @@ export default function AdminPosPage() {
                 <p className="text-[10px]">Date : {formatDateTime(receipt.order.createdAt)}</p>
                 {sellerName && <p className="text-[10px]">Seller : {sellerName}</p>}
                 <p className="text-[10px]">Customer : {customerName ?? "Walk-In-Customer"}</p>
+                {customerPhone && <p className="text-[10px]">Mobile : +91 {customerPhone}</p>}
                 <p className="text-[10px]">Outlet : Stellora Flagship</p>
               </div>
 
@@ -2515,6 +2808,45 @@ export default function AdminPosPage() {
             <Button variant="outline" className="h-10 flex-1 rounded-xl" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> Print
             </Button>
+            {receipt && customerPhone.trim().length === 10 && (
+              <Button
+                variant="outline"
+                className="h-10 flex-1 rounded-xl border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/40"
+                title="Bill customer ke WhatsApp par bhejein"
+                onClick={() => {
+                  const lines = receipt.order.items
+                    .map(
+                      (it, i) =>
+                        `${i + 1}. ${it.productName}${it.variantName ? ` (${it.variantName})` : ""} — ${Number(it.lineTotal).toFixed(2)}`
+                    )
+                    .join("\n");
+                  const msg = [
+                    "*Stellora — Bill*",
+                    `Ref: ${receipt.order.orderNumber}`,
+                    `Date: ${formatDateTime(receipt.order.createdAt)}`,
+                    "",
+                    lines,
+                    "",
+                    `Subtotal: INR ${Number(receipt.order.subtotal).toFixed(2)}`,
+                    Number(receipt.order.discountTotal) > 0 ? `Discount: INR ${Number(receipt.order.discountTotal).toFixed(2)}` : "",
+                    Number(receipt.order.shippingFee) > 0 ? `Shipping: INR ${Number(receipt.order.shippingFee).toFixed(2)}` : "",
+                    `*Total: INR ${Number(receipt.order.grandTotal).toFixed(2)}*`,
+                    `Paid via ${methodLabel(receipt.method)}`,
+                    receipt.pointsEarned > 0 ? `+${receipt.pointsEarned} Stellora points` : "",
+                    "",
+                    "Thank you for shopping with Stellora!",
+                  ]
+                    .filter(Boolean)
+                    .join("\n");
+                  window.open(`https://wa.me/91${customerPhone.trim()}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
+                }}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.9-4.45 9.9-9.91A9.85 9.85 0 0 0 12.04 2Zm5.8 14.03c-.24.68-1.4 1.3-1.93 1.35-.53.05-1.03.24-3.47-.72-2.95-1.16-4.79-4.22-4.94-4.42-.14-.2-1.17-1.56-1.17-2.98 0-1.42.74-2.11 1-2.4.27-.29.58-.37.77-.37.19 0 .39 0 .56.01.19.01.43-.07.67.51.24.58.82 2 .89 2.15.07.15.12.32.02.51-.1.19-.19.32-.39.53-.19.22-.29.32-.44.53-.15.19-.31.41-.13.72.19.31.83 1.36 1.77 2.21 1.21 1.08 2.23 1.41 2.55 1.57.31.15.5.13.68-.08.19-.22.8-.93 1.01-1.25.22-.31.43-.26.72-.15.29.1 1.85.87 2.17 1.03.31.15.53.24.6.36.07.15.07.77-.17 1.44Z" />
+                </svg>
+                WhatsApp
+              </Button>
+            )}
             <Button className={`h-10 flex-1 rounded-xl ${BRAND.solid}`} onClick={() => setReceipt(null)}>
               Done
             </Button>
