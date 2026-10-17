@@ -4,14 +4,16 @@ import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireUser } from "../lib/auth";
 import { rateLimit } from "../lib/rate-limit";
 import { money } from "../lib/money";
-import { accrueEarn } from "../services/loyalty";
 import {
   getPaymentProvider,
   isDemoMode,
   getPublicKeyId,
+  getStripePk,
   createGatewayOrder,
   verifySignature,
+  verifyStripePayment,
   computeSignature,
+  settleGatewayPayment,
   demoProcessCard,
   demoProcessUpi,
 } from "../services/payments";
@@ -27,10 +29,17 @@ function readOrderNumber(body: unknown): string {
 paymentsRouter.get(
   "/payments/config",
   handle(async (_req, res) => {
+    const [provider, demo, keyId, stripePk] = await Promise.all([
+      getPaymentProvider(),
+      isDemoMode(),
+      getPublicKeyId(),
+      getStripePk(),
+    ]);
     return ok(res, {
-      provider: getPaymentProvider(),
-      demo: isDemoMode(),
-      keyId: getPublicKeyId(),
+      provider,
+      demo,
+      keyId,
+      stripePk,
     });
   })
 );
@@ -82,9 +91,11 @@ paymentsRouter.post(
       amount: money(order.grandTotal),
       currency: order.currency ?? "INR",
       provider: gateway.provider,
-      demo: isDemoMode(),
+      demo: await isDemoMode(),
       keyId: gateway.keyId,
       gatewayOrderId: gateway.gatewayOrderId,
+      clientSecret: gateway.clientSecret ?? null,
+      stripePk: gateway.provider === "stripe" ? gateway.keyId : null,
       customer: { name: order.shipName, email: user.email },
     });
   })
@@ -119,7 +130,7 @@ paymentsRouter.post(
     if (upiId) {
       const upi = demoProcessUpi(upiId);
       if (!upi.approved) return ok(res, { approved: false, reason: upi.reason });
-      const gatewaySignature = computeSignature("demo", order.paymentIntent.gatewayOrderId, upi.gatewayPaymentId!);
+      const gatewaySignature = await computeSignature("demo", order.paymentIntent.gatewayOrderId, upi.gatewayPaymentId!);
       return ok(res, { approved: true, gatewayPaymentId: upi.gatewayPaymentId, gatewaySignature });
     }
 
@@ -136,7 +147,7 @@ paymentsRouter.post(
       return ok(res, { approved: false, reason: result.reason });
     }
 
-    const gatewaySignature = computeSignature("demo", order.paymentIntent.gatewayOrderId, result.gatewayPaymentId!);
+    const gatewaySignature = await computeSignature("demo", order.paymentIntent.gatewayOrderId, result.gatewayPaymentId!);
     return ok(res, {
       approved: true,
       gatewayPaymentId: result.gatewayPaymentId,
@@ -158,7 +169,7 @@ paymentsRouter.post(
     const orderNumber = readOrderNumber(req.body);
     const gatewayPaymentId = String(req.body?.gatewayPaymentId ?? "").trim();
     const gatewaySignature = String(req.body?.gatewaySignature ?? "").trim();
-    if (!orderNumber || !gatewayPaymentId || !gatewaySignature) {
+    if (!orderNumber || !gatewayPaymentId) {
       return fail(res, "VALIDATION_ERROR", "Payment details are incomplete.", 422);
     }
 
@@ -171,40 +182,35 @@ paymentsRouter.post(
     const intent = order.paymentIntent;
     if (!intent) return fail(res, "NO_PAYMENT_INTENT", "Start the payment again from the checkout.", 409);
 
-    const valid = verifySignature(intent.provider, intent.gatewayOrderId, gatewayPaymentId, gatewaySignature);
-    if (!valid) {
-      return fail(res, "SIGNATURE_INVALID", "We could not verify this payment. Please try again.", 400);
-    }
+    let providerRef = gatewayPaymentId;
+    let confirmedNote: string;
 
-    order.paymentMethod = "GATEWAY";
-    order.payment = {
-      method: "GATEWAY",
-      status: "PAID",
-      amount: order.grandTotal,
-      providerRef: gatewayPaymentId,
-      verifiedAt: new Date(),
-      createdAt: new Date(),
-    };
-    order.paymentStatus = "PAID";
-
-    if (order.status === "PENDING") {
-      order.status = "CONFIRMED";
-      order.events.push({
-        status: "CONFIRMED",
-        note: `Payment received via ${intent.provider === "razorpay" ? "Razorpay" : "online checkout"} — order confirmed.`,
+    if (intent.provider === "stripe") {
+      // Stripe: verify server-side by retrieving the PaymentIntent from
+      // Stripe's API — status, amount, currency and metadata must all match.
+      const verified = await verifyStripePayment(gatewayPaymentId, {
+        orderNumber: order.orderNumber,
+        grandTotal: order.grandTotal,
+        currency: order.currency ?? "INR",
       });
+      if (!verified.ok) {
+        return fail(res, "SIGNATURE_INVALID", verified.error ?? "We could not verify this payment. Please try again.", 400);
+      }
+      providerRef = verified.paymentId!;
+      confirmedNote = "Payment received via Stripe — order confirmed.";
     } else {
-      order.events.push({ status: order.status, note: "Payment received online." });
+      // Razorpay + demo: HMAC signature handshake (gatewayOrderId|paymentId).
+      if (!gatewaySignature) {
+        return fail(res, "VALIDATION_ERROR", "Payment details are incomplete.", 422);
+      }
+      const valid = await verifySignature(intent.provider, intent.gatewayOrderId, gatewayPaymentId, gatewaySignature);
+      if (!valid) {
+        return fail(res, "SIGNATURE_INVALID", "We could not verify this payment. Please try again.", 400);
+      }
+      confirmedNote = `Payment received via ${intent.provider === "razorpay" ? "Razorpay" : "online checkout"} — order confirmed.`;
     }
-    await order.save();
 
-    // Stellora Rewards: credit earn points once the order is confirmed via
-    // payment. Ledger-guarded, so retries and double-confirms are no-ops.
-    let pointsEarned = 0;
-    if (order.status === "CONFIRMED") {
-      const earn = await accrueEarn(String(order._id), "Payment received online");
-      pointsEarned = earn.earned;
-    }
+    const pointsEarned = await settleGatewayPayment(order, intent.provider, providerRef, confirmedNote);
 
     return ok(res, {
       orderNumber: order.orderNumber,

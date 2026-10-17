@@ -145,7 +145,7 @@ const OrderSchema = new Schema(
     paymentIntent: {
       type: new Schema(
         {
-          provider: { type: String, enum: ["razorpay", "demo"], required: true },
+          provider: { type: String, enum: ["razorpay", "stripe", "demo"], required: true },
           gatewayOrderId: { type: String, required: true },
           createdAt: { type: Date, default: Date.now },
         },

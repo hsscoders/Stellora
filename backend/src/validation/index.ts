@@ -264,6 +264,49 @@ export const adminUserSchema = z.object({
 
 export const settingsSchema = z.record(z.string().min(1), z.string().max(2000));
 
+/* ---------- Payment gateway configuration (admin) ----------
+ * Empty string = clear the stored key. Undefined = leave unchanged.
+ * Secrets are never returned to the client — only masked previews.
+ */
+export const paymentConfigSchema = z.object({
+  provider: z.enum(["demo", "razorpay", "stripe"]),
+  razorpay: z
+    .object({
+      keyId: z.string().trim().max(200).optional(),
+      keySecret: z.string().trim().max(300).optional(),
+      webhookSecret: z.string().trim().max(300).optional(),
+    })
+    .optional(),
+  stripe: z
+    .object({
+      publishableKey: z.string().trim().max(300).optional(),
+      secretKey: z.string().trim().max(300).optional(),
+      webhookSecret: z.string().trim().max(300).optional(),
+    })
+    .optional(),
+});
+
+/* Test-connection payload: typed-but-unsaved keys may be tested ephemerally
+ * (never persisted), otherwise the saved configuration is used. */
+export const paymentTestSchema = z.object({
+  provider: z.enum(["razorpay", "stripe"]),
+  keys: z
+    .object({
+      razorpay: z
+        .object({
+          keyId: z.string().trim().max(200).optional(),
+          keySecret: z.string().trim().max(300).optional(),
+        })
+        .optional(),
+      stripe: z
+        .object({
+          secretKey: z.string().trim().max(300).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
 export const orderStatusSchema = z.object({
   status: z.enum(["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"]),
   note: z.string().trim().max(300).optional().or(z.literal("")),

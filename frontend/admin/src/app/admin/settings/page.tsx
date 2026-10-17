@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaymentGatewayCard } from "@/components/stellora/payment-gateway-card";
 
 interface Setting {
   key: string;
@@ -172,7 +173,9 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <form onSubmit={save} className="space-y-8">
+    <div className="space-y-8">
+      {/* Payment gateways live outside the generic settings form — they have
+          their own dedicated (masked) API and save button. */}
       <div>
         <h1 className="font-serif text-3xl font-medium">Business Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -181,6 +184,9 @@ export default function AdminSettingsPage() {
         </p>
       </div>
 
+      <PaymentGatewayCard />
+
+      <form onSubmit={save} className="space-y-8">
       <div className="lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-10">
         {/* Sticky section nav (desktop) */}
         <aside className="hidden lg:block">
@@ -253,6 +259,7 @@ export default function AdminSettingsPage() {
           </div>
         </div>
       </div>
-    </form>
+      </form>
+    </div>
   );
 }

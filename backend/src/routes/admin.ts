@@ -6,7 +6,7 @@ import { requireAdmin } from "../lib/auth";
 import {
   productSchema, categorySchema, couponSchema, bannerSchema,
   shippingRateSchema, inventoryAdjustSchema, adminUserSchema, settingsSchema,
-  posCheckoutSchema,
+  posCheckoutSchema, paymentConfigSchema, paymentTestSchema,
 } from "../validation";
 import { slugify, generateOrderNumber } from "../lib/utils";
 import { hashPassword } from "../lib/password";
@@ -16,6 +16,8 @@ import { validateCoupon } from "../services/pricing";
 import { escapeRegex, serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
 import { getAutomationConfig, schedulerSnapshot, triggerJob, isJobId } from "../services/scheduler";
+import { getGatewayConfig, buildGatewayStatus, PAYMENT_SETTING_KEYS } from "../services/gateway-config";
+import { testGatewayConnection } from "../services/payments";
 import { env } from "../env";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
 import { mkdir, writeFile } from "fs/promises";
@@ -1269,14 +1271,95 @@ adminRouter.delete(
   })
 );
 
+/* ================= Payment gateway (admin) ================= */
+
+adminRouter.get(
+  "/admin/payments/config",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const cfg = await getGatewayConfig();
+    return ok(res, buildGatewayStatus(cfg));
+  })
+);
+
+adminRouter.put(
+  "/admin/payments/config",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const data = paymentConfigSchema.parse(req.body);
+
+    const updates: Record<string, string> = { [PAYMENT_SETTING_KEYS.provider]: data.provider };
+    const rz = data.razorpay ?? {};
+    if (rz.keyId !== undefined) updates[PAYMENT_SETTING_KEYS.razorpayKeyId] = rz.keyId;
+    if (rz.keySecret !== undefined) updates[PAYMENT_SETTING_KEYS.razorpayKeySecret] = rz.keySecret;
+    if (rz.webhookSecret !== undefined) updates[PAYMENT_SETTING_KEYS.razorpayWebhookSecret] = rz.webhookSecret;
+    const st = data.stripe ?? {};
+    if (st.publishableKey !== undefined) updates[PAYMENT_SETTING_KEYS.stripePk] = st.publishableKey;
+    if (st.secretKey !== undefined) updates[PAYMENT_SETTING_KEYS.stripeSecret] = st.secretKey;
+    if (st.webhookSecret !== undefined) updates[PAYMENT_SETTING_KEYS.stripeWebhookSecret] = st.webhookSecret;
+
+    for (const [key, value] of Object.entries(updates)) {
+      await SiteSetting.updateOne({ key }, { value }, { upsert: true });
+    }
+
+    await audit(
+      {
+        actor: admin,
+        action: "admin.payment.config.update",
+        entityType: "SiteSetting",
+        metadata: {
+          provider: data.provider,
+          keys: Object.keys(updates).filter((k) => k !== PAYMENT_SETTING_KEYS.provider),
+        },
+      },
+      req
+    );
+
+    const cfg = await getGatewayConfig();
+    return ok(res, buildGatewayStatus(cfg));
+  })
+);
+
+adminRouter.post(
+  "/admin/payments/test",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const ip = getClientIp(req);
+    const rl = rateLimit(`paytest:${ip}`, 10, 10 * 60 * 1000);
+    if (!rl.allowed) return fail(res, "RATE_LIMITED", "Too many test attempts. Please wait a moment.", 429);
+
+    const parsed = paymentTestSchema.safeParse(req.body);
+    if (!parsed.success) return fail(res, "VALIDATION_ERROR", "Choose a gateway to test.", 422);
+
+    const result = await testGatewayConnection(parsed.data.provider, parsed.data.keys);
+    await audit(
+      {
+        actor: admin,
+        action: "admin.payment.test",
+        entityType: "SiteSetting",
+        metadata: { provider: parsed.data.provider, ok: result.ok, typedKeys: !!parsed.data.keys },
+      },
+      req
+    );
+    return ok(res, result);
+  })
+);
+
 /* ================= Settings ================= */
+
+// Payment-gateway keys live in the same SiteSetting collection but are
+// managed ONLY through /admin/payments/* — they are masked there and must
+// never leak through the generic settings endpoints.
+const isPaymentSecretKey = (key: string) => key.startsWith("payment.");
 
 adminRouter.get(
   "/admin/settings",
   handle(async (req, res) => {
     await requireAdmin(req);
     const rows = await SiteSetting.find().sort({ key: 1 }).lean<any[]>();
-    return ok(res, rows.map((r) => ({ key: r.key, value: r.value, updatedAt: r.updatedAt })));
+    return ok(res, rows.filter((r) => !isPaymentSecretKey(r.key)).map((r) => ({ key: r.key, value: r.value, updatedAt: r.updatedAt })));
   })
 );
 
@@ -1287,7 +1370,8 @@ adminRouter.put(
     const admin = await requireAdmin(req);
     const data = settingsSchema.parse(req.body);
 
-    for (const [key, value] of Object.entries(data)) {
+    const entries = Object.entries(data).filter(([key]) => !isPaymentSecretKey(key));
+    for (const [key, value] of entries) {
       await SiteSetting.updateOne({ key }, { value }, { upsert: true });
     }
 

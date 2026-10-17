@@ -1,58 +1,79 @@
 import crypto from "node:crypto";
 import { HttpError } from "../lib/http";
 import { env } from "../env";
+import { Order } from "../models";
+import { accrueEarn } from "./loyalty";
+import {
+  getGatewayConfig,
+  resolveActiveProvider,
+  type GatewayProvider,
+} from "./gateway-config";
 
 /**
  * Payment gateway abstraction.
  *
- * - If PAYMENTS_ENABLED=true, PAYMENT_PROVIDER=razorpay and API keys are set in
- *   the environment, the real Razorpay Orders API is used (client-side checkout
- *   via Razorpay's SDK, server-side HMAC signature verification).
+ * - Providers are configured from the admin panel (Business Settings →
+ *   Payment gateway) and stored in SiteSetting; environment variables remain
+ *   a fallback for headless deploys.
+ * - When a real provider is selected AND its keys are present, that gateway
+ *   is used for checkout (Razorpay Orders API / Stripe PaymentIntents, both
+ *   plain REST — no SDK dependency).
  * - Otherwise the built-in DEMO gateway runs: a fully in-house simulated
  *   acquiring flow (card capture, decline rules, HMAC signature handshake)
- *   that mirrors Razorpay's signature algorithm exactly, so switching to the
- *   real provider needs no code changes — only environment keys.
+ *   that mirrors Razorpay's signature algorithm exactly.
  */
 
-export type PaymentProvider = "razorpay" | "demo";
+export type PaymentProvider = GatewayProvider;
 
-function razorpayActive(): boolean {
-  return (
-    env.PAYMENTS_ENABLED &&
-    env.PAYMENT_PROVIDER === "razorpay" &&
-    !!env.PAYMENT_KEY_ID &&
-    !!env.PAYMENT_KEY_SECRET
-  );
+async function activeProvider(): Promise<PaymentProvider> {
+  const cfg = await getGatewayConfig();
+  return resolveActiveProvider(cfg);
 }
 
-export function getPaymentProvider(): PaymentProvider {
-  return razorpayActive() ? "razorpay" : "demo";
+export async function getPaymentProvider(): Promise<PaymentProvider> {
+  return activeProvider();
 }
 
-export function isDemoMode(): boolean {
-  return getPaymentProvider() === "demo";
+export async function isDemoMode(): Promise<boolean> {
+  return (await activeProvider()) === "demo";
 }
 
-export function getPublicKeyId(): string | null {
-  return razorpayActive() ? env.PAYMENT_KEY_ID : null;
+/** Razorpay public key id (safe to expose) when Razorpay is active. */
+export async function getPublicKeyId(): Promise<string | null> {
+  const cfg = await getGatewayConfig();
+  return resolveActiveProvider(cfg) === "razorpay" ? cfg.razorpay.keyId : null;
+}
+
+/** Stripe publishable key (safe to expose) when Stripe is active. */
+export async function getStripePk(): Promise<string | null> {
+  const cfg = await getGatewayConfig();
+  return resolveActiveProvider(cfg) === "stripe" ? cfg.stripe.pk : null;
 }
 
 function hmacHex(secret: string, payload: string): string {
   return crypto.createHmac("sha256", secret).update(payload).digest("hex");
 }
 
-export function computeSignature(provider: PaymentProvider, gatewayOrderId: string, gatewayPaymentId: string): string {
-  const secret = provider === "razorpay" ? env.PAYMENT_KEY_SECRET : env.PAYMENT_DEMO_SECRET;
+export async function computeSignature(
+  provider: PaymentProvider,
+  gatewayOrderId: string,
+  gatewayPaymentId: string
+): Promise<string> {
+  let secret = env.PAYMENT_DEMO_SECRET;
+  if (provider === "razorpay") {
+    const cfg = await getGatewayConfig();
+    secret = cfg.razorpay.keySecret;
+  }
   return hmacHex(secret, `${gatewayOrderId}|${gatewayPaymentId}`);
 }
 
-export function verifySignature(
+export async function verifySignature(
   provider: PaymentProvider,
   gatewayOrderId: string,
   gatewayPaymentId: string,
   signature: string
-): boolean {
-  const expected = computeSignature(provider, gatewayOrderId, gatewayPaymentId);
+): Promise<boolean> {
+  const expected = await computeSignature(provider, gatewayOrderId, gatewayPaymentId);
   const a = Buffer.from(expected, "utf8");
   const b = Buffer.from(String(signature ?? ""), "utf8");
   if (a.length !== b.length) return false;
@@ -65,6 +86,62 @@ export interface GatewayOrder {
   provider: PaymentProvider;
   gatewayOrderId: string;
   keyId: string | null;
+  /** Stripe only — client secret for Payment Element (safe to expose). */
+  clientSecret?: string | null;
+}
+
+async function stripeRequest(
+  method: "GET" | "POST",
+  path: string,
+  secret: string,
+  body?: Record<string, string>
+): Promise<{ ok: boolean; status: number; json: any; errMessage: string | null }> {
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body ? new URLSearchParams(body).toString() : undefined,
+    signal: AbortSignal.timeout(12_000),
+  });
+  let json: any = null;
+  let errMessage: string | null = null;
+  try {
+    json = await res.json();
+    if (!res.ok && json?.error?.message) errMessage = String(json.error.message);
+  } catch {
+    /* network/HTML error body */
+  }
+  return { ok: res.ok, status: res.status, json, errMessage };
+}
+
+async function createStripePaymentIntent(input: {
+  orderNumber: string;
+  grandTotal: number;
+  currency: string;
+}): Promise<GatewayOrder> {
+  const cfg = await getGatewayConfig();
+  const res = await stripeRequest("POST", "payment_intents", cfg.stripe.secret, {
+    amount: String(Math.round(input.grandTotal * 100)), // smallest unit (paise)
+    currency: (input.currency || "INR").toLowerCase(),
+    description: `Stellora order ${input.orderNumber}`,
+    "metadata[orderNumber]": input.orderNumber,
+    "automatic_payment_methods[enabled]": "true",
+  });
+  if (!res.ok || !res.json?.id || !res.json?.client_secret) {
+    throw new HttpError(
+      "PAYMENT_PROVIDER_ERROR",
+      "Payment gateway is not responding right now. Please try again in a moment.",
+      502
+    );
+  }
+  return {
+    provider: "stripe",
+    gatewayOrderId: String(res.json.id),
+    keyId: cfg.stripe.pk,
+    clientSecret: String(res.json.client_secret),
+  };
 }
 
 export async function createGatewayOrder(input: {
@@ -72,8 +149,15 @@ export async function createGatewayOrder(input: {
   grandTotal: number;
   currency: string;
 }): Promise<GatewayOrder> {
-  if (getPaymentProvider() === "razorpay") {
-    const auth = Buffer.from(`${env.PAYMENT_KEY_ID}:${env.PAYMENT_KEY_SECRET}`).toString("base64");
+  const provider = await activeProvider();
+
+  if (provider === "stripe") {
+    return createStripePaymentIntent(input);
+  }
+
+  if (provider === "razorpay") {
+    const cfg = await getGatewayConfig();
+    const auth = Buffer.from(`${cfg.razorpay.keyId}:${cfg.razorpay.keySecret}`).toString("base64");
     const res = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
@@ -83,6 +167,7 @@ export async function createGatewayOrder(input: {
         receipt: input.orderNumber,
         notes: { orderNumber: input.orderNumber },
       }),
+      signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) {
       throw new HttpError(
@@ -95,12 +180,147 @@ export async function createGatewayOrder(input: {
     if (!json.id) {
       throw new HttpError("PAYMENT_PROVIDER_ERROR", "Payment gateway rejected the order. Please try again.", 502);
     }
-    return { provider: "razorpay", gatewayOrderId: String(json.id), keyId: env.PAYMENT_KEY_ID };
+    return { provider: "razorpay", gatewayOrderId: String(json.id), keyId: cfg.razorpay.keyId };
   }
 
   // Demo gateway — deterministic, signed handshake happens at confirm time.
   const gatewayOrderId = `demo_order_${crypto.randomBytes(9).toString("hex")}`;
-  return { provider: "demo", gatewayOrderId, keyId: null };
+  return { provider: "demo", gatewayOrderId, keyId: null, clientSecret: null };
+}
+
+/* ---------- Server-side Stripe verification (confirm path) ---------- */
+
+export interface StripeVerifyResult {
+  ok: boolean;
+  paymentId: string | null;
+  error: string | null;
+}
+
+/**
+ * Verifies a Stripe PaymentIntent server-side: status must be `succeeded`,
+ * amount/currency must match the order, and metadata.orderNumber must match.
+ * Never trusts client-reported state.
+ */
+export async function verifyStripePayment(
+  paymentIntentId: string,
+  expected: { orderNumber: string; grandTotal: number; currency: string }
+): Promise<StripeVerifyResult> {
+  const cfg = await getGatewayConfig();
+  const id = String(paymentIntentId ?? "").trim();
+  if (!/^pi_[A-Za-z0-9]+$/.test(id)) {
+    return { ok: false, paymentId: null, error: "Invalid Stripe payment reference." };
+  }
+  let res: Awaited<ReturnType<typeof stripeRequest>>;
+  try {
+    res = await stripeRequest("GET", `payment_intents/${encodeURIComponent(id)}`, cfg.stripe.secret);
+  } catch {
+    return { ok: false, paymentId: null, error: "Payment gateway is not responding right now." };
+  }
+  if (!res.ok || !res.json?.id) {
+    return { ok: false, paymentId: null, error: "We could not verify this payment. Please try again." };
+  }
+  const pi = res.json;
+  const amountOk = Number(pi.amount) === Math.round(expected.grandTotal * 100);
+  const currencyOk = String(pi.currency ?? "").toLowerCase() === (expected.currency || "inr").toLowerCase();
+  const metaOk = String(pi.metadata?.orderNumber ?? "") === expected.orderNumber;
+  if (pi.status !== "succeeded" || !amountOk || !currencyOk || !metaOk) {
+    return { ok: false, paymentId: null, error: "We could not verify this payment. Please try again." };
+  }
+  return { ok: true, paymentId: String(pi.id), error: null };
+}
+
+/* ---------- Admin: live connection test (read-only API pings) ---------- */
+
+export interface GatewayTestResult {
+  ok: boolean;
+  message: string;
+}
+
+export interface GatewayTestOverrides {
+  razorpay?: { keyId?: string; keySecret?: string };
+  stripe?: { secretKey?: string };
+}
+
+/**
+ * Live read-only API ping. Uses the keys currently typed in the admin form
+ * when provided (they are NOT stored), otherwise the saved configuration.
+ */
+export async function testGatewayConnection(
+  provider: "razorpay" | "stripe",
+  override?: GatewayTestOverrides
+): Promise<GatewayTestResult> {
+  const cfg = await getGatewayConfig();
+  const rzpKey = override?.razorpay?.keySecret ? override.razorpay : cfg.razorpay;
+  const stripeSecret = override?.stripe?.secretKey || cfg.stripe.secret;
+  try {
+    if (provider === "razorpay") {
+      if (!rzpKey.keyId || !rzpKey.keySecret) {
+        return { ok: false, message: "Razorpay Key ID and Key Secret are required." };
+      }
+      const auth = Buffer.from(`${rzpKey.keyId}:${rzpKey.keySecret}`).toString("base64");
+      const res = await fetch("https://api.razorpay.com/v1/payments?count=1", {
+        headers: { Authorization: `Basic ${auth}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return { ok: true, message: "Razorpay keys verified — gateway is live." };
+      if (res.status === 401) return { ok: false, message: "Razorpay rejected these keys (401). Please re-check them." };
+      return { ok: false, message: `Razorpay responded with HTTP ${res.status}. Please try again.` };
+    }
+
+    if (!stripeSecret) {
+      return { ok: false, message: "Stripe Secret key is required." };
+    }
+    const res = await stripeRequest("GET", "balance", stripeSecret);
+    if (res.ok) return { ok: true, message: "Stripe keys verified — gateway is live." };
+    if (res.status === 401) return { ok: false, message: "Stripe rejected this key (401). Please re-check it." };
+    return { ok: false, message: res.errMessage ?? `Stripe responded with HTTP ${res.status}.` };
+  } catch {
+    return { ok: false, message: "Could not reach the payment gateway. Check the server's internet connection." };
+  }
+}
+
+/* ---------- Shared settlement (confirm route + webhooks) ---------- */
+
+/**
+ * Marks a gateway order as PAID and confirms it, exactly once.
+ * Used by the client-driven confirm endpoint AND by gateway webhooks,
+ * so whichever arrives first settles the order and the other is a no-op.
+ */
+export async function settleGatewayPayment(
+  order: InstanceType<typeof Order>,
+  provider: PaymentProvider,
+  providerRef: string,
+  confirmedNote: string
+): Promise<number> {
+  if (order.paymentStatus === "PAID") return 0;
+
+  order.paymentMethod = "GATEWAY";
+  order.payment = {
+    method: "GATEWAY",
+    status: "PAID",
+    amount: order.grandTotal,
+    providerRef,
+    verifiedAt: new Date(),
+    createdAt: new Date(),
+  };
+  order.paymentStatus = "PAID";
+
+  if (order.status === "PENDING") {
+    order.status = "CONFIRMED";
+    order.events.push({ status: "CONFIRMED", note: confirmedNote });
+  } else {
+    order.events.push({ status: order.status, note: "Payment received online." });
+  }
+  await order.save();
+
+  // Stellora Rewards: credit earn points once the order is confirmed via
+  // payment. Ledger-guarded, so retries and double-confirms are no-ops.
+  let pointsEarned = 0;
+  if (order.status === "CONFIRMED") {
+    const earn = await accrueEarn(String(order._id), "Payment received online");
+    pointsEarned = earn.earned;
+  }
+  return pointsEarned;
 }
 
 /* ---------- Demo acquiring simulation ---------- */

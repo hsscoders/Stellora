@@ -14,6 +14,7 @@ import { commerceRouter } from "./routes/commerce";
 import { adminRouter } from "./routes/admin";
 import { paymentsRouter } from "./routes/payments";
 import { engagementRouter } from "./routes/engagement";
+import { webhooksRouter } from "./routes/webhooks";
 import { startScheduler } from "./services/scheduler";
 
 const app = express();
@@ -26,6 +27,12 @@ app.use(
     credentials: true,
   })
 );
+
+// Payment gateway webhooks MUST read the RAW request body (Stripe/Razorpay
+// sign the exact bytes). Scoped strictly to the webhook prefix and mounted
+// before express.json() so the raw parser never affects any other route.
+app.use("/api/payments/webhook", express.raw({ type: "*/*", limit: "1mb" }), webhooksRouter);
+
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 

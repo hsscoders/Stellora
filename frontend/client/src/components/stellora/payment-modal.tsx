@@ -16,6 +16,8 @@ import { formatINR } from "@/lib/utils";
  * - Demo mode (default): a fully simulated hosted checkout — cards & UPI,
  *   server-side authorization rules, HMAC-signed handshake, instant settle.
  * - Razorpay mode: opens Razorpay Checkout when real API keys are configured.
+ * - Stripe mode: mounts Stripe's Payment Element (cards, wallets, UPI where
+ *   available) and verifies the PaymentIntent server-side after success.
  */
 
 interface Intent {
@@ -26,10 +28,33 @@ interface Intent {
   demo: boolean;
   keyId: string | null;
   gatewayOrderId: string;
+  clientSecret?: string | null;
+  stripePk?: string | null;
   customer?: { name: string | null; email: string } | null;
 }
 
-type Stage = "preparing" | "form" | "processing" | "declined";
+type Stage = "preparing" | "form" | "stripe" | "processing" | "declined";
+
+/** Loads Stripe.js v3 once per page (idempotent across modal re-opens). */
+function loadStripeJs(): Promise<any> {
+  const w = window as any;
+  if (w.Stripe) return Promise.resolve(w.Stripe);
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[data-stripe-js="v3"]');
+    if (existing) {
+      existing.addEventListener("load", () => (w.Stripe ? resolve(w.Stripe) : reject(new Error("Stripe unavailable"))));
+      existing.addEventListener("error", () => reject(new Error("Stripe failed to load")));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://js.stripe.com/v3/";
+    script.async = true;
+    script.dataset.stripeJs = "v3";
+    script.onload = () => (w.Stripe ? resolve(w.Stripe) : reject(new Error("Stripe unavailable")));
+    script.onerror = () => reject(new Error("Stripe failed to load"));
+    document.body.appendChild(script);
+  });
+}
 
 export function PaymentModal({
   open,
@@ -52,7 +77,56 @@ export function PaymentModal({
   const [cvv, setCvv] = useState("");
   const [upi, setUpi] = useState("");
   const [declineReason, setDeclineReason] = useState<string | null>(null);
+  const [stripeReady, setStripeReady] = useState(false);
   const settled = useRef(false);
+  const stripeElementsHost = useRef<HTMLDivElement | null>(null);
+  const stripeRef = useRef<{ stripe: any; elements: any } | null>(null);
+
+  const settle = useCallback(
+    async (orderNumber: string, gatewayPaymentId: string, gatewaySignature: string) => {
+      const res = await fetch("/api/payments/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderNumber, gatewayPaymentId, gatewaySignature }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        settled.current = true;
+        toast.success("Payment successful — thank you!");
+        onSuccess();
+      } else {
+        setDeclineReason(json.error?.message ?? "We could not verify this payment.");
+        setStage("declined");
+      }
+    },
+    [onSuccess]
+  );
+
+  const openRazorpay = useCallback(
+    (data: Intent) => {
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => {
+        const rzp = new (window as any).Razorpay({
+          key: data.keyId,
+          amount: Math.round(data.amount * 100),
+          currency: data.currency,
+          name: "Stellora",
+          description: `Order ${data.orderNumber}`,
+          order_id: data.gatewayOrderId,
+          prefill: { name: data.customer?.name ?? "" },
+          theme: { color: "#8e1f45" },
+          handler: async (response: any) => {
+            await settle(data.orderNumber, response.razorpay_payment_id, response.razorpay_signature);
+          },
+          modal: { ondismiss: () => setStage("form") },
+        });
+        rzp.open();
+      };
+      document.body.appendChild(script);
+    },
+    [settle]
+  );
 
   const runPrepare = useCallback(async () => {
     setStage("preparing");
@@ -80,15 +154,21 @@ export function PaymentModal({
         return;
       }
       setIntent(json.data);
-      setStage("form");
       if (!json.data.demo && json.data.provider === "razorpay") {
+        setStage("form");
         openRazorpay(json.data);
+      } else if (!json.data.demo && json.data.provider === "stripe" && json.data.clientSecret && json.data.stripePk) {
+        setStripeReady(false);
+        stripeRef.current = null;
+        setStage("stripe");
+      } else {
+        setStage("form");
       }
     } catch {
       setPrepError("Network error while contacting the payment gateway.");
       setStage("declined");
     }
-  }, [orderNumber, onSuccess]);
+  }, [orderNumber, onSuccess, openRazorpay]);
 
   useEffect(() => {
     if (!open) return;
@@ -104,42 +184,58 @@ export function PaymentModal({
     };
   }, [open, runPrepare]);
 
-  function openRazorpay(data: Intent) {
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.onload = () => {
-      const rzp = new (window as any).Razorpay({
-        key: data.keyId,
-        amount: Math.round(data.amount * 100),
-        currency: data.currency,
-        name: "Stellora",
-        description: `Order ${data.orderNumber}`,
-        order_id: data.gatewayOrderId,
-        prefill: { name: data.customer?.name ?? "" },
-        theme: { color: "#8e1f45" },
-        handler: async (response: any) => {
-          await settle(data.orderNumber, response.razorpay_payment_id, response.razorpay_signature);
-        },
-        modal: { ondismiss: () => setStage("form") },
-      });
-      rzp.open();
-    };
-    document.body.appendChild(script);
-  }
+  /* ---------- Stripe: Payment Element ---------- */
 
-  async function settle(orderNumber: string, gatewayPaymentId: string, gatewaySignature: string) {
-    const res = await fetch("/api/payments/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orderNumber, gatewayPaymentId, gatewaySignature }),
-    });
-    const json = await res.json();
-    if (json.ok) {
-      settled.current = true;
-      toast.success("Payment successful — thank you!");
-      onSuccess();
-    } else {
-      setDeclineReason(json.error?.message ?? "We could not verify this payment.");
+  useEffect(() => {
+    if (stage !== "stripe" || !intent?.clientSecret || !intent?.stripePk) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const StripeJs = await loadStripeJs();
+        if (cancelled || !stripeElementsHost.current) return;
+        const stripe = StripeJs(String(intent.stripePk));
+        const elements = stripe.elements({
+          clientSecret: String(intent.clientSecret),
+          appearance: { theme: "stripe", variables: { colorPrimary: "#8e1f45" } },
+        });
+        const paymentElement = elements.create("payment");
+        paymentElement.mount(stripeElementsHost.current);
+        stripeRef.current = { stripe, elements };
+        setStripeReady(true);
+      } catch {
+        if (!cancelled) {
+          setPrepError("Could not load the Stripe payment form. Please check your connection and try again.");
+          setStage("declined");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stage, intent]);
+
+  async function payStripe() {
+    const s = stripeRef.current;
+    if (!s || !intent) return;
+    setStage("processing");
+    try {
+      const { error, paymentIntent: pi } = await s.stripe.confirmPayment({
+        elements: s.elements,
+        redirect: "if_required",
+      });
+      if (error) {
+        setDeclineReason(error.message ?? "Payment could not be completed.");
+        setStage("declined");
+        return;
+      }
+      if (pi && pi.status === "succeeded") {
+        await settle(intent.orderNumber, String(pi.id), "");
+      } else {
+        setDeclineReason("Payment is taking longer than expected. If the amount was debited, the order will confirm automatically.");
+        setStage("declined");
+      }
+    } catch {
+      setDeclineReason("Network error while contacting the payment gateway.");
       setStage("declined");
     }
   }
@@ -338,6 +434,34 @@ export function PaymentModal({
 
             <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] text-muted-foreground">
               <ShieldCheck className="h-3.5 w-3.5" /> Payments are verified with HMAC signatures server-side
+            </p>
+          </div>
+        )}
+
+        {stage === "stripe" && intent && (
+          <div className="px-6 py-5">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void payStripe();
+              }}
+              className="space-y-4"
+            >
+              <div
+                ref={stripeElementsHost}
+                className={`min-h-[120px] transition-opacity ${stripeReady ? "opacity-100" : "opacity-40"}`}
+              />
+              {!stripeReady && (
+                <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading secure payment form…
+                </div>
+              )}
+              <Button type="submit" disabled={!stripeReady} className="w-full rounded-full bg-primary py-6 hover:bg-primary/90">
+                Pay {formatINR(amount)}
+              </Button>
+            </form>
+            <p className="mt-4 flex items-center justify-center gap-1.5 text-center text-[11px] text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5" /> Payments are verified server-side against Stripe before the order confirms
             </p>
           </div>
         )}
