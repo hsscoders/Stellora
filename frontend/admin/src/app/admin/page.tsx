@@ -24,6 +24,8 @@ import {
   AlertTriangle,
   ClipboardList,
   BarChart3,
+  Plus,
+  Layers,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -348,6 +350,25 @@ async function Dashboard() {
         </p>
       </div>
 
+      {/* Quick actions — one-tap jump to the most-used console flows */}
+      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+        {[
+          { href: "/admin/products/new", label: "New product", icon: Plus },
+          { href: "/admin/pos", label: "Open POS", icon: Store },
+          { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
+          { href: "/admin/inventory", label: "Inventory", icon: Layers },
+        ].map((a) => (
+          <Link
+            key={a.href}
+            href={a.href}
+            className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg border border-border/70 bg-card p-2 text-center text-[11px] font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-accent/50 hover:text-primary sm:min-h-20 sm:text-xs"
+          >
+            <a.icon className="h-5 w-5 text-primary" aria-hidden />
+            {a.label}
+          </Link>
+        ))}
+      </div>
+
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {kpis.map((k) => (
@@ -588,7 +609,8 @@ async function Dashboard() {
             </Link>
           }
         >
-          <Table>
+          <div className="hidden md:block">
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Order</TableHead>
@@ -645,6 +667,40 @@ async function Dashboard() {
               )}
             </TableBody>
           </Table>
+          </div>
+
+          {/* Mobile-friendly card list — same data, thumb-readable */}
+          <ul className="divide-y divide-border md:hidden">
+            {recentOrders.map((o) => (
+              <li key={o.id}>
+                <Link
+                  href={`/admin/orders/${o.id}`}
+                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/50"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">{o.orderNumber}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {o.user?.name ?? "Guest"} · {formatDateTime(o.createdAt)}
+                    </span>
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={`shrink-0 text-[10px] ${STATUS_STYLES[o.status] ?? ""}`}
+                  >
+                    {o.status}
+                  </Badge>
+                  <span className="tnum shrink-0 text-sm font-semibold">
+                    {formatINR(o.grandTotal)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+            {recentOrders.length === 0 && (
+              <li className="px-4 py-8 text-center text-sm text-muted-foreground">
+                No orders yet.
+              </li>
+            )}
+          </ul>
         </DashCard>
 
         <DashCard

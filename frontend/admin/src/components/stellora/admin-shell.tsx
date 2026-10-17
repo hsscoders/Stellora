@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { formatINR } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ThemeToggle } from "@/components/stellora/theme-toggle";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isNew?: boolean };
 type NavSection = { section: string; items: NavItem[] };
@@ -342,7 +343,7 @@ function SearchRowSkeleton() {
   );
 }
 
-function GlobalSearch() {
+function GlobalSearch({ autoFocus = false }: { autoFocus?: boolean }) {
   const pathname = usePathname();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -488,6 +489,7 @@ function GlobalSearch() {
         />
         <input
           ref={inputRef}
+          autoFocus={autoFocus}
           type="search"
           value={q}
           onChange={(e) => {
@@ -754,6 +756,7 @@ export function AdminShell({
 }) {
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -776,10 +779,13 @@ export function AdminShell({
     });
   }, []);
 
-  // Close the drawer whenever the route changes (covers browser back/forward;
-  // in-app link taps are already closed via onNavigate).
+  // Close the drawer (and the mobile search row) whenever the route changes
+  // (covers browser back/forward; in-app link taps are already closed via onNavigate).
   useEffect(() => {
-    const raf = requestAnimationFrame(() => setDrawerOpen(false));
+    const raf = requestAnimationFrame(() => {
+      setDrawerOpen(false);
+      setMobileSearchOpen(false);
+    });
     return () => cancelAnimationFrame(raf);
   }, [pathname]);
 
@@ -872,7 +878,7 @@ export function AdminShell({
       {/* ---------------- Main column ---------------- */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Unified glass topbar — search + bell on desktop, hamburger + title on mobile */}
-        <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background/85 px-3 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 sm:px-4">
+        <header className="sticky top-0 z-40 flex flex-wrap items-center gap-2 border-b border-border bg-background/85 px-3 py-2 backdrop-blur-md supports-[backdrop-filter]:bg-background/75 sm:px-4">
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
@@ -895,6 +901,20 @@ export function AdminShell({
             <GlobalSearch />
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setMobileSearchOpen((o) => !o)}
+              aria-label={mobileSearchOpen ? "Close search" : "Open search"}
+              aria-expanded={mobileSearchOpen}
+              className={`inline-flex h-11 w-11 items-center justify-center rounded-lg transition hover:bg-accent lg:hidden ${
+                mobileSearchOpen
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Search className="h-5 w-5" aria-hidden />
+            </button>
+            <ThemeToggle className="h-11 w-11 rounded-lg text-muted-foreground hover:text-foreground lg:h-9 lg:w-9" />
             <NotificationsBell />
             <a
               href="/"
@@ -904,9 +924,19 @@ export function AdminShell({
               <ArrowUpRight className="h-4 w-4" aria-hidden />
             </a>
           </div>
+          {mobileSearchOpen && (
+            <div className="mobile-search-row order-last w-full basis-full pb-2.5 lg:hidden">
+              <GlobalSearch autoFocus />
+            </div>
+          )}
         </header>
 
-        <main className="mx-auto w-full max-w-[1440px] flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+        <main
+          key={pathname}
+          className="admin-page-in mx-auto w-full max-w-[1440px] flex-1 px-4 pt-4 pb-28 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-8"
+        >
+          {children}
+        </main>
       </div>
 
       {/* ---------------- Mobile slide drawer ---------------- */}
@@ -936,11 +966,61 @@ export function AdminShell({
                 <X className="h-5 w-5" aria-hidden />
               </button>
             </div>
+            <div className="border-b border-border p-3">
+              <GlobalSearch />
+            </div>
             <NavGroups pathname={pathname} onNavigate={() => setDrawerOpen(false)} />
             <UserBlock user={user} onLogout={logout} loggingOut={loggingOut} />
           </aside>
         </div>
       )}
+
+      {/* ---------------- Mobile bottom nav ---------------- */}
+      <nav
+        aria-label="Quick navigation"
+        className="bottom-nav pb-safe fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-border lg:hidden"
+      >
+        {[
+          { href: "/admin", label: "Home", icon: LayoutDashboard },
+          { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
+          { href: "/admin/products", label: "Products", icon: Package },
+          { href: "/admin/pos", label: "POS", icon: Store },
+        ].map((n) => {
+          const active =
+            n.href === "/admin"
+              ? pathname === "/admin"
+              : pathname === n.href || pathname.startsWith(`${n.href}/`);
+          return (
+            <Link
+              key={n.href}
+              href={n.href}
+              aria-current={active ? "page" : undefined}
+              className={`relative flex min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${
+                active ? "text-primary" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {active && (
+                <span
+                  className="absolute inset-x-5 top-0 h-[2px] rounded-full bg-primary"
+                  aria-hidden
+                />
+              )}
+              <n.icon className="h-5 w-5" aria-hidden />
+              {n.label}
+            </Link>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Open full menu"
+          aria-expanded={drawerOpen}
+          className="relative flex min-w-[56px] flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Menu className="h-5 w-5" aria-hidden />
+          Menu
+        </button>
+      </nav>
     </div>
   );
 }

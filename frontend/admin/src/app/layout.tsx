@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Playfair_Display, Manrope } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
@@ -23,6 +23,13 @@ export const metadata: Metadata = {
   },
   description:
     "Stellora is a premium retail destination for sterling and artificial jewellery, hair extensions, vanity essentials and handbags.",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fbf7f4" },
+    { media: "(prefers-color-scheme: dark)", color: "#150d11" },
+  ],
 };
 
 export default function RootLayout({

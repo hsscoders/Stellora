@@ -382,3 +382,56 @@
   .drawer-backdrop,
   .drawer-panel { animation: none; }
 }
+
+/* ---------- Admin shell (Stellora-29): mobile-first polish ---------- */
+
+/* Subtle page transition on every route change (reduced-motion safe) */
+@keyframes admin-page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.admin-page-in {
+  animation: admin-page-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Horizontal table scrollers: contain overscroll so swiping a wide table
+   never yanks the whole page, momentum scrolling on iOS, slim scrollbar */
+[data-slot="table-container"] {
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+[data-slot="table-container"]::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+[data-slot="table-container"]::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground) 35%, transparent);
+  border-radius: 999px;
+}
+
+/* iOS safe-area helper for the mobile bottom nav */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Mobile bottom nav — glass bar matching the topbar treatment */
+.bottom-nav {
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: 0 -8px 24px -12px rgb(0 0 0 / 0.25);
+}
+
+/* Search row that unfolds beneath the mobile topbar */
+.mobile-search-row {
+  animation: admin-search-row 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes admin-search-row {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-page-in,
+  .mobile-search-row { animation: none; }
+}
