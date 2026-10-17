@@ -173,13 +173,15 @@ export const posCheckoutSchema = z.object({
       })
     )
     .min(1, "Add at least one item to the bill"),
-  paymentMethod: z.enum(["CASH", "CARD", "UPI"]).default("CASH"),
+  // Counter tender options — matches the POS method tiles (non-CASH tenders
+  // are classified as non-cash in the drawer report automatically).
+  paymentMethod: z.enum(["CASH", "CARD", "UPI", "BANK", "WALLET", "CHEQUE", "OTHER"]).default("CASH"),
   // Stocky-style split checkout: each tender is method + amount. When present,
   // paymentMethod is ignored; the split rows are authoritative.
   payments: z
     .array(
       z.object({
-        method: z.enum(["CASH", "CARD", "UPI"]),
+        method: z.enum(["CASH", "CARD", "UPI", "BANK", "WALLET", "CHEQUE", "OTHER"]),
         amount: z.coerce.number().positive("Split amounts must be positive"),
       })
     )
