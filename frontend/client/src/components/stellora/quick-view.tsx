@@ -39,6 +39,7 @@ export function QuickViewButton({
   const [added, setAdded] = useState(false);
   const addToCart = useStore((s) => s.addToCart);
   const refreshCart = useStore((s) => s.refreshCart);
+  const setCartOpen = useStore((s) => s.setCartOpen);
 
   if (!firstAvailable) return null;
 
@@ -55,13 +56,11 @@ export function QuickViewButton({
     if (result.ok) {
       await refreshCart();
       setAdded(true);
-      toast.cart({
-        name: product.name,
-        image: product.images[0]?.url ?? null,
-        qty,
-        price: selected.price,
-      });
-      window.setTimeout(() => setOpen(false), 900);
+      // Slide over the cart drawer — quick view closes as the drawer takes over.
+      window.setTimeout(() => {
+        setOpen(false);
+        setCartOpen(true);
+      }, 700);
     } else {
       toast.error(result.message ?? "Could not add to cart");
     }

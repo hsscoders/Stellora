@@ -1,5 +1,6 @@
 import { Header } from "@/components/stellora/header";
 import { Footer } from "@/components/stellora/footer";
+import { CartDrawer } from "@/components/stellora/cart-drawer";
 import { BackToTop } from "@/components/stellora/back-to-top";
 import { ScrollProgress } from "@/components/stellora/scroll-progress";
 import { WhatsAppButton } from "@/components/stellora/whatsapp-button";
@@ -30,6 +31,7 @@ export default async function StorefrontLayout({
       <main className="flex-1">{children}</main>
       <Footer settings={settings} />
       <WhatsAppButton phone={settings.whatsapp_number ?? null} />
+      <CartDrawer />
       <BackToTop />
     </>
   );

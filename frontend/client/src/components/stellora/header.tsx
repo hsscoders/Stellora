@@ -70,6 +70,7 @@ export function Header({ announcement }: { announcement: string | null }) {
   const pathname = usePathname();
   const router = useRouter();
   const cart = useStore((s) => s.cart);
+  const setCartOpen = useStore((s) => s.setCartOpen);
   const refreshCart = useStore((s) => s.refreshCart);
   const refreshWishlist = useStore((s) => s.refreshWishlist);
   const [user, setUser] = useState<{ name: string; role: string } | null>(null);
@@ -248,10 +249,11 @@ export function Header({ announcement }: { announcement: string | null }) {
                 </span>
               )}
             </Link>
-            <Link
-              href="/cart"
+            <button
+              type="button"
+              onClick={() => setCartOpen(true)}
               className="relative p-2 text-foreground/80 transition hover:text-foreground"
-              aria-label="Cart"
+              aria-label={`Open cart${cart && cart.itemCount > 0 ? ` (${cart.itemCount} items)` : ""}`}
             >
               <ShoppingBag className="h-5 w-5" />
               {cart && cart.itemCount > 0 && (
@@ -259,7 +261,7 @@ export function Header({ announcement }: { announcement: string | null }) {
                   {cart.itemCount}
                 </span>
               )}
-            </Link>
+            </button>
 
             {user ? (
               <DropdownMenu>

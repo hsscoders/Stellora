@@ -350,15 +350,30 @@ adminRouter.get(
   handle(async (req, res) => {
     await requireAdmin(req);
     const q = (req.query.q as string | undefined)?.trim() ?? "";
+    const status = (req.query.status as string | undefined)?.trim().toUpperCase() ?? "";
+    const categoryId = (req.query.categoryId as string | undefined)?.trim() ?? "";
+    const sort = (req.query.sort as string | undefined)?.trim() ?? "newest";
+
     const where: Record<string, unknown> = q
       ? { $or: [{ name: new RegExp(escapeRegex(q), "i") }, { slug: new RegExp(escapeRegex(q), "i") }] }
       : {};
+    // Status filter — special value OUT_OF_STOCK is virtual (any active variant with 0 stock)
+    if (["ACTIVE", "DRAFT", "ARCHIVED"].includes(status)) where.status = status;
+    if (categoryId && mongoose.isValidObjectId(categoryId)) where.categoryId = categoryId;
+
+    // Sorting — computed post-fetch for stock/price (variant subdocuments), DB-sort otherwise
+    const SORTS: Record<string, Record<string, 1 | -1>> = {
+      newest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+      name: { name: 1 },
+      pricedesc: { "variants.price": -1 },
+    };
     const products = await Product.find(where)
-      .sort({ createdAt: -1 })
+      .sort(SORTS[sort] ?? { createdAt: -1 })
       .populate("categoryId")
       .lean<any[]>();
     // Admin view keeps ALL variants (even inactive), sorted by price asc
-    return ok(res, products.map((p) => {
+    let rows = products.map((p) => {
         const s = serializeProduct(p);
         return {
           ...s,
@@ -377,8 +392,55 @@ adminRouter.get(
               updatedAt: v.updatedAt,
             })),
         };
-      })
+      });
+    if (sort === "priceasc") rows = rows.sort((a, b) => (a.variants[0]?.price ?? 0) - (b.variants[0]?.price ?? 0));
+    if (sort === "stockasc") rows = rows.sort((a, b) => sumActiveStock(a.variants) - sumActiveStock(b.variants));
+    if (sort === "stockdesc") rows = rows.sort((a, b) => sumActiveStock(b.variants) - sumActiveStock(a.variants));
+    if (status === "OUT_OF_STOCK") rows = rows.filter((p) => sumActiveStock(p.variants) === 0);
+
+    return ok(res, rows);
+  })
+);
+
+/** Sum of stock across active variants — shared by sort + out-of-stock filter. */
+function sumActiveStock(variants: { isActive: boolean; stock: number }[]): number {
+  return variants.reduce((n, v) => n + (v.isActive ? v.stock : 0), 0);
+}
+
+/* ================= Products: bulk actions ================= */
+
+adminRouter.patch(
+  "/admin/products/bulk",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+
+    const body = (req.body ?? {}) as { ids?: unknown; action?: unknown };
+    const ids = Array.isArray(body.ids) ? body.ids.filter((i): i is string => typeof i === "string" && mongoose.isValidObjectId(i)) : [];
+    const action = typeof body.action === "string" ? body.action : "";
+    const STATUS_MAP: Record<string, string> = { activate: "ACTIVE", draft: "DRAFT", archive: "ARCHIVED" };
+    const nextStatus = STATUS_MAP[action];
+    if (!nextStatus) return fail(res, "VALIDATION", "action must be activate | draft | archive.", 400);
+    if (ids.length === 0) return fail(res, "VALIDATION", "Provide at least one valid product id.", 400);
+    if (ids.length > 200) return fail(res, "VALIDATION", "Bulk actions are limited to 200 products at a time.", 400);
+
+    const result = await Product.updateMany(
+      { _id: { $in: ids } },
+      { $set: { status: nextStatus, updatedAt: new Date() } }
     );
+
+    await audit(
+      {
+        actor: admin,
+        action: `admin.products.bulk.${action}`,
+        entityType: "Product",
+        entityId: "bulk",
+        metadata: { count: result.modifiedCount, ids },
+      },
+      req
+    );
+
+    return ok(res, { modified: result.modifiedCount, action: nextStatus });
   })
 );
 

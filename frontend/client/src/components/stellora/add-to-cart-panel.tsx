@@ -36,6 +36,7 @@ export function AddToCartPanel({
   const router = useRouter();
   const addToCart = useStore((s) => s.addToCart);
   const refreshCart = useStore((s) => s.refreshCart);
+  const setCartOpen = useStore((s) => s.setCartOpen);
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
   const [added, setAdded] = useState(false);
@@ -58,18 +59,11 @@ export function AddToCartPanel({
         router.push("/checkout");
         return;
       }
-      // Success morph on the primary CTA + inline confirmation strip.
+      // Success morph on the primary CTA + slide-over cart drawer.
       setAdded(true);
       window.clearTimeout(addedTimer.current);
       addedTimer.current = window.setTimeout(() => setAdded(false), 1800);
-      toast.cart({
-        name: productName ?? selected.name,
-        subtitle: selected.name,
-        image: imageUrl ?? null,
-        qty,
-        price: selected.price,
-        onView: () => router.push("/cart"),
-      });
+      setCartOpen(true);
     } else {
       toast.error(result.message ?? "Could not add to cart");
     }

@@ -25,10 +25,22 @@ export default function CartPage() {
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
   const [couponBusy, setCouponBusy] = useState(false);
+  // Free-shipping threshold comes from the ACTIVE shipping rate (admin-managed),
+  // falling back to 1999 while loading or if the endpoint is unavailable.
+  const [freeAbove, setFreeAbove] = useState(1999);
 
   useEffect(() => {
     refreshCart();
   }, [refreshCart]);
+
+  useEffect(() => {
+    fetch("/api/shipping")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok && j.data?.freeAbove) setFreeAbove(Number(j.data.freeAbove));
+      })
+      .catch(() => {});
+  }, []);
 
   const change = async (itemId: string, q: number) => {
     setBusyId(itemId);
@@ -111,7 +123,7 @@ export default function CartPage() {
   }
 
   const subtotal = cart.subtotal;
-  const FREE_SHIPPING_THRESHOLD = 1999;
+  const FREE_SHIPPING_THRESHOLD = freeAbove;
   const discount = coupon?.discount ?? 0;
   const payable = Math.max(subtotal - discount, 0);
   const progress = Math.min(100, Math.round((subtotal / FREE_SHIPPING_THRESHOLD) * 100));

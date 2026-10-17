@@ -26,9 +26,19 @@ interface CustomerRow {
   _count: { orders: number };
 }
 
+type CustomerFilter = "ALL" | "ACTIVE" | "DEACTIVATED" | "WITH_ORDERS";
+
+const FILTERS: { key: CustomerFilter; label: string }[] = [
+  { key: "ALL", label: "All" },
+  { key: "ACTIVE", label: "Active" },
+  { key: "DEACTIVATED", label: "Deactivated" },
+  { key: "WITH_ORDERS", label: "Has orders" },
+];
+
 export default function AdminCustomersPage() {
   const [rows, setRows] = useState<CustomerRow[] | null>(null);
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<CustomerFilter>("ALL");
 
   useEffect(() => {
     fetch("/api/admin/customers-list")
@@ -54,29 +64,67 @@ export default function AdminCustomersPage() {
 
   const filtered = rows?.filter(
     (r) =>
-      !q ||
-      r.name.toLowerCase().includes(q.toLowerCase()) ||
-      r.email.toLowerCase().includes(q.toLowerCase())
+      (filter === "ALL" ||
+        (filter === "ACTIVE" && r.isActive) ||
+        (filter === "DEACTIVATED" && !r.isActive) ||
+        (filter === "WITH_ORDERS" && r._count.orders > 0)) &&
+      (!q ||
+        r.name.toLowerCase().includes(q.toLowerCase()) ||
+        r.email.toLowerCase().includes(q.toLowerCase()))
   );
+
+  const stats = rows
+    ? {
+        total: rows.length,
+        active: rows.filter((r) => r.isActive).length,
+        withOrders: rows.filter((r) => r._count.orders > 0).length,
+      }
+    : null;
 
   if (!rows) return <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-3xl font-medium">Customers</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="font-serif text-3xl font-medium">Customers</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Privacy first: passwords are never displayed or accessible, and records are never deleted
+            (orders must remain accurate).
+          </p>
+        </div>
         <a href="/api/admin/export/customers" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
           <Download className="h-4 w-4" /> Export CSV
         </a>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Privacy first: passwords are never displayed or accessible, and records are never deleted
-          (orders must remain accurate).
-        </p>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email…" className="pl-9" />
+      {stats && (
+        <div className="flex flex-wrap gap-2 text-sm">
+          <span className="rounded-full border border-border bg-card px-3 py-1 tnum">{stats.total} total</span>
+          <span className="rounded-full border border-border bg-card px-3 py-1 tnum text-emerald-700 dark:text-emerald-400">{stats.active} active</span>
+          <span className="rounded-full border border-border bg-card px-3 py-1 tnum">{stats.withOrders} with orders</span>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative max-w-sm min-w-52 flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email…" className="pl-9" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              aria-pressed={filter === f.key}
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                filter === f.key ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="rounded-lg border border-border/70 bg-card">

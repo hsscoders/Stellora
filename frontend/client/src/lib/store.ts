@@ -27,6 +27,9 @@ interface StoreState {
   cart: CartViewData | null;
   cartLoading: boolean;
   wishlist: string[];
+  /** Slide-over cart drawer visibility (opens on add-to-cart + header icon). */
+  cartOpen: boolean;
+  setCartOpen: (open: boolean) => void;
   refreshCart: () => Promise<void>;
   addToCart: (variantId: string, quantity: number) => Promise<{ ok: boolean; message?: string }>;
   updateItem: (itemId: string, quantity: number) => Promise<void>;
@@ -39,6 +42,8 @@ export const useStore = create<StoreState>((set, get) => ({
   cart: null,
   cartLoading: false,
   wishlist: [],
+  cartOpen: false,
+  setCartOpen: (open) => set({ cartOpen: open }),
 
   refreshCart: async () => {
     set({ cartLoading: true });
