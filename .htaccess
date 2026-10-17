@@ -1,0 +1,10 @@
+# Stellora — cPanel Apache reverse proxy
+# Domain (mch.voterx.xyz) ke saare requests PM2 wale Next.js storefront
+# (:3000) ko proxy ho jaate hain. Storefront khud andar sab route karta hai:
+#   /api/*            -> backend Express (:4000)
+#   /uploads/*        -> backend media (:4000)
+#   /admin-console/*  -> admin Next app (:3001)
+# Isliye bas EK proxy kaafi hai — admin/api ke liye alag domain nahi chahiye.
+
+RewriteEngine On
+RewriteRule ^(.*)$ http://127.0.0.1:3000/$1 [P,L]
