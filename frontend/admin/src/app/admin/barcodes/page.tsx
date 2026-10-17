@@ -1,6 +1,7 @@
 "use client";
 
 import JsBarcode from "jsbarcode";
+import QRCode from "qrcode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -36,6 +37,7 @@ interface ApiVariant {
   sku: string;
   barcode: string | null;
   price: number | string;
+  compareAtPrice: number | string | null;
   isActive: boolean;
 }
 
@@ -54,6 +56,7 @@ interface LabelItem {
   sku: string;
   barcode: string | null;
   price: number;
+  mrp: number | null;
 }
 
 /* ------------------------------ print geometry ------------------------------ */
@@ -62,13 +65,14 @@ const MM = 96 / 25.4; // CSS px per mm
 const MAX_LABELS = 800;
 const CFG_KEY = "stellora_barcode_cfg_v2";
 const DEFAULT_KEY = "stellora_barcode_default_v1";
+const LAYOUTS_KEY = "stellora_barcode_layouts_v1";
 
 const clampN = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 const api = (path: string) => `/admin-console${path}`;
 
-const VIOLET = {
-  solid: "bg-violet-600 hover:bg-violet-700 text-white",
+const BRAND = {
+  solid: "bg-primary hover:bg-primary/90 text-white",
 };
 
 /** Physical papers (A-series + US) and continuous thermal rolls. */
@@ -110,10 +114,11 @@ interface BcCfg {
   margin: number; // page margin mm
   gap: number; // label gutter mm
   copies: number;
-  source: "sku" | "ean13";
+  source: "sku" | "ean13" | "qr";
   showName: boolean;
   showVariant: boolean;
   showPrice: boolean;
+  showMrp: boolean; // MRP strikethrough next to the sale price (beyond Stocky)
   showSku: boolean;
   showNumber: boolean; // human-readable digits under the bars
   storeName: string;
@@ -122,6 +127,7 @@ interface BcCfg {
   /* Stocky-style fine tuning */
   fontScale: number; // text size multiplier (0.7–1.5)
   barScale: number; // barcode height multiplier (0.5–1.6)
+  barWidth: number; // bar density multiplier (0.8–2.2) — beyond Stocky
   numScale: number; // barcode number size multiplier (0.8–1.6)
   fontWeight: "normal" | "bold";
   fontFamily: "Arial" | "Georgia" | "monospace";
@@ -141,6 +147,7 @@ const DEFAULT_CFG: BcCfg = {
   showName: true,
   showVariant: true,
   showPrice: true,
+  showMrp: false,
   showSku: false,
   showNumber: true,
   storeName: "",
@@ -148,6 +155,7 @@ const DEFAULT_CFG: BcCfg = {
   autoPrint: true,
   fontScale: 1,
   barScale: 1,
+  barWidth: 1,
   numScale: 1,
   fontWeight: "bold",
   fontFamily: "Arial",
@@ -254,12 +262,14 @@ function BarcodeSvg({
   height,
   fontSize,
   showNumber,
+  barWidth,
 }: {
   value: string;
   format: "CODE128" | "EAN13";
   height: number;
   fontSize: number;
   showNumber: boolean;
+  barWidth: number;
 }) {
   const ref = useRef<SVGSVGElement | null>(null);
   useEffect(() => {
@@ -273,15 +283,47 @@ function BarcodeSvg({
         textMargin: 0.4,
         margin: 0,
         height,
-        width: format === "EAN13" ? 1.6 : 1.15,
+        width: (format === "EAN13" ? 1.6 : 1.15) * barWidth,
         lineColor: "#000000",
         flat: format === "EAN13" && height < 22,
       });
     } catch {
       /* invalid charset — leave empty rather than crash the sheet */
     }
-  }, [value, format, height, fontSize, showNumber]);
+  }, [value, format, height, fontSize, showNumber, barWidth]);
   return <svg ref={ref} className="h-auto max-h-full max-w-full" />;
+}
+
+/** 2D QR label (beyond Stocky) — encodes the SKU/number as a scannable QR.
+    Renders an inline SVG string so the print popup clone keeps it. */
+function QrSvg({ value }: { value: string }) {
+  const [svg, setSvg] = useState("");
+  useEffect(() => {
+    let live = true;
+    QRCode.toString(value || " ", {
+      type: "svg",
+      margin: 0,
+      errorCorrectionLevel: "M",
+      color: { dark: "#000000", light: "#ffffff" },
+    })
+      .then((s) => {
+        if (live) setSvg(s);
+      })
+      .catch(() => {
+        if (live) setSvg("");
+      });
+    return () => {
+      live = false;
+    };
+  }, [value]);
+  if (!svg) return null;
+  return (
+    <span
+      aria-hidden
+      className="flex h-full w-full items-center justify-center [&_svg]:h-full [&_svg]:max-h-full [&_svg]:max-w-full [&_svg]:w-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
 }
 
 /* ------------------------------ label box ------------------------------ */
@@ -298,6 +340,7 @@ function LabelBox({
   labelH: number;
 }) {
   const value = cfg.source === "ean13" ? (item.barcode ?? "") : item.sku;
+  const isQr = cfg.source === "qr";
   const format = cfg.source === "ean13" ? "EAN13" : "CODE128";
   const pad = labelH >= 30 ? 1 : 0.6;
   const fs = cfg.fontScale || 1;
@@ -338,16 +381,24 @@ function LabelBox({
             {item.productName}
           </p>
         ) : null}
-        {cfg.showVariant || cfg.showPrice ? (
+        {cfg.showVariant || cfg.showPrice || (cfg.showMrp && item.mrp) ? (
           <p className="w-full truncate text-center leading-tight" style={{ fontSize: `${subFs}px`, fontFamily: fam }}>
             {cfg.showVariant ? item.variantName : ""}
-            {cfg.showVariant && cfg.showPrice ? " · " : ""}
+            {cfg.showVariant && (cfg.showPrice || (cfg.showMrp && item.mrp)) ? " · " : ""}
+            {cfg.showMrp && item.mrp ? (
+              <span style={{ textDecoration: "line-through", opacity: 0.55 }}>{formatINR(item.mrp)}</span>
+            ) : null}
+            {cfg.showMrp && item.mrp && cfg.showPrice ? " " : ""}
             {cfg.showPrice ? formatINR(item.price) : ""}
           </p>
         ) : null}
         <div className="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
           {value ? (
-            <BarcodeSvg value={value} format={format} height={barH} fontSize={numFs} showNumber={cfg.showNumber} />
+            isQr ? (
+              <QrSvg value={value} />
+            ) : (
+              <BarcodeSvg value={value} format={format} height={barH} fontSize={numFs} showNumber={cfg.showNumber} barWidth={cfg.barWidth || 1} />
+            )
           ) : (
             <span className="text-center leading-tight text-neutral-400" style={{ fontSize: `${subFs}px` }}>
               no number yet
@@ -377,7 +428,7 @@ function TemplateThumb({ id }: { id: string }) {
     />
   );
   const nameBar = <span className="block h-1.5 w-3/4 rounded-full bg-slate-700" />;
-  const priceBar = <span className="block h-1.5 w-1/3 self-end rounded-full bg-violet-500" />;
+  const priceBar = <span className="block h-1.5 w-1/3 self-end rounded-full bg-primary/80" />;
   return (
     <span className="flex h-12 w-full flex-col justify-between rounded-sm border border-slate-200 bg-white p-1.5">
       {id === "t2" ? (
@@ -423,14 +474,54 @@ export default function AdminBarcodesPage() {
   /* Stocky-style: per-variant quantity (default 1), plus preview zoom */
   const [perQty, setPerQty] = useState<Record<string, number>>({});
   const [zoom, setZoom] = useState(1); // 1 | 1.5 | 2 — preview only, print stays 1:1
+  /* Beyond Stocky: multiple named saved layouts (Stocky keeps only one default) */
+  const [layouts, setLayouts] = useState<{ id: string; name: string; cfg: BcCfg }[]>([]);
+  const [layoutName, setLayoutName] = useState("");
 
   /* Persisted print configuration — survives reloads and machines. */
   useEffect(() => {
     // localStorage config restore must happen post-mount; once per page load.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCfg(loadCfg());
+    try {
+      const raw = window.localStorage.getItem(LAYOUTS_KEY);
+      if (raw) setLayouts(JSON.parse(raw) as { id: string; name: string; cfg: BcCfg }[]);
+    } catch {
+      /* ignore corrupt layouts */
+    }
     setHydrated(true);
   }, []);
+
+  function persistLayouts(next: { id: string; name: string; cfg: BcCfg }[]) {
+    setLayouts(next);
+    try {
+      window.localStorage.setItem(LAYOUTS_KEY, JSON.stringify(next));
+    } catch {
+      /* private mode */
+    }
+  }
+
+  function saveLayout() {
+    const name = layoutName.trim();
+    if (!name) {
+      toast.error("Pehle layout ka naam likho");
+      return;
+    }
+    persistLayouts([...layouts.filter((l) => l.name !== name), { id: `l-${Date.now()}`, name, cfg }]);
+    setLayoutName("");
+    toast.success(`"${name}" layout saved`);
+  }
+
+  function applyLayout(id: string) {
+    const found = layouts.find((l) => l.id === id);
+    if (!found) return;
+    setCfg((c) => ({ ...c, ...found.cfg }));
+    toast.success(`"${found.name}" layout applied`);
+  }
+
+  function deleteLayout(id: string) {
+    persistLayouts(layouts.filter((l) => l.id !== id));
+  }
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -570,6 +661,9 @@ export default function AdminBarcodesPage() {
         if (!selected.has(v.id)) continue;
         if (q && !`${p.name} ${v.name} ${v.sku}`.toLowerCase().includes(q)) continue;
         const qty = Math.min(Math.max(Math.round(perQty[v.id] ?? cfg.copies ?? 1), 1), 100);
+        const mrpRaw = v.compareAtPrice == null ? null : Number(v.compareAtPrice);
+        const price = Number(v.price);
+        const mrp = mrpRaw != null && mrpRaw > price ? mrpRaw : null;
         for (let i = 0; i < qty; i += 1) {
           out.push({
             key: `${v.id}-${i}`,
@@ -578,7 +672,8 @@ export default function AdminBarcodesPage() {
             variantName: v.name,
             sku: v.sku,
             barcode: v.barcode ?? null,
-            price: Number(v.price),
+            price,
+            mrp,
           });
         }
       }
@@ -763,12 +858,12 @@ export default function AdminBarcodesPage() {
 
       {/* header */}
       <div className="no-print flex flex-wrap items-center gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-600">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
           <Barcode className="h-5 w-5" />
         </span>
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight sm:text-[26px]">Print Labels</h1>
-          <p className="text-[13px] text-slate-500">
+          <p className="text-[13px] text-muted-foreground">
             Design numbered barcode labels — commercial sheet stocks, thermal rolls, or a custom size.
           </p>
         </div>
@@ -786,11 +881,11 @@ export default function AdminBarcodesPage() {
         {/* ============ LEFT — configuration column ============ */}
         <section className="no-print min-w-0 space-y-4">
           {/* --- Configuration (paper + source + auto print) --- */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <p className="mb-3 text-[14px] font-bold">Configuration</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="bc-paper" className="text-[12px] font-semibold text-slate-600">
+                <Label htmlFor="bc-paper" className="text-[12px] font-semibold text-foreground/80">
                   Paper size:
                 </Label>
                 <select
@@ -814,7 +909,7 @@ export default function AdminBarcodesPage() {
                     }
                     set("paper", v as PaperId);
                   }}
-                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[12.5px] outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  className="h-9 w-full rounded-lg border border-border bg-card px-2 text-[12.5px] outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                 >
                   {/* Stocky-exact commercial sheet stocks first */}
                   <optgroup label="Commercial label sheets">
@@ -834,14 +929,14 @@ export default function AdminBarcodesPage() {
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="bc-label" className="text-[12px] font-semibold text-slate-600">
+                <Label htmlFor="bc-label" className="text-[12px] font-semibold text-foreground/80">
                   Label size:
                 </Label>
                 <select
                   id="bc-label"
                   value={cfg.label}
                   onChange={(e) => set("label", e.target.value as LabelId)}
-                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-[13px] outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                  className="h-9 w-full rounded-lg border border-border bg-card px-2 text-[13px] outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                 >
                   {LABELS.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -850,38 +945,38 @@ export default function AdminBarcodesPage() {
                   ))}
                 </select>
                 {/* auto print — Stocky parity: the print dialog fires itself */}
-                <label className="flex cursor-pointer items-center gap-2 pt-2 text-[13px] font-semibold text-slate-700">
+                <label className="flex cursor-pointer items-center gap-2 pt-2 text-[13px] font-semibold text-foreground">
                   <input
                     type="checkbox"
                     checked={cfg.autoPrint}
                     onChange={(e) => set("autoPrint", e.target.checked)}
-                    className="h-4 w-4 accent-violet-600"
+                    className="h-4 w-4 accent-primary"
                   />
                   Auto Print
-                  <span className="text-[11px] font-normal text-slate-400">
+                  <span className="text-[11px] font-normal text-muted-foreground">
                     (dialog opens automatically)
                   </span>
                 </label>
-                {/* barcode content */}
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={cfg.source === "sku" ? "default" : "outline"}
-                    className={`h-8 rounded-lg text-[11.5px] font-semibold ${cfg.source === "sku" ? VIOLET.solid : ""}`}
-                    onClick={() => set("source", "sku")}
-                  >
-                    SKU · CODE128
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={cfg.source === "ean13" ? "default" : "outline"}
-                    className={`h-8 rounded-lg text-[11.5px] font-semibold ${cfg.source === "ean13" ? VIOLET.solid : ""}`}
-                    onClick={() => set("source", "ean13")}
-                  >
-                    Number · EAN-13
-                  </Button>
+                {/* barcode content — 3 symbologies: linear, retail EAN, QR */}
+                <div className="grid grid-cols-3 gap-1.5 pt-2">
+                  {(
+                    [
+                      ["sku", "SKU · CODE128"],
+                      ["ean13", "Number · EAN-13"],
+                      ["qr", "QR · 2D code"],
+                    ] as const
+                  ).map(([val, lbl]) => (
+                    <Button
+                      key={val}
+                      type="button"
+                      size="sm"
+                      variant={cfg.source === val ? "default" : "outline"}
+                      className={`h-8 rounded-lg px-1 text-[10.5px] font-semibold ${cfg.source === val ? BRAND.solid : ""}`}
+                      onClick={() => set("source", val)}
+                    >
+                      {lbl}
+                    </Button>
+                  ))}
                 </div>
                 {cfg.source === "ean13" ? (
                   <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
@@ -907,13 +1002,19 @@ export default function AdminBarcodesPage() {
                       <RotateCcw className="h-3.5 w-3.5" /> Regenerate
                     </Button>
                   </div>
-                ) : null}
+                ) : (
+                  <p className="pt-0.5 text-[10.5px] leading-snug text-muted-foreground">
+                    {cfg.source === "qr"
+                      ? "QR labels scan from any phone camera — no EAN needed."
+                      : "Prints the SKU as a CODE128 barcode — works with every USB scanner."}
+                  </p>
+                )}
               </div>
             </div>
 
             {/* custom sizes + margins */}
             {(cfg.paper === "custom" || cfg.label === "custom") && (
-              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 sm:grid-cols-4">
+              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3 sm:grid-cols-4">
                 {cfg.paper === "custom" && (
                   <>
                     <div className="space-y-1">
@@ -940,7 +1041,7 @@ export default function AdminBarcodesPage() {
                 )}
               </div>
             )}
-            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3 sm:grid-cols-4">
               <div className="space-y-1">
                 <Label htmlFor="bc-margin" className="text-[11px]">Margin (mm)</Label>
                 <Input id="bc-margin" type="number" min={0} max={15} value={cfg.margin} onChange={(e) => set("margin", Number(e.target.value))} inputMode="numeric" className="h-8 rounded-lg" />
@@ -962,14 +1063,14 @@ export default function AdminBarcodesPage() {
           </div>
 
           {/* --- Label design (templates + toggles + fine tuning) --- */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-[14px] font-bold">Label design</p>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-8 rounded-lg border-violet-300 px-3 text-[11.5px] font-semibold text-violet-700 hover:bg-violet-50"
+                className="h-8 rounded-lg border-primary/40 px-3 text-[11.5px] font-semibold text-primary hover:bg-accent"
                 onClick={saveAsDefault}
               >
                 Save as default
@@ -988,12 +1089,12 @@ export default function AdminBarcodesPage() {
                     onClick={() => setCfg((c) => ({ ...c, ...t.patch }))}
                     className={`flex flex-col gap-1.5 rounded-xl border p-2 text-left transition ${
                       active
-                        ? "border-violet-500 bg-violet-50/60 ring-2 ring-violet-200"
-                        : "border-slate-200 hover:border-violet-300 hover:bg-slate-50"
+                        ? "border-primary bg-accent/60 ring-2 ring-primary/20"
+                        : "border-border hover:border-primary/40 hover:bg-muted"
                     }`}
                   >
                     <TemplateThumb id={t.id} />
-                    <span className={`line-clamp-2 text-[10px] font-semibold leading-tight ${active ? "text-violet-700" : "text-slate-500"}`}>
+                    <span className={`line-clamp-2 text-[10px] font-semibold leading-tight ${active ? "text-primary" : "text-muted-foreground"}`}>
                       {t.short}
                     </span>
                   </button>
@@ -1002,13 +1103,67 @@ export default function AdminBarcodesPage() {
               <button
                 type="button"
                 onClick={() => setAdvanced(true)}
-                className={`flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-2 text-slate-400 transition hover:border-violet-300 hover:text-violet-600 ${
-                  advanced ? "border-violet-400 text-violet-600" : ""
+                className={`flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-2 text-muted-foreground transition hover:border-primary/40 hover:text-primary ${
+                  advanced ? "border-primary/60 text-primary" : ""
                 }`}
               >
                 <Settings2 className="h-5 w-5" />
                 <span className="text-[10px] font-semibold">Custom</span>
               </button>
+            </div>
+
+            {/* saved layouts — beyond Stocky: name and reuse whole designs */}
+            <div className="mt-3 border-t border-border/60 pt-3">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={layoutName}
+                  onChange={(e) => setLayoutName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      saveLayout();
+                    }
+                  }}
+                  placeholder="Layout name — e.g. Jewellery tags"
+                  className="h-8 flex-1 rounded-lg text-[12px]"
+                  aria-label="New layout name"
+                  maxLength={28}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className={`h-8 shrink-0 rounded-lg px-3 text-[11.5px] font-semibold ${BRAND.solid}`}
+                  onClick={saveLayout}
+                >
+                  Save layout
+                </Button>
+              </div>
+              {layouts.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {layouts.map((l) => (
+                    <span
+                      key={l.id}
+                      className={`inline-flex items-center overflow-hidden rounded-full border text-[11px] font-semibold transition ${
+                        cfg === l.cfg
+                          ? "border-primary bg-accent text-primary"
+                          : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"
+                      }`}
+                    >
+                      <button type="button" className="px-2.5 py-1" onClick={() => applyLayout(l.id)}>
+                        {l.name}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete layout ${l.name}`}
+                        className="border-l border-inherit px-1.5 py-1 text-muted-foreground/60 transition hover:bg-rose-50 hover:text-rose-600"
+                        onClick={() => deleteLayout(l.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* display toggles — Stocky's purple checkboxes */}
@@ -1018,17 +1173,18 @@ export default function AdminBarcodesPage() {
                   ["showName", "Display product name"],
                   ["showNumber", "Display barcode number"],
                   ["showPrice", "Display Price"],
+                  ["showMrp", "Display MRP (strikethrough)"],
                   ["showVariant", "Display variant"],
                   ["showSku", "Display SKU text"],
                   ["borders", "Cut lines"],
                 ] as const
               ).map(([key, text]) => (
-                <label key={key} className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium text-slate-700">
+                <label key={key} className="flex cursor-pointer items-center gap-2 text-[12.5px] font-medium text-foreground">
                   <input
                     type="checkbox"
                     checked={cfg[key]}
                     onChange={(e) => set(key, e.target.checked)}
-                    className="h-4 w-4 accent-violet-600"
+                    className="h-4 w-4 accent-primary"
                   />
                   {text}
                 </label>
@@ -1036,11 +1192,11 @@ export default function AdminBarcodesPage() {
             </div>
 
             {/* fine tuning — Stocky's numeric inputs + selects */}
-            <details open={advanced} className="mt-3 rounded-lg border border-slate-200">
-              <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-bold uppercase tracking-wide text-slate-500">
+            <details open={advanced} className="mt-3 rounded-lg border border-border">
+              <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-bold uppercase tracking-wide text-muted-foreground">
                 Fine tuning
               </summary>
-              <div className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-4">
+              <div className="grid gap-3 border-t border-border/60 p-3 sm:grid-cols-4">
                 <div className="space-y-1">
                   <Label htmlFor="bc-bs" className="text-[11px]">Barcode height:</Label>
                   <Input id="bc-bs" type="number" min={0.5} max={1.6} step={0.05} value={cfg.barScale} onChange={(e) => set("barScale", Number(e.target.value))} inputMode="decimal" className="h-8 rounded-lg" />
@@ -1048,6 +1204,10 @@ export default function AdminBarcodesPage() {
                 <div className="space-y-1">
                   <Label htmlFor="bc-fs" className="text-[11px]">Font size:</Label>
                   <Input id="bc-fs" type="number" min={0.7} max={1.5} step={0.05} value={cfg.fontScale} onChange={(e) => set("fontScale", Number(e.target.value))} inputMode="decimal" className="h-8 rounded-lg" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="bc-bw" className="text-[11px]">Bar density:</Label>
+                  <Input id="bc-bw" type="number" min={0.8} max={2.2} step={0.05} value={cfg.barWidth} onChange={(e) => set("barWidth", Number(e.target.value))} inputMode="decimal" className="h-8 rounded-lg" />
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="bc-ns" className="text-[11px]">Barcode number size:</Label>
@@ -1059,7 +1219,7 @@ export default function AdminBarcodesPage() {
                     id="bc-fw"
                     value={cfg.fontWeight}
                     onChange={(e) => set("fontWeight", e.target.value as BcCfg["fontWeight"])}
-                    className="h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-[12px] outline-none focus:border-violet-400"
+                    className="h-8 w-full rounded-lg border border-border bg-card px-2 text-[12px] outline-none focus:border-primary/60"
                   >
                     <option value="normal">Normal</option>
                     <option value="bold">Bold</option>
@@ -1071,7 +1231,7 @@ export default function AdminBarcodesPage() {
                     id="bc-ff"
                     value={cfg.fontFamily}
                     onChange={(e) => set("fontFamily", e.target.value as BcCfg["fontFamily"])}
-                    className="h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-[12px] outline-none focus:border-violet-400"
+                    className="h-8 w-full rounded-lg border border-border bg-card px-2 text-[12px] outline-none focus:border-primary/60"
                   >
                     <option value="Arial">Arial</option>
                     <option value="Georgia">Georgia</option>
@@ -1093,7 +1253,7 @@ export default function AdminBarcodesPage() {
             </details>
 
             {/* selection actions + print CTA */}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-3">
               <Button type="button" variant="outline" size="sm" className="h-8 rounded-lg text-[11.5px]" onClick={selectAllFiltered}>
                 <CheckSquare className="h-3.5 w-3.5" /> Select all filtered ({totalLabelable})
               </Button>
@@ -1107,10 +1267,10 @@ export default function AdminBarcodesPage() {
           </div>
 
           {/* --- Product search + picker (Stocky "Product Name" card) --- */}
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <p className="mb-3 text-[14px] font-bold">Product Name</p>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -1120,7 +1280,7 @@ export default function AdminBarcodesPage() {
               />
             </div>
 
-            <div className="stellora-scroll mt-3 max-h-72 overflow-y-auto rounded-lg border border-slate-100">
+            <div className="stellora-scroll mt-3 max-h-72 overflow-y-auto rounded-lg border border-border/60">
               {loading && products === null ? (
                 <div className="space-y-2 p-4">
                   {Array.from({ length: 5 }).map((_, i) => (
@@ -1129,16 +1289,16 @@ export default function AdminBarcodesPage() {
                 </div>
               ) : filtered.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 p-8 text-center">
-                  <PackageOpen className="h-8 w-8 text-slate-300" />
-                  <p className="text-[13px] text-slate-500">No products match the filter.</p>
+                  <PackageOpen className="h-8 w-8 text-muted-foreground/70" />
+                  <p className="text-[13px] text-muted-foreground">No products match the filter.</p>
                 </div>
               ) : (
-                <ul className="divide-y divide-slate-100">
+                <ul className="divide-y divide-border/60">
                   {filtered.map(({ p, vs }) => (
                     <li key={p.id} className="px-3.5 py-2.5">
                       <div className="flex items-center justify-between gap-2">
                         <p className="min-w-0 truncate text-[13px] font-semibold">{p.name}</p>
-                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
                           {vs.length} variant{vs.length === 1 ? "" : "s"}
                         </span>
                       </div>
@@ -1154,8 +1314,8 @@ export default function AdminBarcodesPage() {
                               onClick={() => toggleVariant(v.id)}
                               className={`rounded-full border px-2 py-0.5 font-mono text-[10px] transition ${
                                 on
-                                  ? "border-violet-500 bg-violet-50 text-violet-700"
-                                  : "border-slate-200 text-slate-500 hover:border-violet-300 hover:bg-violet-50/50"
+                                  ? "border-primary bg-accent text-primary"
+                                  : "border-border text-muted-foreground hover:border-primary/40 hover:bg-accent/50"
                               }`}
                             >
                               {v.sku}
@@ -1179,10 +1339,10 @@ export default function AdminBarcodesPage() {
           <div className="xl:sticky xl:top-6 space-y-4">
             {/* --- Selected products quantity table --- */}
             {selectedRows.length > 0 && (
-              <div className="no-print rounded-xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+              <div className="no-print rounded-xl border border-border bg-card shadow-sm">
+                <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
                   <p className="text-[13px] font-bold">
-                    Selected Products <span className="font-normal text-slate-400">({selectedRows.length})</span>
+                    Selected Products <span className="font-normal text-muted-foreground">({selectedRows.length})</span>
                   </p>
                   <Button
                     type="button"
@@ -1197,27 +1357,27 @@ export default function AdminBarcodesPage() {
                 <div className="stellora-scroll max-h-56 overflow-y-auto">
                   <table className="w-full text-[12.5px]">
                     <thead>
-                      <tr className="border-b border-slate-100 text-left text-[10.5px] uppercase tracking-wide text-slate-400">
+                      <tr className="border-b border-border/60 text-left text-[10.5px] uppercase tracking-wide text-muted-foreground">
                         <th className="px-4 py-1.5 font-bold">Product Name</th>
                         <th className="px-4 py-1.5 font-bold">Code Product</th>
                         <th className="px-4 py-1.5 text-center font-bold">Quantity</th>
                         <th className="px-4 py-1.5 text-center font-bold">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-border/60">
                       {selectedRows.map((r) => (
                         <tr key={r.variantId}>
                           <td className="max-w-44 truncate px-4 py-1.5 font-medium">
                             {r.productName}
-                            <span className="ml-1 text-[10.5px] text-slate-400">· {r.variantName}</span>
+                            <span className="ml-1 text-[10.5px] text-muted-foreground">· {r.variantName}</span>
                           </td>
-                          <td className="px-4 py-1.5 font-mono text-[11px] text-slate-500">{r.sku}</td>
+                          <td className="px-4 py-1.5 font-mono text-[11px] text-muted-foreground">{r.sku}</td>
                           <td className="px-2 py-1.5">
-                            <div className="mx-auto flex w-fit items-center rounded-lg border border-slate-200">
+                            <div className="mx-auto flex w-fit items-center rounded-lg border border-border">
                               <button
                                 type="button"
                                 aria-label={`Decrease quantity of ${r.productName}`}
-                                className="flex h-7 w-7 items-center justify-center rounded-l-lg text-slate-500 transition hover:bg-slate-50"
+                                className="flex h-7 w-7 items-center justify-center rounded-l-lg text-muted-foreground transition hover:bg-muted"
                                 onClick={() => setQty(r.variantId, r.qty - 1)}
                               >
                                 <Minus className="h-3 w-3" />
@@ -1234,7 +1394,7 @@ export default function AdminBarcodesPage() {
                               <button
                                 type="button"
                                 aria-label={`Increase quantity of ${r.productName}`}
-                                className="flex h-7 w-7 items-center justify-center rounded-r-lg text-slate-500 transition hover:bg-slate-50"
+                                className="flex h-7 w-7 items-center justify-center rounded-r-lg text-muted-foreground transition hover:bg-muted"
                                 onClick={() => setQty(r.variantId, r.qty + 1)}
                               >
                                 <Plus className="h-3 w-3" />
@@ -1245,7 +1405,7 @@ export default function AdminBarcodesPage() {
                             <button
                               type="button"
                               aria-label={`Remove ${r.productName} ${r.variantName} from labels`}
-                              className="rounded-md p-1 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                              className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-50 hover:text-rose-600"
                               onClick={() => removeRow(r.variantId)}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -1282,7 +1442,7 @@ export default function AdminBarcodesPage() {
             ) : null}
 
             {/* --- Live preview on the dotted grid --- */}
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[14px] font-bold">Live preview</p>
                 <div className="flex items-center gap-1" role="group" aria-label="Preview zoom">
@@ -1294,8 +1454,8 @@ export default function AdminBarcodesPage() {
                       onClick={() => setZoom(z)}
                       className={`tnum rounded-lg border px-2.5 py-1 text-[11px] font-bold transition ${
                         zoom === z
-                          ? "border-violet-500 bg-violet-600 text-white"
-                          : "border-slate-200 text-slate-500 hover:border-violet-300 hover:text-violet-600"
+                          ? "border-primary bg-primary text-white"
+                          : "border-border text-muted-foreground hover:border-primary/40 hover:text-primary"
                       }`}
                     >
                       {z * 100}%
@@ -1305,10 +1465,10 @@ export default function AdminBarcodesPage() {
               </div>
 
               {labels.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 py-16 text-center">
-                  <Barcode className="h-9 w-9 text-slate-300" />
-                  <p className="text-[13px] font-semibold text-slate-500">No labels selected</p>
-                  <p className="text-[11px] text-slate-400">
+                <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border py-16 text-center">
+                  <Barcode className="h-9 w-9 text-muted-foreground/70" />
+                  <p className="text-[13px] font-semibold text-muted-foreground">No labels selected</p>
+                  <p className="text-[11px] text-muted-foreground">
                     Pick variants below — every selected SKU gets a printed, scannable label.
                   </p>
                 </div>
@@ -1316,7 +1476,7 @@ export default function AdminBarcodesPage() {
                 <>
                   {/* dotted paper mat (Stocky's preview grid) */}
                   <div
-                    className="relative overflow-hidden rounded-xl border border-slate-200 p-4"
+                    className="relative overflow-hidden rounded-xl border border-border p-4"
                     style={{
                       backgroundImage: "radial-gradient(circle, #cbd5e1 1px, transparent 1px)",
                       backgroundSize: "14px 14px",
@@ -1326,7 +1486,7 @@ export default function AdminBarcodesPage() {
                     <div className="flex items-center justify-center">
                       <div className="bc-frame" style={{ width: pageW * MM * scale, height: pageH * MM * scale }}>
                         <div
-                          className="bc-sheet bg-white shadow-lg shadow-slate-300/60"
+                          className="bc-sheet bg-white shadow-lg shadow-foreground/20"
                           style={{
                             width: `${pageW}mm`,
                             height: `${pageH}mm`,
@@ -1353,7 +1513,7 @@ export default function AdminBarcodesPage() {
                       </div>
                     </div>
                     {/* size chip */}
-                    <span className="tnum absolute bottom-3 left-3 rounded-md bg-white px-2 py-1 text-[10.5px] font-bold text-slate-600 shadow-sm">
+                    <span className="tnum absolute bottom-3 left-3 rounded-md bg-card px-2 py-1 text-[10.5px] font-bold text-foreground/80 shadow-sm">
                       {labelW} × {labelH} mm · {(labelW / 25.4).toFixed(1)} × {(labelH / 25.4).toFixed(1)} in
                     </span>
                   </div>
@@ -1391,8 +1551,8 @@ export default function AdminBarcodesPage() {
 
                   {/* print row */}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-[11.5px] text-slate-500">
-                      <span className="tnum font-bold text-slate-700">{labels.length}</span> label{labels.length === 1 ? "" : "s"} ·{" "}
+                    <p className="text-[11.5px] text-muted-foreground">
+                      <span className="tnum font-bold text-foreground">{labels.length}</span> label{labels.length === 1 ? "" : "s"} ·{" "}
                       <span className="tnum">{cols}×{rows}</span> per sheet ·{" "}
                       <span className="tnum">{sheetPages.length}</span> sheet{sheetPages.length === 1 ? "" : "s"}
                       {labels.length >= MAX_LABELS ? " (capped)" : ""}
@@ -1401,12 +1561,12 @@ export default function AdminBarcodesPage() {
                       size="sm"
                       disabled={overflow}
                       onClick={printPopup}
-                      className={`h-9 rounded-lg px-5 text-[13px] font-bold shadow-md shadow-violet-600/20 ${VIOLET.solid}`}
+                      className={`h-9 rounded-lg px-5 text-[13px] font-bold shadow-md shadow-primary/20 ${BRAND.solid}`}
                     >
                       <Printer className="h-4 w-4" /> Print labels
                     </Button>
                   </div>
-                  <p className="mt-1.5 text-[10.5px] text-slate-400">
+                  <p className="mt-1.5 text-[10.5px] text-muted-foreground">
                     Print at 100% scale, margins “None”, paper “{paper.name}”
                     {cfg.autoPrint ? " — the print dialog opens automatically." : " — then press Ctrl+P in the popup."}
                   </p>

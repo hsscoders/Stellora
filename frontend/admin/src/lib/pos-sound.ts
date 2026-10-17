@@ -36,26 +36,31 @@ interface ToneStep {
 }
 
 const RECIPES: Record<PosSound, ToneStep[]> = {
-  // classic scanner "beep" — loud and unmistakable
-  scan: [{ freq: 1250, dur: 0.1, delay: 0, type: "square", gain: 0.2 }],
-  // soft blip when an item lands on the bill
-  add: [{ freq: 740, dur: 0.07, delay: 0, type: "sine", gain: 0.24 }],
+  // Stocky-style scanner beep — one clean, crisp, unmistakable tone
+  // (pure sine, no square-wave harshness, fast attack, tight tail)
+  scan: [{ freq: 1400, dur: 0.09, delay: 0, type: "sine", gain: 0.34 }],
+  // soft blip when an item lands on the bill (a fifth below the scan beep)
+  add: [{ freq: 880, dur: 0.07, delay: 0, type: "sine", gain: 0.28 }],
   // low blip when removing a line
-  remove: [{ freq: 500, dur: 0.08, delay: 0, type: "sine", gain: 0.18 }],
-  // dull buzz for stock / network errors
-  error: [{ freq: 210, dur: 0.2, delay: 0, type: "sawtooth", gain: 0.22 }],
-  // two-note chime when a sale completes
+  remove: [{ freq: 420, dur: 0.09, delay: 0, type: "sine", gain: 0.22 }],
+  // dull double-buzz for stock / network errors — impossible to confuse
+  // with the success chime even in a noisy shop
+  error: [
+    { freq: 230, dur: 0.14, delay: 0, type: "sawtooth", gain: 0.26 },
+    { freq: 180, dur: 0.16, delay: 0.18, type: "sawtooth", gain: 0.22 },
+  ],
+  // bright two-note chime when a sale completes (Stocky's happy "ding")
   success: [
-    { freq: 523, dur: 0.1, delay: 0, type: "sine", gain: 0.24 },
-    { freq: 784, dur: 0.18, delay: 0.11, type: "sine", gain: 0.24 },
+    { freq: 659, dur: 0.09, delay: 0, type: "sine", gain: 0.3 },
+    { freq: 988, dur: 0.2, delay: 0.1, type: "sine", gain: 0.3 },
   ],
   // subtle tick for UI clicks (payment method, hold, etc.)
-  click: [{ freq: 880, dur: 0.035, delay: 0, type: "triangle", gain: 0.12 }],
+  click: [{ freq: 1000, dur: 0.03, delay: 0, type: "triangle", gain: 0.14 }],
   // bright three-note chime for the sound-test button
   test: [
-    { freq: 880, dur: 0.09, delay: 0, type: "sine", gain: 0.26 },
-    { freq: 1175, dur: 0.09, delay: 0.1, type: "sine", gain: 0.26 },
-    { freq: 1568, dur: 0.16, delay: 0.2, type: "sine", gain: 0.28 },
+    { freq: 880, dur: 0.09, delay: 0, type: "sine", gain: 0.28 },
+    { freq: 1175, dur: 0.09, delay: 0.1, type: "sine", gain: 0.28 },
+    { freq: 1568, dur: 0.16, delay: 0.2, type: "sine", gain: 0.3 },
   ],
 };
 
