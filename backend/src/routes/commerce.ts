@@ -9,6 +9,7 @@ import { validateCoupon } from "../services/pricing";
 import { getCartView, resolveCart } from "../services/cart";
 import { getLoyaltySnapshot } from "../services/loyalty";
 import { money } from "../lib/money";
+import { getDeliveryConfig, resolvePartner, buildTrackingUrl, estimateDeliveryIso } from "../services/delivery";
 
 export const commerceRouter = Router();
 
@@ -55,12 +56,12 @@ commerceRouter.get(
   handle(async (req, res) => {
     const user = await requireUser(req);
     const all = await Order.find({ userId: user.id }).sort({ createdAt: -1 }).lean<any[]>();
-    return ok(res, all.map((o) => {
+    return ok(res, await Promise.all(all.map(async (o) => {
         const itemCount = (o.items ?? []).length;
         // Full order shape with the first 3 items (preview thumbnails)
-        const detail = serializeOrderDetail(o);
+        const detail = await serializeOrderDetail(o);
         return { ...detail, items: detail.items.slice(0, 3), itemCount, preview: detail.items[0]?.productName ?? null };
-      })
+      }))
     );
   })
 );
@@ -74,11 +75,12 @@ commerceRouter.get(
     const orderNumber = String(req.params.orderNumber);
     const order = await Order.findOne({ orderNumber, userId: user.id }).lean<any>();
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
-    return ok(res, serializeOrderDetail(order));
+    return ok(res, await serializeOrderDetail(order));
   })
 );
 
-export function serializeOrderDetail(o: any) {
+export async function serializeOrderDetail(o: any) {
+  const cfg = await getDeliveryConfig();
   return {
     id: String(o._id),
     orderNumber: o.orderNumber,
@@ -143,11 +145,20 @@ export function serializeOrderDetail(o: any) {
       note: e.note ?? null,
       createdAt: e.createdAt,
     })),
+    estimatedDelivery:
+      o.status === "DELIVERED" || o.status === "CANCELLED"
+        ? null
+        : estimateDeliveryIso(cfg.etaDays, o.shipment?.shippedAt ?? o.createdAt),
     shipment: o.shipment
       ? {
           id: String(o.shipment._id ?? "shipment"),
-          carrier: o.shipment.carrier ?? null,
+          carrier: resolvePartner(cfg, o.shipment.carrier ?? null).name,
+          partnerId: resolvePartner(cfg, o.shipment.carrier ?? null).id,
           trackingNumber: o.shipment.trackingNumber ?? null,
+          trackingUrl: buildTrackingUrl(
+            resolvePartner(cfg, o.shipment.carrier ?? null),
+            o.shipment.trackingNumber ?? null
+          ),
           status: o.shipment.status,
           shippedAt: o.shipment.shippedAt ?? null,
           deliveredAt: o.shipment.deliveredAt ?? null,
@@ -191,14 +202,23 @@ commerceRouter.post(
         404
       );
     }
+    const cfg = await getDeliveryConfig();
+    const partner = resolvePartner(cfg, order.shipment?.carrier ?? null);
+    const trackingUrl = buildTrackingUrl(partner, order.shipment?.trackingNumber ?? null);
     return ok(res, {
       orderNumber: order.orderNumber,
       status: order.status,
       paymentStatus: order.paymentStatus,
       placedAt: order.createdAt,
       shippedAt: order.shipment?.shippedAt ?? null,
-      carrier: order.shipment?.carrier ?? null,
+      carrier: partner.name,
+      partnerId: partner.id,
       trackingNumber: order.shipment?.trackingNumber ?? null,
+      trackingUrl,
+      estimatedDelivery:
+        order.status === "DELIVERED" || order.status === "CANCELLED"
+          ? null
+          : estimateDeliveryIso(cfg.etaDays, order.shipment?.shippedAt ?? order.createdAt),
       events: (order.events ?? []).map((e: any) => ({ status: e.status, note: e.note, at: e.createdAt })),
     });
   })

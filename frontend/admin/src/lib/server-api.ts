@@ -203,9 +203,12 @@ export type AdminOrderDetail = {
     lineTotal: number;
   }[];
   events: { id: string; status: string; note: string | null; createdAt: string }[];
+  estimatedDelivery: string | null;
   shipment: {
     carrier: string | null;
+    partnerId: string | null;
     trackingNumber: string | null;
+    trackingUrl: string | null;
     status: string;
     shippedAt: string | null;
     deliveredAt: string | null;

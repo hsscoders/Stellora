@@ -192,10 +192,13 @@ export type ApiOrderDetail = {
   }[];
   payments: { id: string; method: string; status: string; amount: number }[];
   events: { id: string; status: string; note: string | null; createdAt: string }[];
+  estimatedDelivery: string | null;
   shipment: {
     id: string;
     carrier: string | null;
+    partnerId: string | null;
     trackingNumber: string | null;
+    trackingUrl: string | null;
     status: string;
     shippedAt: string | null;
     deliveredAt: string | null;

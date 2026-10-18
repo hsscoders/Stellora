@@ -175,7 +175,7 @@ storefrontRouter.get(
 // masked /admin/payments/* endpoints and must NEVER be exposed publicly.
 // seo.config likewise has its own dedicated endpoint (/api/seo).
 const isInternalSettingKey = (key: string) =>
-  key.startsWith("payment.") || key === "seo.config";
+  key.startsWith("payment.") || key === "seo.config" || key.startsWith("delivery.api");
 
 storefrontRouter.get(
   "/settings",

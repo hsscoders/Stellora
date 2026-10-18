@@ -409,14 +409,22 @@ export async function transitionOrderStatus(
       );
 
       if (nextStatus === "SHIPPED") {
+        // NOTE: replace the embedded shipment doc instead of dotted-path $set.
+        // New orders store `shipment: null`, and MongoDB cannot create fields
+        // inside a null value ("Cannot create field 'carrier' in element
+        // {shipment: null}") — writing the whole subdoc works for both null
+        // and previously-populated shipments.
         await Order.updateOne(
           { _id: orderId },
           {
             $set: {
-              "shipment.status": "SHIPPED",
-              "shipment.carrier": opts.carrier ?? null,
-              "shipment.trackingNumber": opts.trackingNumber ?? null,
-              "shipment.shippedAt": now,
+              shipment: {
+                status: "SHIPPED",
+                carrier: opts.carrier ?? null,
+                trackingNumber: opts.trackingNumber ?? null,
+                shippedAt: now,
+                deliveredAt: null,
+              },
             },
           },
           { session }

@@ -23,6 +23,10 @@ type SettingField = {
   rows?: number;
   /** Render a datetime-local picker; stored as ISO in the DB. */
   datetime?: boolean;
+  /** Render a dropdown with these options. */
+  select?: { value: string; label: string }[];
+  /** Mask the input (API keys) — value is still stored as plain text server-side. */
+  secret?: boolean;
 };
 
 type SettingGroup = { title: string; fields: SettingField[] };
@@ -96,6 +100,55 @@ const GROUPS: SettingGroup[] = [
         key: "automation.staleOrderHours",
         label: "Auto-cancel unconfirmed orders after (hours)",
         placeholder: "24",
+      },
+    ],
+  },
+  {
+    title: "Delivery partner",
+    fields: [
+      {
+        key: "delivery.enabled",
+        label: "Delivery partner tracking",
+        select: [
+          { value: "true", label: "Enabled (recommended)" },
+          { value: "false", label: "Disabled" },
+        ],
+      },
+      {
+        key: "delivery.partner",
+        label: "Default delivery partner (pre-selected when you mark an order shipped)",
+        select: [
+          { value: "shiprocket", label: "Shiprocket" },
+          { value: "delhivery", label: "Delhivery" },
+          { value: "bluedart", label: "Blue Dart" },
+          { value: "dtdc", label: "DTDC" },
+          { value: "ekart", label: "Ekart Logistics" },
+          { value: "xpressbees", label: "XpressBees" },
+          { value: "ecom_express", label: "Ecom Express" },
+          { value: "india_post", label: "India Post" },
+          { value: "custom", label: "Custom / local courier" },
+        ],
+      },
+      {
+        key: "delivery.eta_days",
+        label: "Estimated delivery days (shown to customers on tracking)",
+        placeholder: "4",
+      },
+      {
+        key: "delivery.custom_name",
+        label: "Custom courier name (when partner = Custom)",
+        placeholder: "e.g. Kichha Fast Couriers",
+      },
+      {
+        key: "delivery.custom_tracking_url",
+        label: "Custom courier tracking URL ({awb} = tracking number)",
+        placeholder: "https://mycourier.in/track?awb={awb}",
+      },
+      {
+        key: "delivery.api_key",
+        label: "Courier API key — optional, for future auto-sync (never shown to customers)",
+        placeholder: "paste key from Shiprocket / Delhivery dashboard",
+        secret: true,
       },
     ],
   },
@@ -273,10 +326,25 @@ export default function AdminSettingsPage() {
                         type="datetime-local"
                         defaultValue={toLocalInputValue(settings[f.key])}
                       />
+                    ) : f.select ? (
+                      <select
+                        id={f.key}
+                        name={f.key}
+                        defaultValue={settings[f.key] ?? f.select[0].value}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      >
+                        {f.select.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
                     ) : (
                       <Input
                         id={f.key}
                         name={f.key}
+                        type={f.secret ? "password" : undefined}
+                        autoComplete={f.secret ? "off" : undefined}
                         defaultValue={settings[f.key] ?? ""}
                         placeholder={f.placeholder}
                       />

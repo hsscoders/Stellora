@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { ExternalLink, Truck } from "lucide-react";
 
 const TRANSITIONS: Record<string, { next: string; needsShipping?: boolean }[]> = {
   PENDING: [{ next: "CONFIRMED" }, { next: "CANCELLED" }],
@@ -26,6 +27,8 @@ const PAYMENT_FLOW: Record<string, string[]> = {
   REFUNDED: [],
 };
 
+type Partner = { id: string; name: string; trackingUrl: string | null };
+
 export function OrderActions({
   orderId,
   status,
@@ -39,28 +42,66 @@ export function OrderActions({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [partners, setPartners] = useState<Partner[] | null>(null);
+  const [defaultPartner, setDefaultPartner] = useState<string>("shiprocket");
+  const [customUrl, setCustomUrl] = useState<string>("");
+  const [shipPartner, setShipPartner] = useState<string>("");
+  const [awb, setAwb] = useState<string>("");
+
+  /* Delivery partner catalog + saved store default (Admin → Settings). */
+  useEffect(() => {
+    fetch("/api/admin/delivery/config")
+      .then((r) => r.json())
+      .then((j) => {
+        if (!j.ok) return;
+        setPartners(j.data.partners);
+        setDefaultPartner(j.data.config?.partnerId ?? "shiprocket");
+        setCustomUrl(j.data.config?.customTrackingUrl ?? "");
+      })
+      .catch(() => {});
+  }, []);
 
   const transitions = TRANSITIONS[status] ?? [];
   const paymentOptions = PAYMENT_FLOW[paymentStatus] ?? [];
+
+  const selectedPartner = partners?.find((p) => p.id === shipPartner) ?? null;
+  const previewPattern =
+    shipPartner === "custom"
+      ? customUrl
+      : selectedPartner?.trackingUrl ?? null;
+  const previewUrl =
+    previewPattern && awb.trim()
+      ? previewPattern.includes("{awb}")
+        ? previewPattern.replace("{awb}", encodeURIComponent(awb.trim()))
+        : previewPattern
+      : null;
 
   async function changeStatus(next: string, e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
     const form = new FormData(e.currentTarget);
+    const partnerName =
+      partners?.find((p) => p.id === (form.get("partnerId") ?? ""))?.name ??
+      (form.get("partnerId") as string) ??
+      undefined;
     const res = await fetch(`/api/admin/orders/${orderId}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         status: next,
         note: form.get("note") || undefined,
-        carrier: form.get("carrier") || undefined,
+        carrier: partnerName || undefined,
         trackingNumber: form.get("trackingNumber") || undefined,
       }),
     });
     const json = await res.json();
     setBusy(false);
     if (json.ok) {
-      toast.success(`Order moved to ${next}`);
+      toast.success(
+        next === "SHIPPED"
+          ? `Order shipped via ${partnerName ?? "courier"} — customer's tracking page updated live`
+          : `Order moved to ${next}`
+      );
       router.refresh();
     } else {
       toast.error(json.error?.message ?? "Transition failed");
@@ -105,13 +146,55 @@ export function OrderActions({
                 {t.needsShipping && (
                   <>
                     <div>
-                      <Label htmlFor="carrier">Carrier</Label>
-                      <Input id="carrier" name="carrier" placeholder="e.g. BlueDart" required />
+                      <Label htmlFor="partnerId" className="flex items-center gap-1.5">
+                        <Truck className="h-3.5 w-3.5" aria-hidden />
+                        Delivery partner
+                      </Label>
+                      <select
+                        id="partnerId"
+                        name="partnerId"
+                        value={shipPartner}
+                        onChange={(e) => setShipPartner(e.target.value)}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      >
+                        {!partners && <option>Loading…</option>}
+                        {partners?.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                            {p.id === defaultPartner ? " (default)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {shipPartner === "custom" && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Custom courier — configure its name &amp; tracking URL under Settings → Delivery partner.
+                        </p>
+                      )}
                     </div>
                     <div>
-                      <Label htmlFor="tracking">Tracking number</Label>
-                      <Input id="tracking" name="trackingNumber" required />
+                      <Label htmlFor="tracking">Tracking number (AWB)</Label>
+                      <Input
+                        id="tracking"
+                        name="trackingNumber"
+                        required
+                        value={awb}
+                        onChange={(e) => setAwb(e.target.value)}
+                        placeholder="e.g. SR1234567890"
+                      />
                     </div>
+                    {previewUrl && (
+                      <p className="text-xs text-muted-foreground">
+                        Customer gets a one-click tracking link:{" "}
+                        <a
+                          href={previewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 font-medium text-primary underline-offset-2 hover:underline"
+                        >
+                          preview <ExternalLink className="h-3 w-3" aria-hidden />
+                        </a>
+                      </p>
+                    )}
                   </>
                 )}
                 <div>
@@ -151,11 +234,35 @@ export function OrderActions({
         {shipment?.trackingNumber && (
           <>
             <Separator className="my-4" />
-            <p className="text-sm text-muted-foreground">
-              Shipment: {shipment.status}
-              {shipment.carrier ? ` · ${shipment.carrier}` : ""}
-              {shipment.trackingNumber ? ` · ${shipment.trackingNumber}` : ""}
-            </p>
+            <div className="rounded-md border border-border/60 bg-muted/40 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <Truck className="h-3.5 w-3.5" aria-hidden /> Shipment
+              </p>
+              <p className="mt-1 text-sm">
+                {shipment.carrier ?? "Courier"} · {shipment.trackingNumber}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Status: {shipment.status}</p>
+              {(() => {
+                const stored = partners?.find((p) => p.name.toLowerCase() === (shipment.carrier ?? "").toLowerCase());
+                const pattern =
+                  stored?.trackingUrl ??
+                  (stored?.id === "custom" || (!stored && shipment.carrier) ? customUrl : null);
+                const url =
+                  pattern && pattern.includes("{awb}")
+                    ? pattern.replace("{awb}", encodeURIComponent(shipment.trackingNumber))
+                    : pattern;
+                return url ? (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    Track on {shipment.carrier ?? "courier"} site <ExternalLink className="h-3 w-3" aria-hidden />
+                  </a>
+                ) : null;
+              })()}
+            </div>
           </>
         )}
         {paymentOptions.length > 0 ? (

@@ -397,7 +397,7 @@ adminRouter.get(
     const { orderId } = req.params;
     const order = await Order.findById(orderId).populate("userId", "name email phone").lean<any>();
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
-    const detail = serializeOrderDetail(order);
+    const detail = await serializeOrderDetail(order);
     return ok(res, {
       ...detail,
       user:
@@ -880,14 +880,28 @@ adminRouter.get(
       .limit(200)
       .populate("userId", "name email")
       .lean<any[]>();
-    return ok(res, orders.map((o) => {
-        const detail = serializeOrderDetail(o);
+    return ok(res, await Promise.all(orders.map(async (o) => {
+        const detail = await serializeOrderDetail(o);
         return {
           ...detail,
           user: o.userId && typeof o.userId === "object" ? { id: String((o.userId as any)._id), name: (o.userId as any).name, email: (o.userId as any).email } : null,
         };
-      })
+      }))
     );
+  })
+);
+
+/* ---------- Delivery partner configuration ----------
+ * Catalog (couriers + tracking URL patterns) + the store's saved settings.
+ * Used by the admin order detail (partner dropdown) and Settings page.
+ */
+adminRouter.get(
+  "/admin/delivery/config",
+  handle(async (req, res) => {
+    await requireAdmin(req);
+    const { DELIVERY_PARTNERS, getDeliveryConfig } = await import("../services/delivery");
+    const config = await getDeliveryConfig(true);
+    return ok(res, { partners: DELIVERY_PARTNERS, config });
   })
 );
 
@@ -1483,6 +1497,10 @@ adminRouter.put(
     for (const [key, value] of entries) {
       await SiteSetting.updateOne({ key }, { value }, { upsert: true });
     }
+
+    // Delivery partner settings changed → refresh the short-lived cache.
+    const { invalidateDeliveryCache } = await import("../services/delivery");
+    invalidateDeliveryCache();
 
     await audit(
       {
@@ -2082,7 +2100,7 @@ adminRouter.post(
     return ok(
       res,
       {
-        order: serializeOrderDetail(populated),
+        order: await serializeOrderDetail(populated),
         pointsEarned,
         changeDue,
       },

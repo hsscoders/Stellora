@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PackageSearch, Radio } from "lucide-react";
+import { CalendarClock, Check, Copy, ExternalLink, PackageSearch, Radio, Truck } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,11 +16,64 @@ interface TrackResult {
   placedAt: string;
   shippedAt: string | null;
   carrier: string | null;
+  partnerId: string | null;
   trackingNumber: string | null;
+  trackingUrl: string | null;
+  estimatedDelivery: string | null;
   events: { status: string; note: string | null; at: string }[];
 }
 
 const FLOW = ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED"];
+
+function CourierCard({ result }: { result: TrackResult }) {
+  const [copied, setCopied] = useState(false);
+  if (!result.trackingNumber) return null;
+
+  async function copyAwb() {
+    try {
+      await navigator.clipboard.writeText(result.trackingNumber ?? "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Could not copy — please note it down manually.");
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-border/60 bg-muted/40 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <Truck className="h-4 w-4" aria-hidden />
+          {result.carrier ?? "Courier"}
+        </p>
+        {result.estimatedDelivery && (
+          <span className="flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+            <CalendarClock className="h-3 w-3" aria-hidden />
+            Arriving by {formatDateTime(result.estimatedDelivery).split(",")[0]}
+          </span>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <code className="rounded bg-background px-2 py-1 font-mono text-sm">{result.trackingNumber}</code>
+        <Button type="button" variant="outline" size="sm" className="h-7 rounded-full px-3 text-xs" onClick={copyAwb}>
+          {copied ? <Check className="h-3 w-3" aria-hidden /> : <Copy className="h-3 w-3" aria-hidden />}
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        {result.trackingUrl && (
+          <a
+            href={result.trackingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-7 items-center gap-1 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:bg-primary/90"
+          >
+            Track on {result.carrier ?? "courier"} site
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function TrackOrderPage() {
   const [result, setResult] = useState<TrackResult | null>(null);
@@ -147,6 +200,8 @@ export default function TrackOrderPage() {
               {result.trackingNumber ? ` · Tracking: ${result.trackingNumber}` : ""}
             </p>
           )}
+
+          {!cancelled && <CourierCard result={result} />}
 
           {!cancelled && (
             <ol className="mt-6 space-y-0">

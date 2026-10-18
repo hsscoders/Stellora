@@ -94,9 +94,31 @@ export default async function OrderDetailPage({
           </ol>
         )}
         {order.shipment?.trackingNumber && (
-          <p className="mt-4 rounded-md bg-accent/50 px-4 py-3 text-sm text-accent-foreground">
-            Carrier: {order.shipment.carrier ?? "—"} · Tracking: {order.shipment.trackingNumber}
-          </p>
+          <div className="mt-4 rounded-lg border border-border/60 bg-muted/40 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Shipped via {order.shipment.carrier ?? "Courier"}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <code className="rounded bg-background px-2 py-1 font-mono text-sm">
+                {order.shipment.trackingNumber}
+              </code>
+              {order.shipment.trackingUrl && (
+                <a
+                  href={order.shipment.trackingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-7 items-center gap-1 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:bg-primary/90"
+                >
+                  Track on {order.shipment.carrier ?? "courier"} site →
+                </a>
+              )}
+            </div>
+            {order.estimatedDelivery && order.status !== "DELIVERED" && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Estimated delivery by {formatDateTime(order.estimatedDelivery).split(",")[0]}
+              </p>
+            )}
+          </div>
         )}
       </section>
 

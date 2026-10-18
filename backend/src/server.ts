@@ -117,6 +117,11 @@ async function main() {
 
   // Stellora Auto-pilot — unattended sweeps (stale order cancel, restock alerts)
   startScheduler();
+
+  // Warm the delivery-partner config cache so the first order/track response
+  // already carries courier tracking links.
+  const { getDeliveryConfig } = await import("./services/delivery");
+  getDeliveryConfig().catch(() => {});
 }
 
 main().catch((err) => {
