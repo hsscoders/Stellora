@@ -1,0 +1,84 @@
+# =============================================================================
+# Stellora — one-command production stack
+#
+#   Local MongoDB (self-hosted box):
+#     docker compose up -d
+#     → storefront :3000 · admin :3001 · api :4000 · mongo (internal)
+#
+#   MongoDB Atlas / external DB:
+#     cp .env.example .env        # set MONGODB_URI to your Atlas URI
+#     docker compose up -d --scale mongo=0
+#
+#   The api container auto-seeds the database on first boot (idempotent —
+#   existing data is never overwritten) with connection retry built in.
+#
+#   Put nginx/Caddy in front of :3000 — the storefront already proxies
+#   /api/* and /admin-console/* to the other services. No public ports
+#   needed for api/admin on a single box (api :4000 is exposed for
+#   debugging; remove that mapping on a locked-down host).
+# =============================================================================
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/stellora}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      ORIGIN_SUFFIXES: ${ORIGIN_SUFFIXES:-.localhost,localhost}
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-admin@stellora.local}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-StelloraAdmin#2026}
+      DEMO_CUSTOMER_EMAIL: ${DEMO_CUSTOMER_EMAIL:-customer@stellora.local}
+      DEMO_CUSTOMER_PASSWORD: ${DEMO_CUSTOMER_PASSWORD:-Customer#2026}
+      PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}
+      PAYMENT_DEMO_SECRET: ${PAYMENT_DEMO_SECRET:-stellora_demo_secret_2026}
+    ports:
+      - "4000:4000"
+    # Product image uploads live in /app/backend/public/uploads inside the
+    # container. Persist them across rebuilds with:
+    # volumes:
+    #   - uploads_data:/app/backend/public/uploads
+
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_URL: http://api:4000
+      ADMIN_URL: http://admin:3001
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+  admin:
+    build:
+      context: .
+      target: admin
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_URL: http://api:4000
+    depends_on:
+      - api
+    # No public port: the storefront proxies /admin-console/* to this service.
+    # Expose manually during debugging if you like:
+    # ports: ["3001:3001"]
+
+  # Local MongoDB — skipped automatically with `--scale mongo=0` (Atlas users).
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["--wiredTigerCacheSizeGB", "0.5"]
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
+  # uploads_data:

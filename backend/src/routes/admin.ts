@@ -21,6 +21,7 @@ import { getSeoConfig, saveSeoConfig } from "../services/seo-config";
 import { testGatewayConnection } from "../services/payments";
 import { env } from "../env";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
+import { unreadAdminChatCount } from "../services/realtime";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { randomBytes } from "crypto";
@@ -40,7 +41,7 @@ adminRouter.get(
     const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const [revAgg, rev24, statusAgg, productCount, lowStockProducts, recentOrders, dailyAgg, topProductsAgg, posAgg, customerCount, pendingReviews, pendingQuestions] = await Promise.all([
+    const [revAgg, rev24, statusAgg, productCount, lowStockProducts, recentOrders, dailyAgg, topProductsAgg, posAgg, customerCount, pendingReviews, pendingQuestions, unreadChat] = await Promise.all([
       Order.aggregate<{ total: number; count: number }>([
         { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
         { $group: { _id: null, total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
@@ -97,6 +98,7 @@ adminRouter.get(
       User.countDocuments({ role: "CUSTOMER" }),
       (await import("../models")).Review.countDocuments({ status: "PENDING" }),
       (await import("../models")).ProductQuestion.countDocuments({ status: "PENDING" }),
+      unreadAdminChatCount(),
     ]);
 
     const posOnline = Object.fromEntries(posAgg.map((s) => [s._id ?? "ONLINE", { total: s.total, count: s.count }]));
@@ -110,6 +112,7 @@ adminRouter.get(
       customerCount,
       pendingReviews,
       pendingQuestions,
+      unreadChat,
       posVsOnline: {
         POS: posOnline["POS"] ?? { total: 0, count: 0 },
         ONLINE: posOnline["ONLINE"] ?? { total: 0, count: 0 },
@@ -229,12 +232,23 @@ adminRouter.get(
   "/admin/reports",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
 
-    const [orders, topAgg, lowStockProducts] = await Promise.all([
+    // Window length: 7 / 30 allowed, 14 default (v1 behaviour).
+    const rawDays = Number(req.query.days ?? 14);
+    const days = [7, 14, 30].includes(rawDays) ? rawDays : 14;
+    const DAY = 24 * 60 * 60 * 1000;
+    const since = new Date(Date.now() - days * DAY);
+    const prevSince = new Date(since.getTime() - days * DAY);
+
+    const [orders, prevAgg, topAgg, lowStockProducts, catItemAgg, paymentAgg, couponAgg] = await Promise.all([
       Order.find({ createdAt: { $gte: since }, status: { $ne: "CANCELLED" } })
         .select("grandTotal createdAt")
         .lean<any[]>(),
+      // Previous window KPIs (for period-over-period deltas)
+      Order.aggregate<{ total: number; count: number }>([
+        { $match: { createdAt: { $gte: prevSince, $lt: since }, status: { $ne: "CANCELLED" } } },
+        { $group: { _id: null, total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
+      ]),
       Order.aggregate<{ _id: string; quantity: number; lineTotal: number; orders: number }>([
         { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" } } },
         { $unwind: "$items" },
@@ -256,9 +270,74 @@ adminRouter.get(
         { $limit: 10 },
         { $project: { name: 1, slug: 1, variantName: "$variants.name", sku: "$variants.sku", stock: "$variants.stock", lowStockThreshold: "$variants.lowStockThreshold" } },
       ]),
+      // Units + revenue per product, resolved to category names in JS below
+      Order.aggregate<{ _id: any; quantity: number; lineTotal: number }>([
+        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" } } },
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.productId",
+            quantity: { $sum: "$items.quantity" },
+            lineTotal: { $sum: "$items.lineTotal" },
+          },
+        },
+      ]),
+      // Payment method mix for the window
+      Order.aggregate<{ _id: string; count: number; total: number }>([
+        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" } } },
+        { $group: { _id: "$paymentMethod", count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
+      ]),
+      // Coupon performance
+      Order.aggregate<{ _id: string; count: number; saved: number }>([
+        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" }, couponCode: { $ne: null } } },
+        { $group: { _id: "$couponCode", count: { $sum: 1 }, saved: { $sum: "$discountTotal" } } },
+        { $sort: { count: -1 } },
+        { $limit: 5 },
+      ]),
     ]);
 
+    // ---- KPI block (current + previous window) ----
+    const revenue = orders.reduce((s, o) => s + (Number(o.grandTotal) || 0), 0);
+    const count = orders.length;
+    const prev = prevAgg[0] ?? { total: 0, count: 0 };
+    const aov = count > 0 ? revenue / count : 0;
+    const prevAov = prev.count > 0 ? prev.total / prev.count : 0;
+    const pct = (cur: number, old: number) => (old > 0 ? Math.round(((cur - old) / old) * 1000) / 10 : cur > 0 ? 100 : 0);
+
+    // ---- Category breakdown (resolve productId → category in JS) ----
+    const productIds = catItemAgg.map((c) => c._id).filter((id: any) => id);
+    const products = productIds.length
+      ? await Product.find({ _id: { $in: productIds } }).select("categoryId").populate("categoryId", "name").lean<any[]>()
+      : [];
+    const catNameById = new Map<string, string>();
+    for (const p of products) {
+      const c = p.categoryId as any;
+      catNameById.set(String(p._id), c?.name ?? "Uncategorised");
+    }
+    const catMap = new Map<string, { revenue: number; units: number }>();
+    for (const row of catItemAgg) {
+      const name = catNameById.get(String(row._id)) ?? "Uncategorised";
+      const cur = catMap.get(name) ?? { revenue: 0, units: 0 };
+      cur.revenue += row.lineTotal;
+      cur.units += row.quantity;
+      catMap.set(name, cur);
+    }
+    const categories = [...catMap.entries()]
+      .map(([name, v]) => ({ category: name, revenue: Math.round(v.revenue * 100) / 100, units: v.units }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    // ---- Payment split ----
+    const paymentSplit = {
+      PAY_ON_CONFIRMATION: { count: 0, total: 0 },
+      GATEWAY: { count: 0, total: 0 },
+    } as Record<string, { count: number; total: number }>;
+    for (const row of paymentAgg) {
+      const key = row._id ?? "PAY_ON_CONFIRMATION";
+      paymentSplit[key] = { count: row.count, total: row.total };
+    }
+
     return ok(res, {
+      days,
       daily: orders.map((o) => ({ date: o.createdAt, grandTotal: o.grandTotal })),
       topItems: topAgg.map((t) => ({ productName: t._id, quantity: t.quantity, lineTotal: t.lineTotal, orders: t.orders })),
       lowStock: lowStockProducts.map((v: any) => ({
@@ -268,6 +347,21 @@ adminRouter.get(
         lowStockThreshold: v.lowStockThreshold,
         product: { name: v.name, slug: v.slug },
       })),
+      // ── Reports 2.0 additions ──
+      kpi: {
+        revenue: Math.round(revenue * 100) / 100,
+        orders: count,
+        aov: Math.round(aov * 100) / 100,
+        prevRevenue: Math.round(prev.total * 100) / 100,
+        prevOrders: prev.count,
+        prevAov: Math.round(prevAov * 100) / 100,
+        revenueDeltaPct: pct(revenue, prev.total),
+        ordersDeltaPct: pct(count, prev.count),
+        aovDeltaPct: pct(aov, prevAov),
+      },
+      categories,
+      paymentSplit,
+      topCoupons: couponAgg.map((c) => ({ code: c._id, orders: c.count, saved: Math.round(c.saved * 100) / 100 })),
     });
   })
 );
@@ -862,6 +956,18 @@ adminRouter.post(
       order.payment.verifiedAt = nextStatus === "PAID" ? new Date() : null;
     }
     await order.save();
+
+    // Realtime: customer's order page reflects the payment instantly.
+    try {
+      const { notifyPaymentStatus } = await import("../services/realtime");
+      notifyPaymentStatus({
+        orderNumber: order.orderNumber,
+        userId: String(order.userId ?? ""),
+        paymentStatus: nextStatus,
+      });
+    } catch {
+      // best-effort
+    }
 
     await audit(
       {
@@ -1931,6 +2037,48 @@ adminRouter.post(
     );
 
     const populated = await Order.findById(createdOrderId).populate("userId", "name email").lean<any>();
+
+    // Realtime: POS sale lands on every admin's dashboard instantly + stock ticks.
+    try {
+      const { notifyNewOrder, notifyLowStock, notifyStockUpdate } = await import("../services/realtime");
+      const owner = populated?.userId && typeof populated.userId === "object" ? populated.userId : null;
+      notifyNewOrder({
+        orderNumber,
+        orderId: createdOrderId,
+        grandTotal,
+        itemCount: lines.reduce((n, l) => n + l.quantity, 0),
+        items: lines.map((l) => ({ productName: l.productName, variantName: l.variantName, quantity: l.quantity })),
+        customerName: owner?.name ?? customer!.name,
+        customerEmail: owner?.email ?? null,
+        paymentMethod: "POS",
+        city: null,
+        at: now.toISOString(),
+      });
+      const products = await Product.find({ "variants._id": { $in: lines.map((l) => l.variantId) } })
+        .select("name slug variants")
+        .lean<{
+          _id: any;
+          name: string;
+          slug: string;
+          variants: { _id: any; name: string; sku: string; stock: number; lowStockThreshold: number }[];
+        }[]>();
+      const ticks: { productId: string; variantId: string; stock: number }[] = [];
+      const low: { productName: string; variantName: string; sku: string; stock: number; threshold: number; slug: string }[] = [];
+      for (const p of products) {
+        for (const v of p.variants ?? []) {
+          if (!lines.some((l) => String(l.variantId) === String(v._id))) continue;
+          ticks.push({ productId: String(p._id), variantId: String(v._id), stock: v.stock });
+          if (v.stock <= v.lowStockThreshold) {
+            low.push({ productName: p.name, variantName: v.name, sku: v.sku, stock: v.stock, threshold: v.lowStockThreshold, slug: p.slug });
+          }
+        }
+      }
+      notifyStockUpdate(ticks);
+      notifyLowStock(low);
+    } catch {
+      // best-effort
+    }
+
     return ok(
       res,
       {

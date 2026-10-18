@@ -139,3 +139,48 @@ CashSessionSchema.index({ terminalId: 1, status: 1 });
 CashSessionSchema.index({ openedAt: -1 });
 
 export const CashSession = model("CashSession", CashSessionSchema);
+
+/* ---------- ChatThread / ChatMessage (live support chat over Socket.IO) ---------- */
+
+const ChatThreadSchema = new Schema(
+  {
+    customerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    /* Guests chat without an account — identity kept in a long-lived cookie. */
+    guestKey: { type: String, default: null },
+    displayName: { type: String, required: true, trim: true, maxlength: 120 },
+    contactHint: { type: String, default: null },
+    lastMessagePreview: { type: String, default: "", maxlength: 140 },
+    lastMessageAt: { type: Date, default: Date.now },
+    unreadForAdmin: { type: Number, default: 0, min: 0 },
+    unreadForCustomer: { type: Number, default: 0, min: 0 },
+    status: { type: String, enum: ["OPEN", "CLOSED"], default: "OPEN" },
+    closedAt: { type: Date, default: null },
+    closedByName: { type: String, default: null },
+  },
+  { timestamps: true, collection: "chatthreads" }
+);
+
+ChatThreadSchema.index({ customerId: 1 });
+ChatThreadSchema.index({ guestKey: 1 });
+ChatThreadSchema.index({ lastMessageAt: -1 });
+ChatThreadSchema.index({ status: 1, unreadForAdmin: -1 });
+
+export const ChatThread = model("ChatThread", ChatThreadSchema);
+
+const ChatMessageSchema = new Schema(
+  {
+    threadId: { type: Schema.Types.ObjectId, ref: "ChatThread", required: true },
+    senderRole: { type: String, enum: ["CUSTOMER", "ADMIN"], required: true },
+    senderId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    senderName: { type: String, default: "", maxlength: 120 },
+    body: { type: String, required: true, maxlength: 2000 },
+    /* Client-generated id — lets the sender reconcile its optimistic bubble. */
+    clientMsgId: { type: String, default: null },
+  },
+  { timestamps: { createdAt: true, updatedAt: false }, collection: "chatmessages" }
+);
+
+ChatMessageSchema.index({ threadId: 1, createdAt: 1 });
+ChatMessageSchema.index({ clientMsgId: 1 });
+
+export const ChatMessage = model("ChatMessage", ChatMessageSchema);

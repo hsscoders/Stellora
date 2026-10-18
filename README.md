@@ -70,6 +70,10 @@ stellora/
 Requirements: **Node.js 20.9+** (LTS 22 recommended) and a MongoDB Atlas URI.
 
 ```bash
+# One command — guided setup (installs, configures, seeds, asks how to run)
+bash setup.sh
+
+# …or manual:
 # 1. Install all three apps (npm workspaces — single command at the repo root)
 npm install
 
@@ -117,6 +121,29 @@ Bun remains fully supported: every workspace also ships `dev:bun` / `start:bun` 
 `db:seed:bun` variants.
 
 ## Production & Deployment
+
+### Deploy anywhere in one command
+
+| Target | Command | Notes |
+|---|---|---|
+| **Any VPS (Ubuntu/Debian/CentOS)** | `bash setup.sh` → choose **PM2** | builds, starts all 3 apps, auto-restart |
+| **Docker / any container host** | `cp .env.example .env && docker compose up -d --build` | Atlas: add `--scale mongo=0` |
+| **Bare production (no PM2)** | `bash setup.sh` → choose **prod** | `npm run build && npm start` |
+| **cPanel (Passenger)** | see `deploy/CPANEL-DEPLOY.md` | startup files included |
+| **Render / Railway / Fly.io** | deploy `Dockerfile` targets `api`/`web`/`admin` | set `MONGODB_URI`, `BACKEND_URL`, `APP_URL` |
+
+**Environment variables (hosting checklist):**
+- `backend/.env` → `MONGODB_URI` (required), `APP_URL` (public storefront URL), `ORIGIN_SUFFIXES` (extra allowed origins), admin bootstrap + payment keys (see `backend/.env.example`)
+- Storefront/admin read `BACKEND_URL` (internal API URL) and `ADMIN_URL` (internal admin URL) — defaults work when the storefront proxies everything on one origin
+- Docker users: copy root `.env.example` → `.env`; the api container auto-seeds on first boot
+
+**Deployment artifacts included:**
+- `Dockerfile` — multi-stage, one image per app (`--target api|web|admin`)
+- `docker-compose.yml` — full stack + optional bundled MongoDB
+- `ecosystem.config.js` — PM2 (auto-restart, log rotation-friendly)
+- `scripts/dev-server.sh` — PM2 launcher (`npm run pm2:start`)
+- `setup.sh` — guided installer for any fresh machine
+- `.cpanel.yml` + `deploy/cpanel/` — cPanel git-deploy & Passenger startup files
 
 See **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** for:
 - Complete environment-variable reference

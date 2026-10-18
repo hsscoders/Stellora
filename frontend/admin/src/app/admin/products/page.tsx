@@ -2,10 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus, Pencil, Archive, Search, Download, X, Loader2,
-  CheckCircle2, FileEdit, ArchiveRestore, ChevronDown,
+  CheckCircle2, FileEdit, ArchiveRestore, ChevronDown, Upload,
 } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,11 @@ export default function AdminProductsPage() {
   const [sort, setSort] = useState<SortKey>("newest");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    created: number; updated: number; failed: number; errors: { line: number; error: string }[];
+  } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("");
 
@@ -150,6 +155,31 @@ export default function AdminProductsPage() {
     }
   }
 
+  async function importCsv(file: File) {
+    if (importBusy) return;
+    setImportBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/admin/products/import", { method: "POST", body: fd });
+      const json = await res.json();
+      if (json.ok) {
+        setImportResult(json.data);
+        if (json.data.failed === 0) {
+          toast.success(`Import done — ${json.data.created} created, ${json.data.updated} updated`);
+        }
+        await load();
+      } else {
+        toast.error(json.error?.message ?? "Import failed");
+      }
+    } catch {
+      toast.error("Network error — import failed");
+    } finally {
+      setImportBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   const stockTone = (p: AdminProduct) => {
     const stock = p.variants.reduce((n, v) => n + (v.isActive ? v.stock : 0), 0);
     const threshold = Math.max(...p.variants.filter((v) => v.isActive).map((v) => v.lowStockThreshold), 0);
@@ -163,6 +193,26 @@ export default function AdminProductsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-serif text-3xl font-medium">Products</h1>
         <div className="flex items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importCsv(f);
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            disabled={importBusy}
+            onClick={() => fileRef.current?.click()}
+          >
+            {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Import CSV
+          </Button>
           <a href="/api/admin/export/products" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
             <Download className="h-4 w-4" /> Export CSV
           </a>
@@ -173,6 +223,34 @@ export default function AdminProductsPage() {
           </Button>
         </div>
       </div>
+
+      {importResult && (
+        <div className="rounded-xl border bg-card p-4 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-medium">
+              Import finished — <span className="text-emerald-600">{importResult.created} created</span>,{" "}
+              <span className="text-primary">{importResult.updated} updated</span>
+              {importResult.failed > 0 && (
+                <>　<span className="text-destructive">{importResult.failed} skipped</span></>
+              )}
+            </div>
+            <button
+              className="text-muted-foreground transition hover:text-foreground"
+              onClick={() => setImportResult(null)}
+              aria-label="Dismiss import result"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {importResult.errors.length > 0 && (
+            <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-muted-foreground">
+              {importResult.errors.map((e, i) => (
+                <li key={i}>• {e.line ? `Row ${e.line}: ` : ""}{e.error}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Filters row: search · category · sort · status chips */}
       <div className="flex flex-wrap items-center gap-3">

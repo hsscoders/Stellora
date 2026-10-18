@@ -21,6 +21,8 @@ type SettingField = {
   textarea?: boolean;
   placeholder?: string;
   rows?: number;
+  /** Render a datetime-local picker; stored as ISO in the DB. */
+  datetime?: boolean;
 };
 
 type SettingGroup = { title: string; fields: SettingField[] };
@@ -30,6 +32,21 @@ const GROUPS: SettingGroup[] = [
     title: "Storefront",
     fields: [
       { key: "announcement", label: "Announcement bar (empty to hide)" },
+    ],
+  },
+  {
+    title: "Flash sale countdown",
+    fields: [
+      {
+        key: "sale_text",
+        label: "Flash sale text (replaces the announcement bar while active)",
+        placeholder: "Diwali Sale — up to 25% off, ends tonight!",
+      },
+      {
+        key: "sale_ends_at",
+        label: "Flash sale ends at (live countdown shows on the storefront)",
+        datetime: true,
+      },
     ],
   },
   {
@@ -98,6 +115,15 @@ function groupId(index: number): string {
   return `settings-group-${index}`;
 }
 
+/** ISO string → value accepted by <input type="datetime-local"> (local time). */
+function toLocalInputValue(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<Record<string, string> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -146,7 +172,13 @@ export default function AdminSettingsPage() {
     const payload: Record<string, string> = {};
     for (const group of GROUPS) {
       for (const f of group.fields) {
-        payload[f.key] = String(form.get(f.key) ?? "");
+        let value = String(form.get(f.key) ?? "");
+        if (f.datetime && value) {
+          // datetime-local strings are naive — interpret as the admin's local time.
+          const d = new Date(value);
+          value = Number.isNaN(d.getTime()) ? "" : d.toISOString();
+        }
+        payload[f.key] = value;
       }
     }
     const res = await fetch("/api/admin/settings", {
@@ -233,6 +265,13 @@ export default function AdminSettingsPage() {
                         name={f.key}
                         defaultValue={settings[f.key] ?? ""}
                         rows={f.rows ?? 5}
+                      />
+                    ) : f.datetime ? (
+                      <Input
+                        id={f.key}
+                        name={f.key}
+                        type="datetime-local"
+                        defaultValue={toLocalInputValue(settings[f.key])}
                       />
                     ) : (
                       <Input

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { PackageSearch } from "lucide-react";
+import { PackageSearch, Radio } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatDateTime } from "@/lib/utils";
+import { useRealtimeEvent } from "@/components/stellora/realtime";
 
 interface TrackResult {
   orderNumber: string;
@@ -25,6 +26,32 @@ export default function TrackOrderPage() {
   const [result, setResult] = useState<TrackResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [notFound, setNotFound] = useState(false);
+
+  /* Live tracking — the store pushes status changes over Socket.IO, so an
+     open tracking page updates itself the moment the order moves. */
+  useRealtimeEvent<{
+    orderNumber: string;
+    status: string;
+    note?: string | null;
+  }>("order:status", (p) => {
+    if (!p?.orderNumber || !result || p.orderNumber !== result.orderNumber) return;
+    if (p.status === result.status) return;
+    setResult((prev) =>
+      prev && prev.orderNumber === p.orderNumber
+        ? {
+            ...prev,
+            status: p.status,
+            shippedAt:
+              p.status === "SHIPPED" ? new Date().toISOString() : prev.shippedAt,
+            events: [
+              ...prev.events,
+              { status: p.status, note: p.note ?? null, at: new Date().toISOString() },
+            ],
+          }
+        : prev
+    );
+    toast.success(`Order ${p.orderNumber} is now ${p.status.replace("_", " ").toLowerCase()}`);
+  });
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -99,8 +126,14 @@ export default function TrackOrderPage() {
         <div className="mx-auto mt-10 max-w-md rounded-lg border border-border/70 bg-card p-6">
           <div className="flex items-center justify-between">
             <p className="font-serif text-xl font-medium">{result.orderNumber}</p>
-            <span className="rounded-full bg-accent px-3 py-1 text-xs font-semibold uppercase tracking-wider text-accent-foreground">
-              {result.status.replace("_", " ")}
+            <span className="flex items-center gap-2">
+              <span className="flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                <Radio className="h-3 w-3" aria-hidden />
+                Live
+              </span>
+              <span className="rounded-full bg-accent px-3 py-1 text-xs font-semibold uppercase tracking-wider text-accent-foreground">
+                {result.status.replace("_", " ")}
+              </span>
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">

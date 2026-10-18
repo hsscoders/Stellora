@@ -313,6 +313,26 @@ export async function settleGatewayPayment(
   }
   await order.save();
 
+  // Realtime: payment confirmed — customer sees the update instantly.
+  try {
+    const { notifyPaymentStatus, notifyOrderStatus } = await import("./realtime");
+    notifyPaymentStatus({
+      orderNumber: order.orderNumber,
+      userId: String(order.userId ?? ""),
+      paymentStatus: "PAID",
+    });
+    if (order.status === "CONFIRMED") {
+      notifyOrderStatus({
+        orderNumber: order.orderNumber,
+        userId: String(order.userId ?? ""),
+        status: "CONFIRMED",
+        note: "Payment received online.",
+      });
+    }
+  } catch {
+    // best-effort
+  }
+
   // Stellora Rewards: credit earn points once the order is confirmed via
   // payment. Ledger-guarded, so retries and double-confirms are no-ops.
   let pointsEarned = 0;

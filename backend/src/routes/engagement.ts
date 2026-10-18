@@ -1,11 +1,13 @@
 import { Router, Request } from "express";
 import mongoose from "mongoose";
-import { Order, Product, User, Review, NewsletterSubscriber, RestockAlert, ReturnRequest, ProductQuestion } from "../models";
+import multer from "multer";
+import { Order, Product, Category, StockMovement, User, Review, NewsletterSubscriber, RestockAlert, ReturnRequest, ProductQuestion } from "../models";
 import { ok, fail, handle, assertSameOrigin, HttpError } from "../lib/http";
 import { requireUser, requireAdmin, getCurrentUser } from "../lib/auth";
 import { audit } from "../services/audit";
 import { transitionOrderStatus } from "../services/orders";
 import { rateLimit, getClientIp } from "../lib/rate-limit";
+import { slugify } from "../lib/utils";
 import {
   reviewCreateSchema,
   newsletterSubscribeSchema,
@@ -20,6 +22,8 @@ import {
 import { serializeProduct } from "./storefront";
 
 export const engagementRouter = Router();
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 /* ================= Product reviews (public read, customer write) ================= */
 
@@ -112,6 +116,14 @@ engagementRouter.post(
       { actor: user, action: "review.submit", entityType: "Review", entityId: String(doc._id), metadata: { productId } },
       req
     );
+
+    // Realtime: review moderation queue grows live in the admin console.
+    try {
+      const { notifyStatsBump } = await import("../services/realtime");
+      notifyStatsBump("review");
+    } catch {
+      // best-effort
+    }
 
     return ok(res, { submitted: true, status: "PENDING", isUpdate: true }, 201);
   })
@@ -274,6 +286,14 @@ engagementRouter.post(
     });
     await audit({ actor: user, action: `order.${data.type.toLowerCase()}_request`, entityType: "ReturnRequest", entityId: String(created._id) }, req);
 
+    // Realtime: returns/exchanges queue pings the admin console.
+    try {
+      const { notifyStatsBump } = await import("../services/realtime");
+      notifyStatsBump("return");
+    } catch {
+      // best-effort
+    }
+
     return ok(res, {
       id: String(created._id),
       orderNumber: created.orderNumber,
@@ -388,6 +408,14 @@ engagementRouter.post(
       { actor: user, action: "question.submit", entityType: "ProductQuestion", entityId: String(created._id), metadata: { productId } },
       req
     );
+
+    // Realtime: Q&A queue pings the admin console.
+    try {
+      const { notifyStatsBump } = await import("../services/realtime");
+      notifyStatsBump("question");
+    } catch {
+      // best-effort
+    }
 
     return ok(res, { submitted: true, status: "PENDING" }, 201);
   })
@@ -704,21 +732,37 @@ engagementRouter.get(
     }
 
     if (entity === "products") {
+      // Variant-per-row export: round-trippable with POST /admin/products/import.
       const products = await Product.find().sort({ createdAt: -1 }).limit(5000).populate("categoryId", "name").lean<any[]>();
+      const rows: (string | number | null | undefined)[][] = [];
+      for (const p of products) {
+        const images = [...(p.images ?? [])].sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+        if (!(p.variants ?? []).length) {
+          rows.push([p.name, p.slug, p.categoryId?.name ?? "", p.status, p.shortDescription ?? "", "", "", "", "", "", p.isFeatured ? "yes" : "no", p.isNewArrival ? "yes" : "no", p.isBestSeller ? "yes" : "no", p.isTrending ? "yes" : "no", images[0]?.url ?? ""]);
+        }
+        for (const v of p.variants ?? []) {
+          rows.push([
+            p.name,
+            p.slug,
+            p.categoryId?.name ?? "",
+            p.status,
+            p.shortDescription ?? "",
+            v.name ?? "",
+            v.sku ?? "",
+            v.price ?? "",
+            v.compareAtPrice ?? "",
+            v.stock ?? 0,
+            p.isFeatured ? "yes" : "no",
+            p.isNewArrival ? "yes" : "no",
+            p.isBestSeller ? "yes" : "no",
+            p.isTrending ? "yes" : "no",
+            images[0]?.url ?? "",
+          ]);
+        }
+      }
       const csv = toCsv(
-        ["name", "slug", "category", "status", "featured", "newArrival", "bestSeller", "trending", "variants", "priceMin"],
-        products.map((p) => [
-          p.name,
-          p.slug,
-          p.categoryId?.name ?? "",
-          p.status,
-          p.isFeatured ? "yes" : "no",
-          p.isNewArrival ? "yes" : "no",
-          p.isBestSeller ? "yes" : "no",
-          p.isTrending ? "yes" : "no",
-          (p.variants ?? []).length,
-          (p.variants ?? []).length ? Math.min(...p.variants.map((v: any) => v.price)) : "",
-        ])
+        ["name", "slug", "category", "status", "shortDescription", "variantName", "sku", "price", "compareAtPrice", "stock", "featured", "newArrival", "bestSeller", "trending", "imageUrl"],
+        rows
       );
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", "attachment; filename=stellora-products.csv");
@@ -726,5 +770,214 @@ engagementRouter.get(
     }
 
     throw new HttpError("NOT_FOUND", "Unknown export entity.", 404);
+  })
+);
+
+/* ================= Admin: product CSV import ================= */
+
+/** Minimal RFC-4180 CSV parser (quoted fields, escaped quotes, CRLF). */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field); field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.length > 1 || row[0] !== "") rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field);
+  if (row.length > 1 || row[0] !== "") rows.push(row);
+  return rows;
+}
+
+engagementRouter.post(
+  "/admin/products/import",
+  upload.single("file"),
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+
+    if (!req.file) return fail(res, "VALIDATION_ERROR", "Attach a CSV file in the 'file' field.", 400);
+    const text = req.file.buffer.toString("utf8").replace(/^\uFEFF/, "");
+    const table = parseCsv(text);
+    if (table.length < 2) return fail(res, "VALIDATION_ERROR", "CSV needs a header row plus at least one product row.", 400);
+
+    const header = table[0].map((h) => h.trim().toLowerCase());
+    const idx = (name: string) => header.indexOf(name);
+    const NEED = ["name", "sku", "price"];
+    const missing = NEED.filter((n) => idx(n) === -1);
+    if (missing.length) {
+      return fail(res, "VALIDATION_ERROR", `Missing required column(s): ${missing.join(", ")}. Export the CSV from this page to get the exact format.`, 400);
+    }
+
+    const col = {
+      name: idx("name"), slug: idx("slug"), category: idx("category"), status: idx("status"),
+      shortDescription: idx("shortdescription"), variantName: idx("variantname"), sku: idx("sku"),
+      price: idx("price"), compareAtPrice: idx("compareatprice"), stock: idx("stock"),
+      featured: idx("featured"), newArrival: idx("newarrival"), bestSeller: idx("bestseller"),
+      trending: idx("trending"), imageUrl: idx("imageurl"),
+    };
+    const yn = (v: string | undefined) => (v ?? "").trim().toLowerCase() === "yes";
+    const num = (v: string | undefined, fallback: number | null = null) => {
+      const s = (v ?? "").trim();
+      if (s === "") return fallback; // Number("") === 0 — must not treat blank as zero
+      const n = Number(s);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    // Group rows into products by slug (or slugified name)
+    type VRow = { variantName: string; sku: string; price: number; compareAtPrice: number | null; stock: number };
+    type PRow = {
+      key: string; name: string; slug: string; category: string; status: string; shortDescription: string;
+      flags: { featured: boolean; newArrival: boolean; bestSeller: boolean; trending: boolean };
+      imageUrl: string; variants: VRow[];
+    };
+    const groups = new Map<string, PRow>();
+    const rowErrors: { line: number; error: string }[] = [];
+
+    for (let i = 1; i < table.length && groups.size < 200; i++) {
+      const r = table[i];
+      const line = i + 1;
+      const name = (r[col.name] ?? "").trim();
+      const sku = (r[col.sku] ?? "").trim().toUpperCase();
+      const price = num(r[col.price]);
+      if (!name || !sku || price === null) {
+        rowErrors.push({ line, error: !name ? "missing name" : !sku ? "missing sku" : "invalid price" });
+        continue;
+      }
+      const slug = (r[col.slug] ?? "").trim().toLowerCase() || slugify(name);
+      const key = slug;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          key, name, slug,
+          category: (r[col.category] ?? "").trim(),
+          status: ["DRAFT", "ACTIVE", "ARCHIVED"].includes((r[col.status] ?? "").trim().toUpperCase()) ? (r[col.status] ?? "ACTIVE").trim().toUpperCase() : "ACTIVE",
+          shortDescription: (r[col.shortDescription] ?? "").trim() || "Imported product — add a description in the admin panel.",
+          flags: { featured: yn(r[col.featured]), newArrival: yn(r[col.newArrival]), bestSeller: yn(r[col.bestSeller]), trending: yn(r[col.trending]) },
+          imageUrl: (r[col.imageUrl] ?? "").trim(),
+          variants: [],
+        };
+        groups.set(key, g);
+      }
+      const dupeSku = g.variants.some((v) => v.sku === sku);
+      if (dupeSku) { rowErrors.push({ line, error: `duplicate sku ${sku} within product` }); continue; }
+      g.variants.push({
+        variantName: (r[col.variantName] ?? "").trim() || sku,
+        sku, price,
+        compareAtPrice: num(r[col.compareAtPrice]),
+        stock: Math.max(0, Math.trunc(num(r[col.stock], 0) ?? 0)),
+      });
+    }
+
+    // Resolve categories (by name, case-insensitive)
+    const cats = await Category.find().select("name slug").lean<any[]>();
+    const catByName = new Map<string, string>();
+    for (const c of cats) {
+      catByName.set(c.name.toLowerCase(), String(c._id));
+      catByName.set(String(c.slug).toLowerCase(), String(c._id));
+    }
+
+    let created = 0;
+    let updated = 0;
+    const errors = [...rowErrors];
+
+    for (const g of groups.values()) {
+      try {
+        const categoryId = catByName.get(g.category.toLowerCase());
+        if (!categoryId) {
+          errors.push({ line: 0, error: `${g.name}: category "${g.category || "—"}" not found (create it first)` });
+          continue;
+        }
+        const existing = await Product.findOne({ slug: g.slug });
+        if (existing) {
+          // Update scalar fields + upsert variants by SKU (stock changes recorded as MANUAL_ADJUST)
+          existing.name = g.name;
+          existing.status = g.status as any;
+          existing.shortDescription = g.shortDescription;
+          existing.isFeatured = g.flags.featured;
+          existing.isNewArrival = g.flags.newArrival;
+          existing.isBestSeller = g.flags.bestSeller;
+          existing.isTrending = g.flags.trending;
+          existing.categoryId = new mongoose.Types.ObjectId(categoryId) as any;
+          if (g.imageUrl && !(existing.images ?? []).length) {
+            existing.images.addToSet({ url: g.imageUrl, alt: g.name, sortOrder: 0 } as any);
+          }
+          for (const v of g.variants) {
+            const match = (existing.variants ?? []).find((x: any) => String(x.sku).toUpperCase() === v.sku);
+            if (match) {
+              const newStock = Math.max(0, v.stock);
+              if (newStock !== match.stock) {
+                await StockMovement.create({
+                  variantId: match._id, delta: newStock - match.stock, reason: "MANUAL_ADJUST",
+                  reference: `csv-import-${Date.now()}`, note: "CSV import stock set", createdById: new mongoose.Types.ObjectId(admin.id),
+                });
+                match.stock = newStock;
+              }
+              match.price = v.price;
+              match.compareAtPrice = v.compareAtPrice;
+              match.name = v.variantName || match.name;
+              match.isActive = true;
+            } else {
+              existing.variants.push({
+                name: v.variantName, sku: v.sku, price: v.price, compareAtPrice: v.compareAtPrice,
+                stock: v.stock, lowStockThreshold: 5, isActive: true, barcode: null,
+              } as any);
+              if (v.stock > 0) {
+                const pushed = (existing.variants as any[])[(existing.variants as any[]).length - 1];
+                await StockMovement.create({
+                  variantId: pushed._id, delta: v.stock, reason: "INITIAL",
+                  reference: `csv-import-${Date.now()}`, note: "CSV import new variant", createdById: new mongoose.Types.ObjectId(admin.id),
+                });
+              }
+            }
+          }
+          await existing.save();
+          updated += 1;
+        } else {
+          const doc = await Product.create({
+            name: g.name, slug: g.slug, categoryId, shortDescription: g.shortDescription,
+            status: g.status, ...g.flags,
+            images: g.imageUrl ? [{ url: g.imageUrl, alt: g.name, sortOrder: 0 }] : [],
+            variants: g.variants.map((v) => ({
+              name: v.variantName, sku: v.sku, price: v.price, compareAtPrice: v.compareAtPrice,
+              stock: v.stock, lowStockThreshold: 5, isActive: true, barcode: null,
+            })),
+          });
+          for (const v of doc.variants) {
+            if (v.stock > 0) {
+              await StockMovement.create({
+                variantId: v._id, delta: v.stock, reason: "INITIAL",
+                reference: `csv-import-${Date.now()}`, note: "CSV import", createdById: new mongoose.Types.ObjectId(admin.id),
+              });
+            }
+          }
+          created += 1;
+        }
+      } catch (e: any) {
+        errors.push({ line: 0, error: `${g.name}: ${e?.message ?? "failed"}` });
+      }
+    }
+
+    await audit(
+      { actor: admin, action: "product.import", entityType: "Product", entityId: "csv", metadata: { created, updated, errors: errors.length } },
+      req
+    );
+
+    return ok(res, { created, updated, failed: errors.length, errors: errors.slice(0, 25) });
   })
 );

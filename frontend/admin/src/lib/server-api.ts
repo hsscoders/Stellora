@@ -84,6 +84,7 @@ export function apiAdminStats(): Promise<AdminStats> {
 }
 
 export type AdminReports = {
+  days: number;
   daily: { date: string; grandTotal: number }[];
   topItems: { productName: string; quantity: number; lineTotal: number; orders: number }[];
   lowStock: {
@@ -93,10 +94,25 @@ export type AdminReports = {
     lowStockThreshold: number;
     product: { name: string; slug: string };
   }[];
+  kpi: {
+    revenue: number;
+    orders: number;
+    aov: number;
+    prevRevenue: number;
+    prevOrders: number;
+    prevAov: number;
+    revenueDeltaPct: number;
+    ordersDeltaPct: number;
+    aovDeltaPct: number;
+  };
+  categories: { category: string; revenue: number; units: number }[];
+  paymentSplit: Record<string, { count: number; total: number }>;
+  topCoupons: { code: string; orders: number; saved: number }[];
 };
 
-export function apiAdminReports(): Promise<AdminReports> {
-  return adminGet<AdminReports>("/api/admin/reports");
+export function apiAdminReports(days?: number): Promise<AdminReports> {
+  const q = days && [7, 30].includes(days) ? `?days=${days}` : "";
+  return adminGet<AdminReports>(`/api/admin/reports${q}`);
 }
 
 export type AuditLogRow = {

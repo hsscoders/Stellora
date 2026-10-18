@@ -5,6 +5,7 @@ import type { ProductCardData } from "@/lib/types";
 import { VariantPicker } from "@/components/stellora/product-detail-client";
 import { AddToCartPanel } from "@/components/stellora/add-to-cart-panel";
 import { Separator } from "@/components/ui/separator";
+import { useRealtimeEvent } from "@/components/stellora/realtime";
 
 type Variant = ProductCardData["variants"][number];
 
@@ -78,6 +79,21 @@ export function ProductPurchase({
       document.removeEventListener("visibilitychange", poll);
     };
   }, [slug]);
+
+  /* Socket.IO push — stock ticks land the INSTANT an order commits anywhere
+     (online checkout or POS). The 10s poll above remains as a safety net. */
+  useRealtimeEvent<{
+    variants: { productId: string; variantId: string; stock: number }[];
+  }>("stock:update", (p) => {
+    if (!p?.variants || !productId) return;
+    const mine = p.variants.filter((v) => v.productId === productId);
+    if (mine.length === 0) return;
+    setLiveStocks((prev) => {
+      const map = new Map(prev ?? []);
+      for (const v of mine) map.set(v.variantId, Number(v.stock) || 0);
+      return map;
+    });
+  });
 
   if (!selected) {
     return <p className="text-sm text-muted-foreground">Currently unavailable.</p>;

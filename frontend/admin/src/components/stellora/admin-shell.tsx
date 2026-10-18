@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -19,6 +20,7 @@ import {
   ScrollText,
   BarChart3,
   Mail,
+  MessageCircle,
   ArrowUpRight,
   Star,
   RotateCcw,
@@ -41,6 +43,7 @@ import {
 import { formatINR } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ThemeToggle } from "@/components/stellora/theme-toggle";
+import { RealtimeProvider, useRtBus, LiveRefresher } from "@/components/stellora/realtime";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isNew?: boolean };
 type NavSection = { section: string; items: NavItem[] };
@@ -75,6 +78,7 @@ const NAV_SECTIONS: NavSection[] = [
     section: "Customers",
     items: [
       { href: "/admin/customers", label: "Customers", icon: Users },
+      { href: "/admin/chat", label: "Live Chat", icon: MessageCircle, isNew: true },
       { href: "/admin/reviews", label: "Reviews", icon: Star },
       { href: "/admin/questions", label: "Product Q&A", icon: MessageCircleQuestion },
       { href: "/admin/newsletter", label: "Newsletter & Alerts", icon: Send },
@@ -581,6 +585,7 @@ type StatsPayload = {
   pendingReviews?: number;
   pendingQuestions?: number;
   lowStock?: unknown[];
+  unreadChat?: number;
 };
 
 function NotificationsBell() {
@@ -593,7 +598,8 @@ function NotificationsBell() {
   const pendingReviews = Number(stats?.pendingReviews) || 0;
   const pendingQuestions = Number(stats?.pendingQuestions) || 0;
   const lowStockCount = Array.isArray(stats?.lowStock) ? stats!.lowStock.length : 0;
-  const actionable = pendingOrders + pendingReviews + pendingQuestions + lowStockCount;
+  const unreadChat = Number(stats?.unreadChat) || 0;
+  const actionable = pendingOrders + pendingReviews + pendingQuestions + lowStockCount + unreadChat;
 
   const load = useCallback(async () => {
     try {
@@ -612,6 +618,19 @@ function NotificationsBell() {
     });
     return () => cancelAnimationFrame(raf);
   }, [load]);
+
+  /* Realtime: any push (order, chat, low stock, review…) refreshes the badge
+     without polling. Bursts are coalesced to one refresh per 1.5s. */
+  const rtLoadRef = useRef(load);
+  rtLoadRef.current = load;
+  const rtTimer = useRef<number | null>(null);
+  useRtBus(() => {
+    if (rtTimer.current) return;
+    rtTimer.current = window.setTimeout(() => {
+      rtTimer.current = null;
+      void rtLoadRef.current();
+    }, 1500);
+  });
 
   // …then refreshed on every open.
   const toggle = useCallback(() => {
@@ -653,6 +672,12 @@ function NotificationsBell() {
       icon: ShoppingCart,
       label: `${pendingOrders} pending order${pendingOrders === 1 ? "" : "s"}`,
       count: pendingOrders,
+    },
+    {
+      to: "/admin/chat",
+      icon: MessageCircle,
+      label: `${unreadChat} unread chat message${unreadChat === 1 ? "" : "s"}`,
+      count: unreadChat,
     },
     {
       to: "/admin/reviews",
@@ -831,10 +856,12 @@ export function AdminShell({
      Stocky's register: no sidebar, no topbar, no page padding. The checkout
      counter owns every pixel so cashiers can't wander into the admin. */
   if (pathname.startsWith("/admin/pos")) {
-    return <>{children}</>;
+    return <RealtimeProvider>{children}</RealtimeProvider>;
   }
 
   return (
+    <RealtimeProvider>
+    <LiveRefresher pathname={pathname} />
     <div className="flex min-h-screen bg-muted/25">
       {/* ---------------- Desktop sidebar ---------------- */}
       <aside
@@ -1024,5 +1051,6 @@ export function AdminShell({
         </button>
       </nav>
     </div>
+    </RealtimeProvider>
   );
 }

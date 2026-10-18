@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { OrderActions } from "@/components/stellora/order-actions";
+import { OrderLive } from "@/components/stellora/order-live";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,7 @@ export default async function OrderDetailPage({
 
   return (
     <div className="space-y-8">
+      <OrderLive orderNumber={order.orderNumber} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-serif text-3xl font-medium">{order.orderNumber}</h1>

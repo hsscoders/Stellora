@@ -78,6 +78,14 @@ authRouter.post(
       userAgent: req.headers["user-agent"] as string | undefined,
     });
 
+    // Realtime nudge: the admin dashboard grows its customer counter live.
+    try {
+      const { notifyNewUser } = await import("../services/realtime");
+      notifyNewUser({ name: user.name, email: user.email ?? null, at: new Date().toISOString() });
+    } catch {
+      // best-effort
+    }
+
     await audit(
       {
         actor: { id: String(user._id), email: user.email ?? null, name: user.name, role: user.role, phone: user.phone ?? null },

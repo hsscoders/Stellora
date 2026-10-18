@@ -6,6 +6,13 @@ import { generateOrderNumber } from "../lib/utils";
 import { getCartView, type CartView } from "./cart";
 import { getActiveShippingRate, computeShipping, validateCoupon } from "./pricing";
 import { MIN_REDEEM, maxRedeemable, settleOnCancel, accrueEarn } from "./loyalty";
+import {
+  notifyNewOrder,
+  notifyOrderStatus,
+  notifyLowStock,
+  notifyStockUpdate,
+  type NewOrderPayload,
+} from "./realtime";
 
 export interface CheckoutInput {
   userId: string;
@@ -258,7 +265,94 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
     await session.endSession();
   }
 
+  // Realtime fan-out AFTER the transaction commits — never blocks checkout.
+  // (Replays always returned early above, so reaching this line = fresh order.)
+  void broadcastNewOrder(orderNumber, input.userId);
+
   return { orderNumber, replayed: false };
+}
+
+/**
+ * Fire-and-forget realtime broadcast for a fresh order:
+ *  - admins: instant "New order" toast + bell + live stats
+ *  - everyone: fresh stock ticks for the purchased variants (open product
+ *    pages update their "only X left" counter without a reload)
+ *  - admins: low-stock / sold-out alert when a variant crosses its threshold
+ */
+async function broadcastNewOrder(orderNumber: string, userId: string): Promise<void> {
+  try {
+    const order = await Order.findOne({ orderNumber })
+      .select(
+        "_id grandTotal items paymentMethod shipCity shipName userId createdAt"
+      )
+      .populate("userId", "name email")
+      .lean<any>();
+    if (!order) return;
+
+    const items = (order.items ?? []).map((i: any) => ({
+      productName: i.productName,
+      variantName: i.variantName,
+      quantity: i.quantity,
+    }));
+    const owner = order.userId && typeof order.userId === "object" ? order.userId : null;
+
+    const payload: NewOrderPayload = {
+      orderNumber,
+      orderId: String(order._id),
+      grandTotal: order.grandTotal,
+      itemCount: items.reduce((n: number, i: { quantity: number }) => n + i.quantity, 0),
+      items,
+      customerName: owner?.name ?? order.shipName ?? null,
+      customerEmail: owner?.email ?? null,
+      paymentMethod: order.paymentMethod,
+      city: order.shipCity ?? null,
+      at: (order.createdAt ?? new Date()).toISOString(),
+    };
+    notifyNewOrder(payload);
+
+    // Stock ticks + low-stock detection in one product query.
+    const variantIds = (order.items ?? []).map((i: any) => i.variantId).filter(Boolean);
+    if (variantIds.length > 0) {
+      const products = await Product.find({ "variants._id": { $in: variantIds } })
+        .select("name slug variants")
+        .lean<{
+          _id: any;
+          name: string;
+          slug: string;
+          variants: { _id: any; name: string; sku: string; stock: number; lowStockThreshold: number; isActive: boolean }[];
+        }[]>();
+      const ticks: { productId: string; variantId: string; stock: number }[] = [];
+      const low: {
+        productName: string;
+        variantName: string;
+        sku: string;
+        stock: number;
+        threshold: number;
+        slug: string;
+      }[] = [];
+      for (const p of products) {
+        for (const v of p.variants ?? []) {
+          if (!variantIds.some((id: unknown) => String(id) === String(v._id))) continue;
+          ticks.push({ productId: String(p._id), variantId: String(v._id), stock: v.stock });
+          if (v.stock <= v.lowStockThreshold) {
+            low.push({
+              productName: p.name,
+              variantName: v.name,
+              sku: v.sku,
+              stock: v.stock,
+              threshold: v.lowStockThreshold,
+              slug: p.slug,
+            });
+          }
+        }
+      }
+      notifyStockUpdate(ticks);
+      notifyLowStock(low);
+    }
+  } catch (err) {
+    // Realtime is best-effort — a broadcast failure must never break checkout.
+    console.error("[realtime] new-order broadcast failed:", err);
+  }
 }
 
 /** Allowed order status transitions (state machine enforced server-side). */
@@ -280,6 +374,7 @@ export async function transitionOrderStatus(
     _id: any;
     orderNumber: string;
     status: string;
+    userId: unknown;
     items: { variantId?: string | null; quantity: number }[];
   }>();
   if (!order) throw new HttpError("NOT_FOUND", "Order not found.", 404);
@@ -370,6 +465,19 @@ export async function transitionOrderStatus(
     }
   } finally {
     await session.endSession();
+  }
+
+  // Realtime: customer's open order pages update instantly; admin order
+  // tables/boards refresh without polling.
+  try {
+    notifyOrderStatus({
+      orderNumber: order.orderNumber,
+      userId: String(order.userId ?? ""),
+      status: nextStatus,
+      note: opts.note ?? null,
+    });
+  } catch {
+    // best-effort
   }
 
   return { orderNumber: order.orderNumber, status: nextStatus };

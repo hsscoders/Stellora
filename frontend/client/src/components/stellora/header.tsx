@@ -24,6 +24,7 @@ import { useStore } from "@/lib/store";
 import { ThemeToggle } from "@/components/stellora/theme-toggle";
 import { NavSidebar } from "@/components/stellora/nav-sidebar";
 import { SearchSuggest } from "@/components/stellora/search-suggest";
+import { SaleCountdown } from "@/components/stellora/sale-countdown";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -61,7 +62,13 @@ const COLLECTIONS = [
   { href: "/shop", label: "Shop Everything", icon: ShoppingBag },
 ];
 
-export function Header({ announcement }: { announcement: string | null }) {
+export function Header({
+  announcement,
+  sale,
+}: {
+  announcement: string | null;
+  sale?: { text: string; endsAt: string } | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const cart = useStore((s) => s.cart);
@@ -160,12 +167,16 @@ export function Header({ announcement }: { announcement: string | null }) {
           headerHidden && !searchOpen ? "-translate-y-full" : "translate-y-0"
         } ${scrolled ? "bg-background/95 shadow-lg shadow-foreground/5" : "bg-background/90"}`}
       >
-        {announcement && (
-          <div className="brand-gradient text-primary-foreground">
-            <p className="mx-auto max-w-7xl truncate px-4 py-1.5 text-center text-[10px] tracking-wide sm:px-6 sm:text-xs">
-              {announcement}
-            </p>
-          </div>
+        {sale ? (
+          <SaleCountdown text={sale.text} endsAt={sale.endsAt} />
+        ) : (
+          announcement && (
+            <div className="brand-gradient text-primary-foreground">
+              <p className="mx-auto max-w-7xl truncate px-4 py-1.5 text-center text-[10px] tracking-wide sm:px-6 sm:text-xs">
+                {announcement}
+              </p>
+            </div>
+          )
         )}
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-3 sm:gap-4 sm:px-6">
           <button

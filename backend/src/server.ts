@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
@@ -15,7 +16,9 @@ import { adminRouter } from "./routes/admin";
 import { paymentsRouter } from "./routes/payments";
 import { engagementRouter } from "./routes/engagement";
 import { webhooksRouter } from "./routes/webhooks";
+import { chatRouter } from "./routes/chat";
 import { startScheduler } from "./services/scheduler";
+import { initRealtime, notifyStatsBump, emitContactCreated } from "./services/realtime";
 
 const app = express();
 
@@ -58,6 +61,7 @@ app.use("/api", wishlistRouter);
 app.use("/api", commerceRouter);
 app.use("/api", paymentsRouter);
 app.use("/api", adminRouter);
+app.use("/api", chatRouter);
 
 // Contact form (public) — mounted here to keep routes table tidy
 import { ContactMessage } from "./models";
@@ -85,6 +89,9 @@ app.post(
       subject: data.subject,
       message: data.message,
     });
+    // Realtime nudge to the admin console (bell + toasts).
+    notifyStatsBump("contact");
+    emitContactCreated(data.name, data.subject);
     return okRes(res, {
       message: "Thank you for reaching out. Our team will get back to you soon.",
     });
@@ -100,8 +107,12 @@ async function main() {
   await mongoose.connect(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   console.log(`[backend] MongoDB connected: ${mongoose.connection.host}/${mongoose.connection.name}`);
 
-  app.listen(env.PORT, "127.0.0.1", () => {
-    console.log(`[backend] Stellora API listening on http://127.0.0.1:${env.PORT}`);
+  // Socket.IO shares the API's HTTP server — one port for REST + realtime.
+  const server = http.createServer(app);
+  initRealtime(server);
+
+  server.listen(env.PORT, "127.0.0.1", () => {
+    console.log(`[backend] Stellora API listening on http://127.0.0.1:${env.PORT} (REST + WebSocket)`);
   });
 
   // Stellora Auto-pilot — unattended sweeps (stale order cancel, restock alerts)

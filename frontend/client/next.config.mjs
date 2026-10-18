@@ -23,6 +23,12 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: false,
+  // Socket.IO needs the exact path /socket.io/ (trailing slash) to reach the
+  // backend engine.io listener — Next's automatic trailing-slash redirect
+  // would strip it (308 → /socket.io → backend 404). Skipping the redirect
+  // lets the rewrites below pass the path through byte-for-byte. The app's
+  // own pages never use trailing slashes, so nothing else changes.
+  skipTrailingSlashRedirect: true,
   // Dev preview: serve original images directly. The on-demand sharp optimizer
   // makes first loads crawl in dev (each 1080px JPEG re-encoded per unique URL),
   // so product cards sit white/blank for seconds — the #1 "preview looks broken"
@@ -41,6 +47,10 @@ const nextConfig = {
       // All API calls proxy to the Express backend — browser stays same-origin,
       // so httpOnly session cookies work without any CORS complexity.
       { source: "/api/:path*", destination: `${BACKEND}/api/:path*` },
+      // Socket.IO realtime (polling + websocket upgrade) — same-origin proxy,
+      // so the session cookie rides the handshake and auth is automatic.
+      { source: "/socket.io/:path*", destination: `${BACKEND}/socket.io/:path*` },
+      { source: "/socket.io/", destination: `${BACKEND}/socket.io/` },
       // Uploaded media served by the backend
       { source: "/uploads/:path*", destination: `${BACKEND}/api/media/:path*` },
       // Admin console is a separate Next.js app, proxied in so the whole site

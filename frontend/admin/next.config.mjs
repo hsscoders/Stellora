@@ -7,6 +7,9 @@ const BACKEND = process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
 
 const nextConfig = {
   reactStrictMode: false,
+  // Socket.IO: keep the exact /socket.io/ path (trailing slash) — see the
+  // twin note in the storefront config.
+  skipTrailingSlashRedirect: true,
   basePath: "/admin-console",
   // Serve admin images as-is. The production image optimizer self-fetches
   // relative URLs WITHOUT the basePath (Next internal-fetch quirk with
@@ -29,6 +32,10 @@ const nextConfig = {
       // is auto-prefixed by Next to /admin-console/….
       { source: "/api/:path*", destination: `${BACKEND}/api/:path*`, basePath: false },
       { source: "/uploads/:path*", destination: `${BACKEND}/api/media/:path*`, basePath: false },
+      // Socket.IO realtime — same-origin proxy so the admin session cookie
+      // rides the handshake (works for both direct :3001 and proxied access).
+      { source: "/socket.io/:path*", destination: `${BACKEND}/socket.io/:path*`, basePath: false },
+      { source: "/socket.io/", destination: `${BACKEND}/socket.io/`, basePath: false },
       // Static product/banner art lives in the storefront's public/ — on the
       // admin origin, Next only serves public under the basePath, so bounce
       // the bare /images/* paths to the basePath'd public route (self-fetch).
