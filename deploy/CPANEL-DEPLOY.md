@@ -1,46 +1,39 @@
-# Stellora — cPanel Deployment (Luveedu Cloud 3)
+# Stellora — cPanel Deployment (Luveedu Cloud 3, EK domain)
 
-Domain: **stellora.voterx.xyz** · Host: cPanel with Git™ Version Control,
-Setup Node.js App, and Terminal.
+Domain: **stellora.voterx.xyz** · Host: cPanel (Git™ Version Control +
+Setup Node.js App + Terminal)
 
-## Architecture (3 Node.js apps)
-
-cPanel's Node.js apps run under Phusion Passenger, and each app gets a
-random internal port — apps cannot talk on fixed localhost ports. So each
-app gets its own subdomain and they talk over public HTTPS:
+Sab kuch EK hi domain + EK hi Node.js app pe chalta hai:
 
 ```
-stellora.voterx.xyz          -> storefront (frontend/client)
-api.stellora.voterx.xyz      -> backend API (backend)
-admin.stellora.voterx.xyz    -> admin console (frontend/admin)
+https://stellora.voterx.xyz
+ ├── /api/*           → backend Express   (internal :4000)
+ ├── /uploads/*       → backend media     (internal :4000)
+ ├── /admin-console/* → admin Next app    (internal :3001)
+ └── baaki sab        → storefront Next   (Passenger ka PORT)
 ```
 
-The storefront proxies `/api/*` and `/admin-console/*` internally, so
-visitors only ever see `stellora.voterx.xyz`. Admin login lives at
-`stellora.voterx.xyz/admin/login` (served by the storefront, same as local).
-
-RAM note: each Next.js production app needs ~300–500 MB. Cloud 3 should
-have enough; if apps crash with OOM, build+run only the storefront and
-backend, or move to a VPS.
+Repo root ka `passenger.js` teeno ko ek process me chalata hai. Koi subdomain
+nahi, koi extra SSL nahi.
 
 ---
 
-## Step 1 — Subdomains banão (cPanel → Domains → Create Subdomain)
+## Step 1 — Code laao (cPanel → Git™ Version Control)
 
-- `api.stellora.voterx.xyz`
-- `admin.stellora.voterx.xyz`
+1. Local machine se latest code push karo:
+   ```bash
+   git push origin main
+   ```
+2. cPanel → Git™ Version Control → Create → repo URL daalo → Clone.
+   Default me `~/repos/Stellora` me clone hota hai. Terminal me copy karo:
+   ```bash
+   cp -r ~/repos/Stellora ~/stellora
+   cd ~/stellora
+   ```
 
-(Document root default values are fine — Passenger overrides them.)
+> Tip: `node_modules` repo me nahi hai — step 3 me install hoga.
 
-## Step 2 — Code laao (cPanel → Git™ Version Control)
-
-1. Clone your repo (e.g. `https://github.com/hsscoders/Stellora.git`) into
-   `~/stellora`. cPanel clones into `~/repos/...` by default — after clone,
-   use "Manage" → deploy, or in Terminal: `cp -r ~/repos/Stellora ~/stellora`
-2. Push the latest code from your machine first:
-   `git push origin main`
-
-## Step 3 — Environment files (Terminal)
+## Step 2 — Environment file (Terminal)
 
 ```bash
 cd ~/stellora
@@ -48,108 +41,96 @@ cp backend/.env.example backend/.env
 nano backend/.env
 ```
 
-`backend/.env` me ye values set karo:
+Ye values set karo:
 
 ```env
 MONGODB_URI="mongodb+srv://hsscoders_db_user:...@cluster0.../stellora?retryWrites=true&w=majority"
 PORT=4000
 APP_URL="https://stellora.voterx.xyz"
 ADMIN_BOOTSTRAP_EMAIL="admin@stellora.local"
-ADMIN_BOOTSTRAP_PASSWORD="<strong-password>"
-PAYMENT_DEMO_SECRET="<random-string>"
+ADMIN_BOOTSTRAP_PASSWORD="<strong-password-set-karo>"
+PAYMENT_DEMO_SECRET="<koi-random-string>"
 ```
 
-> Atlas Network Access me hosting server ka IP allow karna ya
-> `0.0.0.0/0` (Allow from anywhere) — warna backend connect nahi hoga.
+> **MongoDB Atlas:** Network Access me `0.0.0.0/0` (Allow from anywhere)
+> add karo — cPanel server ka IP fixed nahi hota. Bina iske backend connect
+> nahi hoga.
 
-`frontend/client/.env`:
-
-```env
-BACKEND_URL=https://api.stellora.voterx.xyz
-ADMIN_URL=https://admin.stellora.voterx.xyz
-NODE_ENV=production
-```
-
-`frontend/admin/.env`:
-
-```env
-BACKEND_URL=https://api.stellora.voterx.xyz
-NODE_ENV=production
-```
-
-## Step 4 — Install, build, seed (Terminal)
+## Step 3 — Install + Build + Seed (Terminal)
 
 ```bash
 cd ~/stellora
-npm install                # repo root — npm workspaces handles everything
-npm run build              # builds both frontends
-npm run build:backend      # compiles backend TypeScript to dist/
-npm run seed               # initial data (only first deploy)
+npm install                # sab dependencies (npm workspaces)
+npm run build              # dono frontends (.next/)
+npm run build:backend      # backend TypeScript → dist/
+npm run seed               # sirf PEHLI baar (sample data)
 ```
 
-Check root `package.json` scripts exist for `build`/`seed`; if `npm run seed`
-fails on env loading, run:
+Agar seed env load na kare to:
 `cd backend && MONGODB_URI="<uri>" npx tsx src/seed.ts`
 
-## Step 5 — 3 apps register karo (cPanel → Setup Node.js App → Create)
+## Step 4 — Node.js App banao (cPanel → Setup Node.js App → Create)
 
-| Field | Backend app | Storefront app | Admin app |
-|---|---|---|---|
-| Node version | 20.x+ | 20.x+ | 20.x+ |
-| Mode | Production | Production | Production |
-| Application root | `stellora/backend` | `stellora/frontend/client` | `stellora/frontend/admin` |
-| Application URL | `api.stellora.voterx.xyz` | `stellora.voterx.xyz` | `admin.stellora.voterx.xyz` |
-| Startup file | `passenger.js` | `passenger.js` | `passenger.js` |
+| Field | Value |
+|---|---|
+| Node.js version | 20.x ya usse upar |
+| Application mode | Production |
+| Application root | `stellora` (repo root — `backend`/`frontend` Nahi) |
+| Application URL | `stellora.voterx.xyz` |
+| Application startup file | `passenger.js` |
 
-Startup files (`passenger.js`) already exist in each app root — ye repo me
-included hain.
+### Environment variables (usi screen pe add karo):
 
-## Step 6 — Environment variables (app UI me, optional if .env files set)
+```
+NODE_ENV=production
+MONGODB_URI=mongodb+srv://...(wahi jo .env me)
+APP_URL=https://stellora.voterx.xyz
+ADMIN_BOOTSTRAP_PASSWORD=<wahi password>
+PAYMENT_DEMO_SECRET=<random string>
+```
 
-Passenger `.env` files ko automatically load nahi karta har setup me, isliye
-same values cPanel app ke "Environment variables" me bhi daal do:
+(.env file bhi rakho — dotenv use karta hai; UI vars backup hain agar
+Passenger working directory issue kare.)
 
-- Backend app: `MONGODB_URI`, `APP_URL`, `ADMIN_BOOTSTRAP_PASSWORD`,
-  `PAYMENT_DEMO_SECRET`, `NODE_ENV=production`
-- Storefront app: `BACKEND_URL`, `ADMIN_URL`, `NODE_ENV=production`
-- Admin app: `BACKEND_URL`, `NODE_ENV=production`
+Phir **Create / Restart** dabao.
 
-Then click **Restart** on each app.
+## Step 5 — SSL (zaroori)
 
-## Step 7 — SSL (cPanel → SSL/TLS Status → AutoSSL Run)
-
-Teeno hostnames pe HTTPS mandatory hai (apps HTTPS URLs se baat karte hain).
+cPanel → SSL/TLS Status → **Run AutoSSL** — `stellora.voterx.xyz` ke liye
+certificate lag jayega. HTTPS ke bina cookies/login nahi chalenge.
 
 ---
 
 ## Verify
 
-- `https://api.stellora.voterx.xyz/api/health` →
-  `{"status":"healthy","database":"connected"}`
-- `https://stellora.voterx.xyz` → storefront with products
-- `https://stellora.voterx.xyz/admin-console/admin` → admin (login:
-  `admin@stellora.local` + `ADMIN_BOOTSTRAP_PASSWORD`)
+1. `https://stellora.voterx.xyz/api/health` →
+   `{"status":"healthy","database":"connected"}`
+2. `https://stellora.voterx.xyz` → storefront products ke saath khule
+3. `https://stellora.voterx.xyz/admin-console/admin` → admin console
+   (login: `admin@stellora.local` + `ADMIN_BOOTSTRAP_PASSWORD`)
 
-## Updates (naya code deploy karna)
+## Naya code deploy karna (updates)
 
 ```bash
-# Local machine se:
+# Local:
 git push origin main
-
-# cPanel Git™ Version Control me "Pull / Deploy", phir Terminal:
+# cPanel Git™ Version Control → Pull/Deploy, phir Terminal:
 cd ~/stellora && git pull
-npm install && npm run build
+npm install && npm run build && npm run build:backend
 ```
 
-Then Restart all three apps in Setup Node.js App.
+Phir Setup Node.js App → **Restart**.
 
 ## Troubleshooting
 
-- **App 503** → Terminal me `cd ~/stellora && node backend/passenger.js`
-  (PORT=4000) chala ke error dekho; usually missing `dist/` (build skip hua)
-  ya OOM.
-- **Backend "database" not connected** → Atlas IP allowlist check karo.
-- **Admin 404 on admin subdomain root** → normal; wo `/admin-console` basePath
-  pe serve hota hai. Storefront se `stellora.voterx.xyz/admin-console` kholo.
-- **Cookie/login issues** → `APP_URL` aur teeno URLs exactly HTTPS ke saath
-  match karne chahiye.
+- **503 / App not running** → Terminal me seedha chala ke error dekho:
+  `cd ~/stellora && node passenger.js` (output me reason aayega — aam
+  causes: `dist/` missing (build:backend skip hua), RAM kam, Atlas IP block).
+- **`database` disconnected** → Atlas Network Access check karo (0.0.0.0/0).
+- **Pehla request slow (5–15 sec)** → Passenger idle pe app band kar deta
+  hai; normal shared-hosting behaviour, error nahi.
+- **Admin 404** → `/admin-console` basePath ke saath kholo; `stellora.voterx.xyz/admin`
+  se login hota hai jo storefront serve karta hai.
+- **Login/cookie issue** → URL hamesha HTTPS ke saath, `APP_URL` exact match.
+- **RAM** — teen apps ek process me ~1 GB+ maangte hain; Cloud 3 me theek
+  chalega, agar OOM ho to Terminal me `free -m` se check karo.
