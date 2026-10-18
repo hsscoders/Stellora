@@ -82,7 +82,8 @@ NODE_ENV=production
 ```bash
 cd ~/stellora
 npm install                # repo root — npm workspaces handles everything
-npm run build              # builds backend (dist/) + both frontends
+npm run build              # builds both frontends
+npm run build:backend      # compiles backend TypeScript to dist/
 npm run seed               # initial data (only first deploy)
 ```
 
