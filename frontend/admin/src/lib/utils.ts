@@ -44,9 +44,3 @@ export function slugify(s: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 }
-
-export function generateOrderNumber(): string {
-  const year = new Date().getFullYear();
-  const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
-  return `STL-${year}-${rand}`;
-}

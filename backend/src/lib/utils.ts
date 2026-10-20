@@ -1,30 +1,3 @@
-export function formatINR(amount: number | string): string {
-  const n = Number(amount);
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: n % 1 === 0 ? 0 : 2,
-  }).format(n);
-}
-
-export function formatDate(d: Date | string): string {
-  return new Date(d).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-export function formatDateTime(d: Date | string): string {
-  return new Date(d).toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 export function slugify(s: string): string {
   return s
     .toLowerCase()

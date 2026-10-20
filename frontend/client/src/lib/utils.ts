@@ -34,19 +34,3 @@ export function formatDateTime(d: Date | string): string {
     minute: "2-digit",
   });
 }
-
-export function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/[\s_]+/g, "-")
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-export function generateOrderNumber(): string {
-  const year = new Date().getFullYear();
-  const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
-  return `STL-${year}-${rand}`;
-}

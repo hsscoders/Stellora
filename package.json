@@ -23,10 +23,7 @@
     "dev:frontend": "npm run dev -w @stellora/frontend",
     "dev:admin": "npm run dev -w @stellora/admin",
     "dev:backend": "npm run dev -w @stellora/backend",
-    "start:backend": "npm run start -w @stellora/backend",
-    "pm2:start": "bash scripts/dev-server.sh",
-    "pm2:status": "pm2 status",
-    "pm2:logs": "pm2 logs"
+    "start:backend": "npm run start -w @stellora/backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -1,4 +1,4 @@
-import { Schema, model, Types } from "mongoose";
+import { Schema, model } from "mongoose";
 
 /* ---------- Cart (one per user or guest session key, items embedded) ---------- */
 
@@ -178,25 +178,3 @@ const ShippingRateSchema = new Schema(
 );
 
 export const ShippingRate = model("ShippingRate", ShippingRateSchema);
-
-/* ---------- Counter (atomic sequences) ---------- */
-
-const CounterSchema = new Schema(
-  {
-    key: { type: String, required: true, unique: true },
-    seq: { type: Number, default: 0 },
-  },
-  { collection: "counters" }
-);
-
-CounterSchema.statics.nextVal = async function (key: string): Promise<number> {
-  const doc = (await this.findOneAndUpdate(
-    { key },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true }
-  ).lean()) as { seq: number } | null;
-  return doc?.seq ?? 0;
-};
-
-export const Counter = model("Counter", CounterSchema);
-export type { Types };

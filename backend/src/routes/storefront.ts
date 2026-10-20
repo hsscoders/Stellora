@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import { Product, Category, Review } from "../models";
 import { ok, handle } from "../lib/http";
 import { productQuerySchema } from "../validation";
-import { toAPI } from "../lib/serialize";
 import type { Types } from "mongoose";
 
 const PAGE_SIZE = 12;
@@ -354,4 +353,4 @@ export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export { serializeProduct, toAPI };
+export { serializeProduct };

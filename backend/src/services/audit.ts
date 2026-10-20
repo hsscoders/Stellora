@@ -1,5 +1,4 @@
 import { AuditLog } from "../models";
-import { HttpError } from "../lib/http";
 
 interface AuditInput {
   actor?: {
@@ -44,7 +43,3 @@ export async function audit(
   }
 }
 
-export function assertFound<T>(value: T | null | undefined, what: string): T {
-  if (!value) throw new HttpError("NOT_FOUND", `${what} not found.`, 404);
-  return value;
-}

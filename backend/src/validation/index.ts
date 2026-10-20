@@ -358,18 +358,6 @@ export const paymentTestSchema = z.object({
     .optional(),
 });
 
-export const orderStatusSchema = z.object({
-  status: z.enum(["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"]),
-  note: z.string().trim().max(300).optional().or(z.literal("")),
-  carrier: z.string().trim().max(80).optional().or(z.literal("")),
-  trackingNumber: z.string().trim().max(80).optional().or(z.literal("")),
-});
-
-export const paymentStatusSchema = z.object({
-  paymentStatus: z.enum(["PENDING", "PAID", "FAILED", "REFUNDED"]),
-  providerRef: z.string().trim().max(100).optional().or(z.literal("")),
-});
-
 /* ---------- Engagement: reviews, newsletter, restock alerts, returns ---------- */
 
 export const reviewCreateSchema = z.object({
