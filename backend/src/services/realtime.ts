@@ -1,8 +1,8 @@
 import { Server as SocketServer, type Socket } from "socket.io";
 import type { Server as HttpServer } from "http";
 import { env } from "../env";
+import { db, newId } from "../lib/db";
 import { sha256, randomToken } from "../lib/password";
-import { Session, User, ChatThread, ChatMessage } from "../models";
 
 /**
  * Stellora Realtime — Socket.IO engine for the whole platform.
@@ -90,14 +90,17 @@ function readCookie(cookieHeader: string | undefined, name: string): string | nu
 async function resolveSessionUser(token: string | null): Promise<RealtimeUser | null> {
   if (!token) return null;
   try {
-    const session = await Session.findOne({ tokenHash: sha256(token) }).lean<{
-      userId: unknown;
-      expiresAt: Date;
-    }>();
+    const session = await db.session.findUnique({
+      where: { tokenHash: sha256(token) },
+      select: { userId: true, expiresAt: true },
+    });
     if (!session || session.expiresAt < new Date()) return null;
-    const user = await User.findById(session.userId).lean<{ _id: unknown; name: string; role: string; isActive: boolean }>();
+    const user = await db.user.findUnique({
+      where: { id: session.userId },
+      select: { id: true, name: true, role: true, isActive: true },
+    });
     if (!user || !user.isActive) return null;
-    return { id: String(user._id), name: user.name, role: user.role === "ADMIN" ? "ADMIN" : "CUSTOMER" };
+    return { id: user.id, name: user.name, role: user.role === "ADMIN" ? "ADMIN" : "CUSTOMER" };
   } catch {
     return null;
   }
@@ -330,11 +333,12 @@ function validThreadRoom(threadId: unknown): string | null {
 async function canAccessThread(socket: Socket, room: string): Promise<boolean> {
   const user = socket.data.user as RealtimeUser | undefined;
   if (user?.role === "ADMIN") return true;
-  const thread = await ChatThread.findById(room.slice(5))
-    .select("customerId guestKey")
-    .lean<{ customerId: unknown; guestKey: string | null }>();
+  const thread = await db.chatThread.findUnique({
+    where: { id: room.slice(5) },
+    select: { customerId: true, guestKey: true },
+  });
   if (!thread) return false;
-  if (user && thread.customerId && String(thread.customerId) === user.id) return true;
+  if (user && thread.customerId && thread.customerId === user.id) return true;
   const guestKey = socket.data.guestKey as string | undefined;
   if (!user && guestKey && thread.guestKey && thread.guestKey === guestKey) return true;
   return false;
@@ -348,40 +352,44 @@ async function handleCustomerSend(socket: Socket, body: string, clientMsgId: str
   let threadId: string | null = null;
 
   if (user) {
-    const thread = await ChatThread.findOne({ customerId: user.id }).sort({ lastMessageAt: -1 }).lean<{
-      _id: unknown;
-      status: string;
-    }>();
-    if (thread && thread.status === "OPEN") threadId = String(thread._id);
+    const thread = await db.chatThread.findFirst({
+      where: { customerId: user.id },
+      orderBy: { lastMessageAt: "desc" },
+      select: { id: true, status: true },
+    });
+    if (thread && thread.status === "OPEN") threadId = thread.id;
     if (!threadId) {
-      const [created] = await ChatThread.create([
-        {
+      const created = await db.chatThread.create({
+        data: {
+          id: newId(),
           customerId: user.id,
           displayName: user.name,
           lastMessagePreview: body.slice(0, 120),
           lastMessageAt: new Date(),
         },
-      ]);
-      threadId = String(created._id);
+      });
+      threadId = created.id;
     }
   } else {
     const guestKey = (socket.data.guestKey as string | undefined) || null;
     if (!guestKey) return; // guest without a chat cookie — ask REST /api/chat/thread first
-    const thread = await ChatThread.findOne({ guestKey }).sort({ lastMessageAt: -1 }).lean<{
-      _id: unknown;
-      status: string;
-    }>();
-    if (thread && thread.status === "OPEN") threadId = String(thread._id);
+    const thread = await db.chatThread.findFirst({
+      where: { guestKey },
+      orderBy: { lastMessageAt: "desc" },
+      select: { id: true, status: true },
+    });
+    if (thread && thread.status === "OPEN") threadId = thread.id;
     if (!threadId) {
-      const [created] = await ChatThread.create([
-        {
+      const created = await db.chatThread.create({
+        data: {
+          id: newId(),
           guestKey,
           displayName: "Guest visitor",
           lastMessagePreview: body.slice(0, 120),
           lastMessageAt: new Date(),
         },
-      ]);
-      threadId = String(created._id);
+      });
+      threadId = created.id;
     }
   }
 
@@ -389,8 +397,9 @@ async function handleCustomerSend(socket: Socket, body: string, clientMsgId: str
   const room = `chat:${threadId}`;
   socket.join(room);
 
-  const [message] = await ChatMessage.create([
-    {
+  const message = await db.chatMessage.create({
+    data: {
+      id: newId(),
       threadId,
       senderRole: "CUSTOMER",
       senderId: user?.id ?? null,
@@ -398,33 +407,20 @@ async function handleCustomerSend(socket: Socket, body: string, clientMsgId: str
       body,
       clientMsgId: clientMsgId || null,
     },
-  ]);
+  });
 
-  const threadDoc = await ChatThread.findByIdAndUpdate(
-    threadId,
-    {
-      $set: {
-        lastMessagePreview: body.slice(0, 120),
-        lastMessageAt: new Date(),
-        status: "OPEN",
-      },
-      $inc: { unreadForAdmin: 1 },
+  const threadDoc = await db.chatThread.update({
+    where: { id: threadId },
+    data: {
+      lastMessagePreview: body.slice(0, 120),
+      lastMessageAt: new Date(),
+      status: "OPEN",
+      unreadForAdmin: { increment: 1 },
     },
-    { new: true }
-  ).lean<{
-    _id: unknown;
-    customerId: unknown;
-    displayName: string;
-    lastMessagePreview: string;
-    lastMessageAt: Date;
-    unreadForAdmin: number;
-    unreadForCustomer: number;
-    status: string;
-    updatedAt: Date;
-  }>();
+  });
 
   const messagePayload = {
-    id: String(message._id),
+    id: message.id,
     threadId,
     senderRole: "CUSTOMER" as const,
     senderName: message.senderName,
@@ -451,8 +447,9 @@ async function handleAdminReply(
   if (!io || !room || !body || body.length > MAX_CHAT_BODY) return;
   const threadId = room.slice(5);
 
-  const [message] = await ChatMessage.create([
-    {
+  const message = await db.chatMessage.create({
+    data: {
+      id: newId(),
       threadId,
       senderRole: "ADMIN",
       senderId: admin.id,
@@ -460,19 +457,20 @@ async function handleAdminReply(
       body,
       clientMsgId: clientMsgId || null,
     },
-  ]);
+  });
 
-  const threadDoc = await ChatThread.findByIdAndUpdate(
-    threadId,
-    {
-      $set: { lastMessagePreview: body.slice(0, 120), lastMessageAt: new Date(), unreadForAdmin: 0 },
-      $inc: { unreadForCustomer: 1 },
+  const threadDoc = await db.chatThread.update({
+    where: { id: threadId },
+    data: {
+      lastMessagePreview: body.slice(0, 120),
+      lastMessageAt: new Date(),
+      unreadForAdmin: 0,
+      unreadForCustomer: { increment: 1 },
     },
-    { new: true }
-  ).lean<{ _id: unknown; customerId: unknown; displayName: string; lastMessagePreview: string; lastMessageAt: Date; unreadForAdmin: number; unreadForCustomer: number; status: string; updatedAt: Date }>();
+  });
 
   const messagePayload = {
-    id: String(message._id),
+    id: message.id,
     threadId,
     senderRole: "ADMIN" as const,
     senderName: admin.name,
@@ -487,9 +485,12 @@ async function handleAdminReply(
 
   // If the thread belongs to a registered customer, also reach their user room
   // (covers tabs that never ran chat:attach).
-  const thread = await ChatThread.findById(threadId).select("customerId").lean<{ customerId: unknown } | null>();
+  const thread = await db.chatThread.findUnique({
+    where: { id: threadId },
+    select: { customerId: true },
+  });
   if (thread?.customerId) {
-    emitToUser(String(thread.customerId), "chat:new", { message: messagePayload, thread: threadPayload(threadDoc) });
+    emitToUser(thread.customerId, "chat:new", { message: messagePayload, thread: threadPayload(threadDoc) });
   }
 }
 
@@ -500,27 +501,25 @@ async function handleMarkRead(socket: Socket, room: string): Promise<void> {
   const okAccess = await canAccessThread(socket, room);
   if (!okAccess) return;
 
-  const threadDoc = await ChatThread.findByIdAndUpdate(
-    threadId,
-    isAdmin ? { $set: { unreadForAdmin: 0 } } : { $set: { unreadForCustomer: 0 } },
-    { new: true }
-  ).lean<{ _id: unknown; customerId: unknown; displayName: string; lastMessagePreview: string; lastMessageAt: Date; unreadForAdmin: number; unreadForCustomer: number; status: string; updatedAt: Date }>();
+  const threadDoc = await db.chatThread.update({
+    where: { id: threadId },
+    data: isAdmin ? { unreadForAdmin: 0 } : { unreadForCustomer: 0 },
+  }).catch(() => null);
   if (!threadDoc) return;
   emitToAdmins("chat:thread-updated", { thread: threadPayload(threadDoc) });
 }
 
 async function handleCloseThread(room: string | null, admin: RealtimeUser): Promise<void> {
   if (!io || !room) return;
-  const threadDoc = await ChatThread.findByIdAndUpdate(
-    room.slice(5),
-    { $set: { status: "CLOSED", closedAt: new Date(), closedByName: admin.name } },
-    { new: true }
-  ).lean<{ _id: unknown; customerId: unknown; displayName: string; lastMessagePreview: string; lastMessageAt: Date; unreadForAdmin: number; unreadForCustomer: number; status: string; updatedAt: Date }>();
+  const threadDoc = await db.chatThread.update({
+    where: { id: room.slice(5) },
+    data: { status: "CLOSED", closedAt: new Date(), closedByName: admin.name },
+  }).catch(() => null);
   if (!threadDoc) return;
   io.to(room).emit("chat:thread-updated", { thread: threadPayload(threadDoc) });
   emitToAdmins("chat:thread-updated", { thread: threadPayload(threadDoc) });
   if (threadDoc.customerId) {
-    emitToUser(String(threadDoc.customerId), "chat:thread-updated", { thread: threadPayload(threadDoc) });
+    emitToUser(threadDoc.customerId, "chat:thread-updated", { thread: threadPayload(threadDoc) });
   }
 }
 
@@ -537,20 +536,22 @@ type ThreadPayload = {
 } | null;
 
 function threadPayload(t: {
-  _id: unknown;
-  customerId?: unknown;
+  id?: string;
+  _id?: unknown;
+  customerId?: string | null;
   displayName: string;
   lastMessagePreview: string;
-  lastMessageAt: Date;
+  lastMessageAt: Date | string;
   unreadForAdmin: number;
   unreadForCustomer: number;
   status: string;
-  updatedAt: Date;
+  updatedAt: Date | string;
 } | null): ThreadPayload {
   if (!t) return null;
+  const id = t.id ?? (t._id !== undefined && t._id !== null ? String(t._id) : "");
   return {
-    id: String(t._id),
-    customerId: t.customerId ? String(t.customerId) : null,
+    id,
+    customerId: t.customerId ?? null,
     displayName: t.displayName,
     lastMessagePreview: t.lastMessagePreview,
     lastMessageAt: t.lastMessageAt,
@@ -571,10 +572,11 @@ export function newGuestChatKey(): string {
 /** Total unread admin-side chat messages (for the bell + nav badge). */
 export async function unreadAdminChatCount(): Promise<number> {
   try {
-    const rows = await ChatThread.find({ status: "OPEN" })
-      .select("unreadForAdmin")
-      .lean<{ unreadForAdmin: number }[]>();
-    return rows.reduce((n, r) => n + (Number(r.unreadForAdmin) || 0), 0);
+    const agg = await db.chatThread.aggregate({
+      where: { status: "OPEN" },
+      _sum: { unreadForAdmin: true },
+    });
+    return Number(agg._sum.unreadForAdmin ?? 0);
   } catch {
     return 0;
   }

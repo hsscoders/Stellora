@@ -1,0 +1,72 @@
+# ============================================================
+# Stellora — Render Blueprint (render.yaml)
+#
+# ONE-SERVICE deployment: ek hi Render web service me backend
+# (:4000) + storefront (PORT) + admin (:3001) saath chalte
+# hain. Browser ko sirf storefront ka port dikhta hai — API aur
+# admin uske andar se proxy hote hain (same-origin, cookies
+# bina CORS ke chalte hain).
+#
+# Deploy:
+#   1) Is repo ko GitHub par push karo (yeh file root me hai)
+#   2) dashboard.render.com -> New + -> Blueprint
+#   3) Repo select karo -> Apply
+#   4) DB_* env vars ka value daalo (sync:false wale)
+#   5) Deploy ke baad seed ki zaroorat NAHI (data migration se aayega;
+#      fresh DB ho to Render Shell me: cd backend && npx tsx src/seed.ts)
+# ============================================================
+services:
+  - type: web
+    name: stellora
+    runtime: node
+    plan: free
+    branch: main
+    autoDeploy: true
+    rootDir: .
+    buildCommand: npm install --no-audit --no-fund && npm run build
+    preDeployCommand:
+      - cd backend && npx prisma migrate deploy
+    startCommand: npx concurrently --kill-others -n api,web,admin "npm run start -w @stellora/backend" "cd frontend/client && npx next start -p $PORT" "cd frontend/admin && npx next start -p 3001"
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0
+      # Next build memory limit (free tier 512MB RAM)
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=460
+      # --- MySQL (Render ka managed Postgres nahi — external MySQL chahiye;
+      # PlanetScale/Aiven/Railway MySQL ya apna server) ---
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "3306"
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: APP_URL
+        value: https://stellora.onrender.com   # apna service name use karo
+      - key: ORIGIN_SUFFIXES
+        value: .onrender.com
+      - key: ADMIN_BOOTSTRAP_EMAIL
+        value: admin@stellora.local
+      - key: ADMIN_BOOTSTRAP_PASSWORD
+        sync: false
+      - key: DEMO_CUSTOMER_EMAIL
+        value: customer@stellora.local
+      - key: DEMO_CUSTOMER_PASSWORD
+        sync: false
+      - key: PAYMENT_DEMO_SECRET
+        value: stellora_demo_secret_2026
+      - key: PAYMENTS_ENABLED
+        value: "false"
+
+# ------------------------------------------------------------
+# ALTERNATIVE (3 alag services, better isolation):
+# Free tier me 750 instance-hours/month hote hain — 3 services
+# sada chalengi to ~10 din me limit khatam. Isliye primary
+# option single-service hai. 3-service setup steps:
+#   DEPLOY_RENDER.md -> "Option B" section padho.
+# ------------------------------------------------------------

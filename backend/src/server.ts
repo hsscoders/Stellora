@@ -3,9 +3,9 @@ import http from "http";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
-import mongoose from "mongoose";
 import path from "path";
 import { env } from "./env";
+import { db, safeDbError } from "./lib/db";
 import { fail } from "./lib/http";
 import { storefrontRouter } from "./routes/storefront";
 import { authRouter } from "./routes/auth";
@@ -64,7 +64,7 @@ app.use("/api", adminRouter);
 app.use("/api", chatRouter);
 
 // Contact form (public) — mounted here to keep routes table tidy
-import { ContactMessage } from "./models";
+import { newId } from "./lib/db";
 import { contactSchema } from "./validation";
 import { handle as wrap, assertSameOrigin, ok as okRes } from "./lib/http";
 import { rateLimit, getClientIp } from "./lib/rate-limit";
@@ -82,12 +82,15 @@ app.post(
       });
     }
     const data = contactSchema.parse(req.body);
-    await ContactMessage.create({
-      name: data.name,
-      phone: data.phone,
-      email: data.email ?? null,
-      subject: data.subject,
-      message: data.message,
+    await db.contactMessage.create({
+      data: {
+        id: newId(),
+        name: data.name,
+        phone: data.phone ?? null,
+        email: data.email ?? null,
+        subject: data.subject,
+        message: data.message,
+      },
     });
     // Realtime nudge to the admin console (bell + toasts).
     notifyStatsBump("contact");
@@ -135,8 +138,21 @@ app.use(
 );
 
 async function main() {
-  await mongoose.connect(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
-  console.log(`[backend] MongoDB connected: ${mongoose.connection.host}/${mongoose.connection.name}`);
+  // Verify MySQL connectivity up-front with a safe, non-sensitive failure mode.
+  try {
+    await db.$connect();
+    await db.$queryRaw`SELECT 1`;
+  } catch (err) {
+    const safe = safeDbError(err);
+    console.error(`[backend] fatal: MySQL connection failed (${safe.code}).`,
+      "Check DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD and that the database exists.");
+    process.exit(1);
+  }
+  const dbInfo = await db.$queryRawUnsafe<{ db: string; user: string }[]>(
+    "SELECT DATABASE() AS db, SUBSTRING_INDEX(USER(),'@',1) AS user"
+  ).catch(() => null);
+  const conn = dbInfo?.[0] ? `${dbInfo[0].db}@${env.DB_HOST}` : env.DB_NAME;
+  console.log(`[backend] MySQL connected: ${conn}`);
 
   // Socket.IO shares the API's HTTP server — one port for REST + realtime.
   const server = http.createServer(app);
@@ -159,3 +175,12 @@ main().catch((err) => {
   console.error("[backend] fatal:", err);
   process.exit(1);
 });
+
+// Graceful shutdown — close the MySQL pool so connections don't hang.
+const shutdown = async (signal: string) => {
+  console.log(`[backend] ${signal} received — closing DB pool`);
+  try { await db.$disconnect(); } catch { /* ignore */ }
+  process.exit(0);
+};
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));

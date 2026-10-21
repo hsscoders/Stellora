@@ -1,4 +1,4 @@
-import { AuditLog } from "../models";
+import { db, newId } from "../lib/db";
 
 interface AuditInput {
   actor?: {
@@ -29,17 +29,19 @@ export async function audit(
 ): Promise<void> {
   try {
     const { actor, action, entityType, entityId, metadata } = input;
-    await AuditLog.create({
-      actorId: actor?.id ?? null,
-      actorEmail: actor?.email ?? null,
-      action,
-      entityType,
-      entityId: entityId ?? null,
-      metadata: metadata ?? null,
-      ip: req ? getIp(req) : null,
+    await db.auditLog.create({
+      data: {
+        id: newId(),
+        actorId: actor?.id ?? null,
+        actorEmail: actor?.email ?? null,
+        action,
+        entityType,
+        entityId: entityId ?? null,
+        metadata: (metadata ?? null) as never,
+        ip: req ? getIp(req) : null,
+      },
     });
   } catch (err) {
     console.error("[audit] failed to write audit entry", err);
   }
 }
-

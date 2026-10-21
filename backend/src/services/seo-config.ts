@@ -1,4 +1,4 @@
-import { SiteSetting } from "../models";
+import { db, newId } from "../lib/db";
 
 /**
  * Website-wide SEO configuration.
@@ -178,7 +178,7 @@ export function normalizeSeoConfig(input: unknown): SeoConfig {
 /** Read the SEO config (DB → defaults). Never throws. */
 export async function getSeoConfig(): Promise<SeoConfig> {
   try {
-    const row = await SiteSetting.findOne({ key: SEO_SETTING_KEY }).lean<{ value: string } | null>();
+    const row = await db.siteSetting.findUnique({ where: { key: SEO_SETTING_KEY } });
     if (!row?.value) return { ...SEO_DEFAULTS };
     return normalizeSeoConfig(JSON.parse(row.value));
   } catch {
@@ -190,10 +190,10 @@ export async function getSeoConfig(): Promise<SeoConfig> {
 export async function saveSeoConfig(partial: unknown): Promise<SeoConfig> {
   const current = await getSeoConfig();
   const merged = normalizeSeoConfig({ ...current, ...(typeof partial === "object" && partial !== null ? partial : {}) });
-  await SiteSetting.updateOne(
-    { key: SEO_SETTING_KEY },
-    { value: JSON.stringify(merged) },
-    { upsert: true }
-  );
+  await db.siteSetting.upsert({
+    where: { key: SEO_SETTING_KEY },
+    create: { id: newId(), key: SEO_SETTING_KEY, value: JSON.stringify(merged) },
+    update: { value: JSON.stringify(merged) },
+  });
   return merged;
 }

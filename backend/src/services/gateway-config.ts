@@ -1,4 +1,4 @@
-import { SiteSetting } from "../models";
+import { db } from "../lib/db";
 import { env } from "../env";
 
 /**
@@ -35,21 +35,19 @@ export interface GatewayConfig {
 }
 
 async function loadSettingMap(): Promise<Map<string, string>> {
-  const rows = await SiteSetting.find({
-    key: {
-      $in: [
-        PAYMENT_SETTING_KEYS.provider,
-        PAYMENT_SETTING_KEYS.razorpayKeyId,
-        PAYMENT_SETTING_KEYS.razorpayKeySecret,
-        PAYMENT_SETTING_KEYS.razorpayWebhookSecret,
-        PAYMENT_SETTING_KEYS.stripePk,
-        PAYMENT_SETTING_KEYS.stripeSecret,
-        PAYMENT_SETTING_KEYS.stripeWebhookSecret,
-      ],
-    },
-  })
-    .lean<{ key: string; value: string }[]>()
-    .exec();
+  const keys = [
+    PAYMENT_SETTING_KEYS.provider,
+    PAYMENT_SETTING_KEYS.razorpayKeyId,
+    PAYMENT_SETTING_KEYS.razorpayKeySecret,
+    PAYMENT_SETTING_KEYS.razorpayWebhookSecret,
+    PAYMENT_SETTING_KEYS.stripePk,
+    PAYMENT_SETTING_KEYS.stripeSecret,
+    PAYMENT_SETTING_KEYS.stripeWebhookSecret,
+  ];
+  const rows = await db.siteSetting.findMany({
+    where: { key: { in: keys } },
+    select: { key: true, value: true },
+  });
   return new Map(rows.map((r) => [r.key, r.value]));
 }
 

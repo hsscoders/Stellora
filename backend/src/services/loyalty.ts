@@ -1,5 +1,4 @@
-import mongoose from "mongoose";
-import { LoyaltyLedger, Order, User } from "../models";
+import { db, newId } from "../lib/db";
 import { d, money } from "../lib/money";
 
 /**
@@ -42,39 +41,49 @@ export async function accrueEarn(
   orderId: string,
   actorNote?: string
 ): Promise<{ earned: number; alreadyCredited: boolean }> {
-  const order = await Order.findById(orderId)
-    .select("_id userId status grandTotal pointsEarned")
-    .lean<{ _id: any; userId: any; status: string; grandTotal: number; pointsEarned: number }>();
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, userId: true, status: true, grandTotal: true, pointsEarned: true },
+  });
   if (!order) return { earned: 0, alreadyCredited: false };
 
-  const already = await LoyaltyLedger.exists({
-    orderId: order._id,
-    reason: "EARN",
+  const already = await db.loyaltyLedger.findFirst({
+    where: { orderId: order.id, reason: "EARN" },
+    select: { id: true },
   });
   if (already) return { earned: order.pointsEarned ?? 0, alreadyCredited: true };
 
-  const earned = computeEarn(order.grandTotal);
+  const earned = computeEarn(Number(order.grandTotal));
   if (earned <= 0) return { earned: 0, alreadyCredited: false };
 
-  await LoyaltyLedger.create({
-    userId: order.userId,
-    orderId: order._id,
-    delta: earned,
-    reason: "EARN",
-    note: actorNote ?? `Points earned on ${order.status.toLowerCase()} order`,
+  await db.loyaltyLedger.create({
+    data: {
+      id: newId(),
+      userId: order.userId,
+      orderId: order.id,
+      delta: earned,
+      reason: "EARN",
+      note: actorNote ?? `Points earned on ${order.status.toLowerCase()} order`,
+    },
   });
-  await User.updateOne({ _id: order.userId }, { $inc: { loyaltyPoints: earned } });
-  await Order.updateOne({ _id: order._id }, { $set: { pointsEarned: earned } });
+  await db.user.update({
+    where: { id: order.userId },
+    data: { loyaltyPoints: { increment: earned } },
+  });
+  await db.order.update({
+    where: { id: order.id },
+    data: { pointsEarned: earned },
+  });
 
   return { earned, alreadyCredited: false };
 }
 
 /** Keep the fast counter honest — never allow it to dip below zero. */
 async function clampBalance(userId: string): Promise<void> {
-  await User.updateOne(
-    { _id: userId, loyaltyPoints: { $lt: 0 } },
-    { $set: { loyaltyPoints: 0 } }
-  );
+  await db.user.updateMany({
+    where: { id: userId, loyaltyPoints: { lt: 0 } },
+    data: { loyaltyPoints: 0 },
+  });
 }
 
 /**
@@ -82,49 +91,56 @@ async function clampBalance(userId: string): Promise<void> {
  * each guarded by a ledger check so retries (or double cancels) are no-ops.
  */
 export async function settleOnCancel(orderId: string): Promise<void> {
-  const order = await Order.findById(orderId)
-    .select("_id userId pointsRedeemed pointsEarned")
-    .lean<{ _id: any; userId: any; pointsRedeemed: number; pointsEarned: number }>();
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, userId: true, pointsRedeemed: true, pointsEarned: true },
+  });
   if (!order) return;
-  const userId = String(order.userId);
+  const userId = order.userId;
 
   if ((order.pointsRedeemed ?? 0) > 0) {
-    const refunded = await LoyaltyLedger.exists({
-      orderId: order._id,
-      reason: "REFUND_REDEEM",
+    const refunded = await db.loyaltyLedger.findFirst({
+      where: { orderId: order.id, reason: "REFUND_REDEEM" },
+      select: { id: true },
     });
     if (!refunded) {
-      await LoyaltyLedger.create({
-        userId: order.userId,
-        orderId: order._id,
-        delta: order.pointsRedeemed,
-        reason: "REFUND_REDEEM",
-        note: "Points refunded — order cancelled",
+      await db.loyaltyLedger.create({
+        data: {
+          id: newId(),
+          userId,
+          orderId: order.id,
+          delta: order.pointsRedeemed,
+          reason: "REFUND_REDEEM",
+          note: "Points refunded — order cancelled",
+        },
       });
-      await User.updateOne(
-        { _id: order.userId },
-        { $inc: { loyaltyPoints: order.pointsRedeemed } }
-      );
+      await db.user.update({
+        where: { id: userId },
+        data: { loyaltyPoints: { increment: order.pointsRedeemed } },
+      });
     }
   }
 
   if ((order.pointsEarned ?? 0) > 0) {
-    const reversed = await LoyaltyLedger.exists({
-      orderId: order._id,
-      reason: "REFUND_EARN",
+    const reversed = await db.loyaltyLedger.findFirst({
+      where: { orderId: order.id, reason: "REFUND_EARN" },
+      select: { id: true },
     });
     if (!reversed) {
-      await LoyaltyLedger.create({
-        userId: order.userId,
-        orderId: order._id,
-        delta: -order.pointsEarned,
-        reason: "REFUND_EARN",
-        note: "Earned points reversed — order cancelled",
+      await db.loyaltyLedger.create({
+        data: {
+          id: newId(),
+          userId,
+          orderId: order.id,
+          delta: -order.pointsEarned,
+          reason: "REFUND_EARN",
+          note: "Earned points reversed — order cancelled",
+        },
       });
-      await User.updateOne(
-        { _id: order.userId },
-        { $inc: { loyaltyPoints: -order.pointsEarned } }
-      );
+      await db.user.update({
+        where: { id: userId },
+        data: { loyaltyPoints: { decrement: order.pointsEarned } },
+      });
       await clampBalance(userId);
     }
   }
@@ -148,13 +164,21 @@ export type LoyaltySnapshot = {
 
 export async function getLoyaltySnapshot(userId: string): Promise<LoyaltySnapshot> {
   const [user, entries] = await Promise.all([
-    User.findById(userId).select("loyaltyPoints").lean<{ loyaltyPoints?: number } | null>(),
-    LoyaltyLedger.find({ userId: new mongoose.Types.ObjectId(userId) })
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .populate("orderId", "orderNumber")
-      .lean<any[]>(),
+    db.user.findUnique({ where: { id: userId }, select: { loyaltyPoints: true } }),
+    db.loyaltyLedger.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
   ]);
+
+  // Resolve order numbers for entries that reference an order (ledger rows
+  // store a plain orderId column — no relation needed for this read path).
+  const orderIds = [...new Set(entries.map((e) => e.orderId).filter((v): v is string => !!v))];
+  const orders = orderIds.length
+    ? await db.order.findMany({ where: { id: { in: orderIds } }, select: { id: true, orderNumber: true } })
+    : [];
+  const orderNumberById = new Map(orders.map((o) => [o.id, o.orderNumber]));
 
   return {
     points: Math.max(0, user?.loyaltyPoints ?? 0),
@@ -163,12 +187,12 @@ export async function getLoyaltySnapshot(userId: string): Promise<LoyaltySnapsho
     maxRedeemPct: MAX_REDEEM_PCT,
     earnRate: "1 point per ₹100 spent",
     history: entries.map((e) => ({
-      id: String(e._id),
+      id: e.id,
       delta: e.delta,
       reason: e.reason,
       note: e.note ?? null,
-      orderNumber: e.orderId?.orderNumber ?? null,
-      at: e.createdAt,
+      orderNumber: e.orderId ? orderNumberById.get(e.orderId) ?? null : null,
+      at: e.createdAt.toISOString(),
     })),
   };
 }

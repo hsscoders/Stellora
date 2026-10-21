@@ -1,5 +1,4 @@
-import mongoose from "mongoose";
-import { Order, Product, StockMovement, RestockAlert, SiteSetting } from "../models";
+import { db, newId } from "../lib/db";
 import { audit } from "./audit";
 
 /**
@@ -62,8 +61,10 @@ const timers: Partial<Record<JobId, ReturnType<typeof setInterval>>> = {};
 
 export async function getAutomationConfig(): Promise<{ staleOrderHours: number }> {
   try {
-    const row = await SiteSetting.findOne({ key: "automation.staleOrderHours" })
-      .lean<{ value: string } | null>();
+    const row = await db.siteSetting.findUnique({
+      where: { key: "automation.staleOrderHours" },
+      select: { value: true },
+    });
     const parsed = Number(row?.value);
     if (Number.isFinite(parsed)) {
       return { staleOrderHours: Math.min(MAX_STALE_HOURS, Math.max(MIN_STALE_HOURS, parsed)) };
@@ -85,9 +86,10 @@ export async function runStaleOrdersSweep(): Promise<StaleSweepResult> {
   const { staleOrderHours } = await getAutomationConfig();
   const cutoff = new Date(Date.now() - staleOrderHours * 60 * 60 * 1000);
 
-  const stale = await Order.find({ status: "PENDING", createdAt: { $lt: cutoff } })
-    .select("_id orderNumber items createdAt")
-    .lean<{ _id: any; orderNumber: string; items: { variantId?: string | null; quantity: number }[] }[]>();
+  const stale = await db.order.findMany({
+    where: { status: "PENDING", createdAt: { lt: cutoff } },
+    select: { id: true, orderNumber: true, items: { select: { variantId: true, quantity: true } } },
+  });
 
   if (stale.length === 0) return { checked: 0, cancelled: [] };
 
@@ -95,45 +97,44 @@ export async function runStaleOrdersSweep(): Promise<StaleSweepResult> {
   const note = `Auto-cancelled — payment not confirmed within ${staleOrderHours}h (Stellora Auto-pilot).`;
 
   for (const order of stale) {
-    const session = await mongoose.startSession();
     try {
-      await session.withTransaction(async () => {
-        // Re-check status inside the transaction — an admin may have confirmed
-        // it while the sweep was running.
-        const stillPending = await Order.updateOne(
-          { _id: order._id, status: "PENDING" },
-          {
-            $set: {
+      await db.$transaction(
+        async (tx) => {
+          // Re-check status inside the transaction — an admin may have confirmed
+          // it while the sweep was running.
+          const stillPending = await tx.order.updateMany({
+            where: { id: order.id, status: "PENDING" },
+            data: {
               status: "CANCELLED",
               cancelledReason: note,
             },
-            $push: { events: { status: "CANCELLED", note } },
-          },
-          { session }
-        );
-        if (stillPending.modifiedCount !== 1) return;
+          });
+          if (stillPending.count !== 1) return;
 
-        for (const item of order.items) {
-          if (!item.variantId) continue;
-          await Product.updateOne(
-            { "variants._id": item.variantId },
-            { $inc: { "variants.$[v].stock": item.quantity } },
-            { arrayFilters: [{ "v._id": item.variantId }], session }
-          );
-          await StockMovement.create(
-            [
-              {
+          await tx.orderEvent.create({
+            data: { id: newId(), orderId: order.id, status: "CANCELLED", note },
+          });
+
+          for (const item of order.items) {
+            if (!item.variantId) continue;
+            await tx.productVariant.update({
+              where: { id: item.variantId },
+              data: { stock: { increment: item.quantity } },
+            });
+            await tx.stockMovement.create({
+              data: {
+                id: newId(),
                 variantId: item.variantId,
                 delta: item.quantity,
                 reason: "ORDER_RELEASE",
                 reference: order.orderNumber,
                 note: "Released by Stellora Auto-pilot (stale order)",
               },
-            ],
-            { session }
-          );
-        }
-      });
+            });
+          }
+        },
+        { timeout: 15_000 }
+      );
 
       // Committed — record it (outside the transaction, best-effort).
       const units = order.items.reduce((n, i) => n + i.quantity, 0);
@@ -142,13 +143,11 @@ export async function runStaleOrdersSweep(): Promise<StaleSweepResult> {
         actor: null,
         action: "automation.order.auto-cancelled",
         entityType: "Order",
-        entityId: String(order._id),
+        entityId: order.id,
         metadata: { orderNumber: order.orderNumber, units, staleOrderHours },
       });
     } catch (err) {
       console.error(`[auto-pilot] failed to cancel stale order ${order.orderNumber}:`, err);
-    } finally {
-      await session.endSession();
     }
   }
 
@@ -163,35 +162,42 @@ export interface RestockSweepResult {
 }
 
 export async function runRestockAlertsSweep(): Promise<RestockSweepResult> {
-  const pending = await RestockAlert.find({ notifiedAt: null })
-    .limit(200)
-    .lean<{ _id: any; productId: any; variantId: any; email: string }[]>();
+  const pending = await db.restockAlert.findMany({
+    where: { notifiedAt: null },
+    take: 200,
+  });
 
   if (pending.length === 0) return { checked: 0, notified: [] };
 
   // Resolve current stock for every referenced product in one query.
-  const productIds = [...new Set(pending.map((a) => String(a.productId)))];
-  const products = await Product.find({ _id: { $in: productIds } })
-    .select("name status variants")
-    .lean<{ _id: any; name: string; status: string; variants: { _id: any; stock: number; isActive: boolean }[] }[]>();
-  const productMap = new Map(products.map((p) => [String(p._id), p]));
+  const productIds = [...new Set(pending.map((a) => a.productId))];
+  const products = await db.product.findMany({
+    where: { id: { in: productIds } },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      variants: { select: { id: true, stock: true, isActive: true } },
+    },
+  });
+  const productMap = new Map(products.map((p) => [p.id, p]));
 
   const notified: { email: string; product: string }[] = [];
 
   for (const alert of pending) {
-    const product = productMap.get(String(alert.productId));
+    const product = productMap.get(alert.productId);
     if (!product || product.status !== "ACTIVE") continue;
 
     const stock = alert.variantId
-      ? (product.variants.find((v) => String(v._id) === String(alert.variantId))?.stock ?? 0)
+      ? (product.variants.find((v) => v.id === alert.variantId)?.stock ?? 0)
       : (product.variants.filter((v) => v.isActive).reduce((max, v) => Math.max(max, v.stock), 0));
 
     if (stock <= 0) continue;
 
-    await RestockAlert.updateOne(
-      { _id: alert._id, notifiedAt: null },
-      { notifiedAt: new Date() }
-    );
+    await db.restockAlert.updateMany({
+      where: { id: alert.id, notifiedAt: null },
+      data: { notifiedAt: new Date() },
+    });
     notified.push({ email: alert.email, product: product.name });
   }
 

@@ -1,11 +1,16 @@
 import type { NextFunction, Request, Response } from "express";
-import mongoose from "mongoose";
 import { ZodError } from "zod";
 import { env } from "../env";
+import { normalizeJson, safeDbError } from "./db";
+import { HttpError } from "./http-errors";
+
+export { HttpError };
 
 /** Success envelope: { ok: true, data } */
 export function ok(res: Response, data: unknown, status = 200) {
-  return res.status(status).json({ ok: true, data });
+  // normalizeJson converts Prisma Decimal money values to plain numbers so
+  // API payloads keep the exact shape the Mongoose version produced.
+  return res.status(status).json({ ok: true, data: normalizeJson(data) });
 }
 
 /** Error envelope: { ok: false, error: { code, message, fields? } } */
@@ -17,16 +22,6 @@ export function fail(
   fields?: Record<string, string>
 ) {
   return res.status(status).json({ ok: false, error: { code, message, fields } });
-}
-
-export class HttpError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public status: number
-  ) {
-    super(message);
-  }
 }
 
 type AsyncHandler = (req: Request, res: Response, next: NextFunction) => Promise<unknown>;
@@ -46,9 +41,13 @@ export function handle(fn: AsyncHandler) {
       if (err instanceof HttpError) {
         return fail(res, err.code, err.message, err.status);
       }
-      // Malformed Mongo ids (e.g. /products/not-an-objectid) arrive as CastError —
-      // treat them as "record not found" instead of leaking a 500.
-      if (err instanceof mongoose.Error.CastError) {
+      // Malformed ids (e.g. /products/zzz) and unique-constraint races map to
+      // safe client-facing errors instead of leaking a 500.
+      const dbErr = safeDbError(err);
+      if (dbErr.code === "NOT_FOUND" || dbErr.code === "DUPLICATE" || dbErr.code === "BAD_REFERENCE") {
+        if (dbErr.code === "DUPLICATE") {
+          return fail(res, "DUPLICATE", "That value is already in use.", 409);
+        }
         return fail(res, "NOT_FOUND", "The requested record was not found.", 404);
       }
       console.error("[api] unhandled error:", err);

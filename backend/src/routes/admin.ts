@@ -1,6 +1,6 @@
 import { Router } from "express";
-import mongoose from "mongoose";
-import { Product, Category, Order, User, Coupon, HomepageBanner, SiteSetting, ShippingRate, StockMovement, AuditLog, ContactMessage, Session, RestockAlert, CashSession } from "../models";
+import { Prisma } from "@prisma/client";
+import { db, newId, isValidId, normalizeJson } from "../lib/db";
 import { ok, fail, handle, assertSameOrigin, HttpError } from "../lib/http";
 import { requireAdmin } from "../lib/auth";
 import {
@@ -13,7 +13,7 @@ import { hashPassword } from "../lib/password";
 import { audit } from "../services/audit";
 import { accrueEarn } from "../services/loyalty";
 import { validateCoupon } from "../services/pricing";
-import { escapeRegex, serializeProduct } from "./storefront";
+import { serializeProduct } from "./storefront";
 import { serializeOrderDetail } from "./commerce";
 import { getAutomationConfig, schedulerSnapshot, triggerJob, isJobId } from "../services/scheduler";
 import { getGatewayConfig, buildGatewayStatus, PAYMENT_SETTING_KEYS } from "../services/gateway-config";
@@ -42,72 +42,49 @@ adminRouter.get(
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     const [revAgg, rev24, statusAgg, productCount, lowStockProducts, recentOrders, dailyAgg, topProductsAgg, posAgg, customerCount, pendingReviews, pendingQuestions, unreadChat] = await Promise.all([
-      Order.aggregate<{ total: number; count: number }>([
-        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
-        { $group: { _id: null, total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
-      ]),
-      Order.aggregate<{ total: number }>([
-        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: dayAgo } } },
-        { $group: { _id: null, total: { $sum: "$grandTotal" } } },
-      ]),
-      Order.aggregate<{ _id: string; count: number }>([
-        { $group: { _id: "$status", count: { $sum: 1 } } },
-      ]),
-      Product.countDocuments({ status: { $ne: "ARCHIVED" } }),
-      // Low stock: unwind embedded variants, low = at or below the variant's own threshold
-      Product.aggregate([
-        { $unwind: "$variants" },
-        { $match: { $expr: { $and: [{ $eq: ["$variants.isActive", true] }, { $lte: ["$variants.stock", "$variants.lowStockThreshold"] }] } } },
-        { $sort: { "variants.stock": 1 } },
-        { $limit: 8 },
-        { $project: { name: 1, slug: 1, variantId: "$variants._id", variantName: "$variants.name", sku: "$variants.sku", stock: "$variants.stock", lowStockThreshold: "$variants.lowStockThreshold" } },
-      ]),
-      Order.find().sort({ createdAt: -1 }).limit(8).populate("userId", "name email").lean<any[]>(),
+      db.$queryRaw<{ total: Prisma.Decimal; count: bigint }[]>`SELECT COALESCE(SUM(grandTotal), 0) AS total, COUNT(*) AS count FROM orders WHERE status <> 'CANCELLED' AND createdAt >= ${monthAgo}`,
+      db.$queryRaw<{ total: Prisma.Decimal }[]>`SELECT COALESCE(SUM(grandTotal), 0) AS total FROM orders WHERE status <> 'CANCELLED' AND createdAt >= ${dayAgo}`,
+      db.$queryRaw<{ status: string; count: bigint }[]>`SELECT status, COUNT(*) AS count FROM orders GROUP BY status`,
+      db.product.count({ where: { status: { not: "ARCHIVED" } } }),
+      // Low stock: one row per variant at or below the variant's own threshold
+      db.$queryRaw<{ variantId: string; variantName: string; sku: string; stock: number; lowStockThreshold: number; name: string; slug: string }[]>
+        `SELECT v.id AS variantId, v.name AS variantName, v.sku AS sku, v.stock AS stock, v.lowStockThreshold AS lowStockThreshold, p.name AS name, p.slug AS slug
+         FROM productvariants v JOIN products p ON p.id = v.productId
+         WHERE v.isActive = TRUE AND v.stock <= v.lowStockThreshold
+         ORDER BY v.stock ASC LIMIT 8`,
+      db.order.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        include: { user: { select: { name: true, email: true } } },
+      }),
       // Revenue per day for the last 14 days (fills missing days client-side)
-      Order.aggregate<{ _id: string; total: number; count: number }>([
-        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000) } } },
-        {
-          $group: {
-            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-            total: { $sum: "$grandTotal" },
-            count: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ]),
+      db.$queryRaw<{ date: string; total: Prisma.Decimal; count: bigint }[]>
+        `SELECT DATE_FORMAT(createdAt, '%Y-%m-%d') AS date, COALESCE(SUM(grandTotal), 0) AS total, COUNT(*) AS count
+         FROM orders
+         WHERE status <> 'CANCELLED' AND createdAt >= ${new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000)}
+         GROUP BY DATE_FORMAT(createdAt, '%Y-%m-%d') ORDER BY date ASC`,
       // Best sellers by quantity sold in the last 30 days
-      Order.aggregate<{ _id: string | null; name: { $first: string }; qty: number; revenue: number }>([
-        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
-        { $unwind: "$items" },
-        {
-          $group: {
-            _id: "$items.productId",
-            name: { $first: "$items.productName" },
-            qty: { $sum: "$items.quantity" },
-            revenue: { $sum: "$items.lineTotal" },
-          },
-        },
-        { $sort: { qty: -1 } },
-        { $limit: 5 },
-      ]),
+      db.$queryRaw<{ productId: string | null; name: string; qty: Prisma.Decimal; revenue: Prisma.Decimal }[]>
+        `SELECT oi.productId AS productId, MIN(oi.productName) AS name, SUM(oi.quantity) AS qty, SUM(oi.lineTotal) AS revenue
+         FROM orderitems oi JOIN orders o ON o.id = oi.orderId
+         WHERE o.status <> 'CANCELLED' AND o.createdAt >= ${monthAgo}
+         GROUP BY oi.productId ORDER BY qty DESC LIMIT 5`,
       // POS vs ONLINE split (30d)
-      Order.aggregate<{ _id: string; total: number; count: number }>([
-        { $match: { status: { $ne: "CANCELLED" }, createdAt: { $gte: monthAgo } } },
-        { $group: { _id: "$source", total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
-      ]),
-      User.countDocuments({ role: "CUSTOMER" }),
-      (await import("../models")).Review.countDocuments({ status: "PENDING" }),
-      (await import("../models")).ProductQuestion.countDocuments({ status: "PENDING" }),
+      db.$queryRaw<{ source: string; total: Prisma.Decimal; count: bigint }[]>
+        `SELECT source, COALESCE(SUM(grandTotal), 0) AS total, COUNT(*) AS count FROM orders WHERE status <> 'CANCELLED' AND createdAt >= ${monthAgo} GROUP BY source`,
+      db.user.count({ where: { role: "CUSTOMER" } }),
+      db.review.count({ where: { status: "PENDING" } }),
+      db.productQuestion.count({ where: { status: "PENDING" } }),
       unreadAdminChatCount(),
     ]);
 
-    const posOnline = Object.fromEntries(posAgg.map((s) => [s._id ?? "ONLINE", { total: s.total, count: s.count }]));
+    const posOnline = Object.fromEntries(posAgg.map((s) => [s.source ?? "ONLINE", { total: Number(s.total), count: Number(s.count) }]));
 
     return ok(res, {
-      revenue30d: revAgg[0]?.total ?? 0,
-      orders30d: revAgg[0]?.count ?? 0,
-      revenue24h: rev24[0]?.total ?? 0,
-      ordersByStatus: Object.fromEntries(statusAgg.map((s) => [s._id, s.count])),
+      revenue30d: Number(revAgg[0]?.total ?? 0),
+      orders30d: Number(revAgg[0]?.count ?? 0),
+      revenue24h: Number(rev24[0]?.total ?? 0),
+      ordersByStatus: Object.fromEntries(statusAgg.map((s) => [s.status, Number(s.count)])),
       productCount,
       customerCount,
       pendingReviews,
@@ -117,33 +94,30 @@ adminRouter.get(
         POS: posOnline["POS"] ?? { total: 0, count: 0 },
         ONLINE: posOnline["ONLINE"] ?? { total: 0, count: 0 },
       },
-      dailyRevenue: dailyAgg.map((d) => ({ date: d._id, total: d.total, count: d.count })),
+      dailyRevenue: dailyAgg.map((d) => ({ date: d.date, total: Number(d.total), count: Number(d.count) })),
       topProducts: topProductsAgg.map((t) => ({
-        productId: t._id ? String(t._id) : null,
+        productId: t.productId ? String(t.productId) : null,
         name: t.name,
-        qty: t.qty,
-        revenue: t.revenue,
+        qty: Number(t.qty),
+        revenue: Number(t.revenue),
       })),
-      lowStock: lowStockProducts.map((v: any) => ({
+      lowStock: lowStockProducts.map((v) => ({
         variantId: String(v.variantId),
         variantName: v.variantName,
         sku: v.sku,
-        stock: v.stock,
-        lowStockThreshold: v.lowStockThreshold,
+        stock: Number(v.stock),
+        lowStockThreshold: Number(v.lowStockThreshold),
         product: { name: v.name, slug: v.slug },
       })),
-      recentOrders: recentOrders.map((o: any) => ({
-        id: String(o._id),
+      recentOrders: recentOrders.map((o) => ({
+        id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
         paymentStatus: o.paymentStatus,
-        grandTotal: o.grandTotal,
+        grandTotal: Number(o.grandTotal),
         createdAt: o.createdAt,
         source: o.source ?? "ONLINE",
-        user:
-          o.userId && typeof o.userId === "object"
-            ? { name: (o.userId as any).name, email: (o.userId as any).email }
-            : null,
+        user: o.user ? { name: o.user.name, email: o.user.email } : null,
       })),
     });
   })
@@ -167,35 +141,35 @@ adminRouter.get(
       return fail(res, "VALIDATION_ERROR", "Search query must be at least 2 characters.", 400);
     }
 
-    const rx = new RegExp(escapeRegex(q), "i");
-
     // Orders: match the order number, or the customer's email via their user doc.
-    const emailUsers = await User.find({ email: rx }).select("_id").lean<{ _id: any }[]>();
-    const userIds = emailUsers.map((u) => u._id);
+    const emailUsers = await db.user.findMany({ where: { email: { contains: q } }, select: { id: true } });
+    const userIds = emailUsers.map((u) => u.id);
+    const ordersWhere: Prisma.OrderWhereInput = userIds.length > 0
+      ? { OR: [{ orderNumber: { contains: q } }, { userId: { in: userIds } }] }
+      : { orderNumber: { contains: q } };
 
     const [orders, products, customers] = await Promise.all([
-      Order.find(userIds.length > 0 ? { $or: [{ orderNumber: rx }, { userId: { $in: userIds } }] } : { orderNumber: rx })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .populate("userId", "email")
-        .lean<any[]>(),
-      Product.find({ $or: [{ name: rx }, { slug: rx }] })
-        .sort({ updatedAt: -1 })
-        .limit(5)
-        .lean<any[]>(),
-      User.find({ role: "CUSTOMER", $or: [{ name: rx }, { email: rx }] })
-        .sort({ createdAt: -1 })
-        .limit(5)
-        .lean<any[]>(),
+      db.order.findMany({ where: ordersWhere, orderBy: { createdAt: "desc" }, take: 5 }),
+      db.product.findMany({
+        where: { OR: [{ name: { contains: q } }, { slug: { contains: q } }] },
+        orderBy: { updatedAt: "desc" },
+        take: 5,
+        include: { images: true, variants: true },
+      }),
+      db.user.findMany({
+        where: { role: "CUSTOMER", OR: [{ name: { contains: q } }, { email: { contains: q } }] },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      }),
     ]);
 
     return ok(res, {
       orders: orders.map((o) => ({
-        id: String(o._id),
+        id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
         paymentStatus: o.paymentStatus,
-        grandTotal: o.grandTotal,
+        grandTotal: Number(o.grandTotal),
         createdAt: o.createdAt,
       })),
       products: products.map((p) => {
@@ -208,7 +182,7 @@ adminRouter.get(
         const pool = active.length > 0 ? active : (p.variants ?? []);
         const price = pool.length > 0 ? Math.min(...pool.map((v: any) => Number(v.price) || 0)) : 0;
         return {
-          id: String(p._id),
+          id: p.id,
           name: p.name,
           slug: p.slug,
           price,
@@ -217,7 +191,7 @@ adminRouter.get(
         };
       }),
       customers: customers.map((u) => ({
-        id: String(u._id),
+        id: u.id,
         name: u.name,
         email: u.email,
         createdAt: u.createdAt,
@@ -241,85 +215,66 @@ adminRouter.get(
     const prevSince = new Date(since.getTime() - days * DAY);
 
     const [orders, prevAgg, topAgg, lowStockProducts, catItemAgg, paymentAgg, couponAgg] = await Promise.all([
-      Order.find({ createdAt: { $gte: since }, status: { $ne: "CANCELLED" } })
-        .select("grandTotal createdAt")
-        .lean<any[]>(),
+      db.order.findMany({
+        where: { createdAt: { gte: since }, status: { not: "CANCELLED" } },
+        select: { grandTotal: true, createdAt: true },
+      }),
       // Previous window KPIs (for period-over-period deltas)
-      Order.aggregate<{ total: number; count: number }>([
-        { $match: { createdAt: { $gte: prevSince, $lt: since }, status: { $ne: "CANCELLED" } } },
-        { $group: { _id: null, total: { $sum: "$grandTotal" }, count: { $sum: 1 } } },
-      ]),
-      Order.aggregate<{ _id: string; quantity: number; lineTotal: number; orders: number }>([
-        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" } } },
-        { $unwind: "$items" },
-        {
-          $group: {
-            _id: "$items.productName",
-            quantity: { $sum: "$items.quantity" },
-            lineTotal: { $sum: "$items.lineTotal" },
-            orders: { $sum: 1 },
-          },
-        },
-        { $sort: { quantity: -1 } },
-        { $limit: 8 },
-      ]),
-      Product.aggregate([
-        { $unwind: "$variants" },
-        { $match: { $expr: { $and: [{ $eq: ["$variants.isActive", true] }, { $lte: ["$variants.stock", "$variants.lowStockThreshold"] }] } } },
-        { $sort: { "variants.stock": 1 } },
-        { $limit: 10 },
-        { $project: { name: 1, slug: 1, variantName: "$variants.name", sku: "$variants.sku", stock: "$variants.stock", lowStockThreshold: "$variants.lowStockThreshold" } },
-      ]),
+      db.$queryRaw<{ total: Prisma.Decimal; count: bigint }[]>
+        `SELECT COALESCE(SUM(grandTotal), 0) AS total, COUNT(*) AS count FROM orders
+         WHERE createdAt >= ${prevSince} AND createdAt < ${since} AND status <> 'CANCELLED'`,
+      db.$queryRaw<{ productName: string; quantity: Prisma.Decimal; lineTotal: Prisma.Decimal; orders: bigint }[]>
+        `SELECT oi.productName AS productName, SUM(oi.quantity) AS quantity, SUM(oi.lineTotal) AS lineTotal, COUNT(*) AS orders
+         FROM orderitems oi JOIN orders o ON o.id = oi.orderId
+         WHERE o.createdAt >= ${since} AND o.status <> 'CANCELLED'
+         GROUP BY oi.productName ORDER BY quantity DESC LIMIT 8`,
+      db.$queryRaw<{ name: string; slug: string; variantName: string; sku: string; stock: number; lowStockThreshold: number }[]>
+        `SELECT p.name AS name, p.slug AS slug, v.name AS variantName, v.sku AS sku, v.stock AS stock, v.lowStockThreshold AS lowStockThreshold
+         FROM productvariants v JOIN products p ON p.id = v.productId
+         WHERE v.isActive = TRUE AND v.stock <= v.lowStockThreshold
+         ORDER BY v.stock ASC LIMIT 10`,
       // Units + revenue per product, resolved to category names in JS below
-      Order.aggregate<{ _id: any; quantity: number; lineTotal: number }>([
-        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" } } },
-        { $unwind: "$items" },
-        {
-          $group: {
-            _id: "$items.productId",
-            quantity: { $sum: "$items.quantity" },
-            lineTotal: { $sum: "$items.lineTotal" },
-          },
-        },
-      ]),
+      db.$queryRaw<{ productId: string | null; quantity: Prisma.Decimal; lineTotal: Prisma.Decimal }[]>
+        `SELECT oi.productId AS productId, SUM(oi.quantity) AS quantity, SUM(oi.lineTotal) AS lineTotal
+         FROM orderitems oi JOIN orders o ON o.id = oi.orderId
+         WHERE o.createdAt >= ${since} AND o.status <> 'CANCELLED'
+         GROUP BY oi.productId`,
       // Payment method mix for the window
-      Order.aggregate<{ _id: string; count: number; total: number }>([
-        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" } } },
-        { $group: { _id: "$paymentMethod", count: { $sum: 1 }, total: { $sum: "$grandTotal" } } },
-      ]),
+      db.$queryRaw<{ paymentMethod: string; count: bigint; total: Prisma.Decimal }[]>
+        `SELECT paymentMethod, COUNT(*) AS count, COALESCE(SUM(grandTotal), 0) AS total FROM orders
+         WHERE createdAt >= ${since} AND status <> 'CANCELLED' GROUP BY paymentMethod`,
       // Coupon performance
-      Order.aggregate<{ _id: string; count: number; saved: number }>([
-        { $match: { createdAt: { $gte: since }, status: { $ne: "CANCELLED" }, couponCode: { $ne: null } } },
-        { $group: { _id: "$couponCode", count: { $sum: 1 }, saved: { $sum: "$discountTotal" } } },
-        { $sort: { count: -1 } },
-        { $limit: 5 },
-      ]),
+      db.$queryRaw<{ couponCode: string; count: bigint; saved: Prisma.Decimal }[]>
+        `SELECT couponCode, COUNT(*) AS count, COALESCE(SUM(discountTotal), 0) AS saved FROM orders
+         WHERE createdAt >= ${since} AND status <> 'CANCELLED' AND couponCode IS NOT NULL
+         GROUP BY couponCode ORDER BY count DESC LIMIT 5`,
     ]);
 
     // ---- KPI block (current + previous window) ----
     const revenue = orders.reduce((s, o) => s + (Number(o.grandTotal) || 0), 0);
     const count = orders.length;
-    const prev = prevAgg[0] ?? { total: 0, count: 0 };
+    const prev = prevAgg[0] ? { total: Number(prevAgg[0].total), count: Number(prevAgg[0].count) } : { total: 0, count: 0 };
     const aov = count > 0 ? revenue / count : 0;
     const prevAov = prev.count > 0 ? prev.total / prev.count : 0;
     const pct = (cur: number, old: number) => (old > 0 ? Math.round(((cur - old) / old) * 1000) / 10 : cur > 0 ? 100 : 0);
 
     // ---- Category breakdown (resolve productId → category in JS) ----
-    const productIds = catItemAgg.map((c) => c._id).filter((id: any) => id);
+    const productIds = catItemAgg
+      .map((c) => c.productId)
+      .filter((id: string | null): id is string => !!id);
     const products = productIds.length
-      ? await Product.find({ _id: { $in: productIds } }).select("categoryId").populate("categoryId", "name").lean<any[]>()
+      ? await db.product.findMany({ where: { id: { in: productIds } }, select: { id: true, category: { select: { name: true } } } })
       : [];
     const catNameById = new Map<string, string>();
     for (const p of products) {
-      const c = p.categoryId as any;
-      catNameById.set(String(p._id), c?.name ?? "Uncategorised");
+      catNameById.set(p.id, p.category?.name ?? "Uncategorised");
     }
     const catMap = new Map<string, { revenue: number; units: number }>();
     for (const row of catItemAgg) {
-      const name = catNameById.get(String(row._id)) ?? "Uncategorised";
+      const name = catNameById.get(String(row.productId)) ?? "Uncategorised";
       const cur = catMap.get(name) ?? { revenue: 0, units: 0 };
-      cur.revenue += row.lineTotal;
-      cur.units += row.quantity;
+      cur.revenue += Number(row.lineTotal);
+      cur.units += Number(row.quantity);
       catMap.set(name, cur);
     }
     const categories = [...catMap.entries()]
@@ -332,19 +287,19 @@ adminRouter.get(
       GATEWAY: { count: 0, total: 0 },
     } as Record<string, { count: number; total: number }>;
     for (const row of paymentAgg) {
-      const key = row._id ?? "PAY_ON_CONFIRMATION";
-      paymentSplit[key] = { count: row.count, total: row.total };
+      const key = row.paymentMethod ?? "PAY_ON_CONFIRMATION";
+      paymentSplit[key] = { count: Number(row.count), total: Number(row.total) };
     }
 
     return ok(res, {
       days,
       daily: orders.map((o) => ({ date: o.createdAt, grandTotal: o.grandTotal })),
-      topItems: topAgg.map((t) => ({ productName: t._id, quantity: t.quantity, lineTotal: t.lineTotal, orders: t.orders })),
-      lowStock: lowStockProducts.map((v: any) => ({
+      topItems: topAgg.map((t) => ({ productName: t.productName, quantity: Number(t.quantity), lineTotal: Number(t.lineTotal), orders: Number(t.orders) })),
+      lowStock: lowStockProducts.map((v) => ({
         variantName: v.variantName,
         sku: v.sku,
-        stock: v.stock,
-        lowStockThreshold: v.lowStockThreshold,
+        stock: Number(v.stock),
+        lowStockThreshold: Number(v.lowStockThreshold),
         product: { name: v.name, slug: v.slug },
       })),
       // ── Reports 2.0 additions ──
@@ -361,7 +316,7 @@ adminRouter.get(
       },
       categories,
       paymentSplit,
-      topCoupons: couponAgg.map((c) => ({ code: c._id, orders: c.count, saved: Math.round(c.saved * 100) / 100 })),
+      topCoupons: couponAgg.map((c) => ({ code: c.couponCode, orders: Number(c.count), saved: Math.round(Number(c.saved) * 100) / 100 })),
     });
   })
 );
@@ -372,9 +327,9 @@ adminRouter.get(
   "/admin/audit-logs",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const logs = await AuditLog.find().sort({ createdAt: -1 }).limit(100).lean<any[]>();
+    const logs = await db.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 100 });
     return ok(res, logs.map((l) => ({
-        id: String(l._id),
+        id: l.id,
         actorId: l.actorId ? String(l.actorId) : null,
         actorEmail: l.actorEmail ?? null,
         action: l.action,
@@ -394,21 +349,29 @@ adminRouter.get(
   "/admin/orders/:orderId",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const { orderId } = req.params;
-    const order = await Order.findById(orderId).populate("userId", "name email phone").lean<any>();
+    const orderId = String(req.params.orderId);
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: { select: { id: true, name: true, email: true, phone: true } },
+        items: true,
+        events: { orderBy: { createdAt: "asc" } },
+        payment: true,
+        shipment: true,
+      },
+    });
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
     const detail = await serializeOrderDetail(order);
     return ok(res, {
       ...detail,
-      user:
-        order.userId && typeof order.userId === "object"
-          ? {
-              id: String((order.userId as any)._id),
-              name: (order.userId as any).name,
-              email: (order.userId as any).email,
-              phone: (order.userId as any).phone ?? null,
-            }
-          : null,
+      user: order.user
+        ? {
+            id: order.user.id,
+            name: order.user.name,
+            email: order.user.email,
+            phone: order.user.phone ?? null,
+          }
+        : null,
     });
   })
 );
@@ -419,16 +382,19 @@ adminRouter.get(
   "/admin/products/:productId",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const { productId } = req.params;
-    const product = await Product.findById(productId).populate("categoryId").lean<any>();
+    const productId = String(req.params.productId);
+    const product = await db.product.findUnique({
+      where: { id: productId },
+      include: { category: true, variants: true, images: true },
+    });
     if (!product) return fail(res, "NOT_FOUND", "Product not found.", 404);
     const s = serializeProduct(product);
     return ok(res, {
       ...s,
       variants: [...(product.variants ?? [])]
-        .sort((a: any, b: any) => a.price - b.price)
-        .map((v: any) => ({
-          id: String(v._id),
+        .sort((a: any, b: any) => Number(a.price) - Number(b.price))
+        .map((v) => ({
+          id: v.id,
           sku: v.sku,
           name: v.name,
           price: v.price,
@@ -452,33 +418,33 @@ adminRouter.get(
     const categoryId = (req.query.categoryId as string | undefined)?.trim() ?? "";
     const sort = (req.query.sort as string | undefined)?.trim() ?? "newest";
 
-    const where: Record<string, unknown> = q
-      ? { $or: [{ name: new RegExp(escapeRegex(q), "i") }, { slug: new RegExp(escapeRegex(q), "i") }] }
+    const where: Prisma.ProductWhereInput = q
+      ? { OR: [{ name: { contains: q } }, { slug: { contains: q } }] }
       : {};
     // Status filter — special value OUT_OF_STOCK is virtual (any active variant with 0 stock)
-    if (["ACTIVE", "DRAFT", "ARCHIVED"].includes(status)) where.status = status;
-    if (categoryId && mongoose.isValidObjectId(categoryId)) where.categoryId = categoryId;
+    if (["ACTIVE", "DRAFT", "ARCHIVED"].includes(status)) where.status = status as never;
+    if (categoryId && isValidId(categoryId)) where.categoryId = categoryId;
 
-    // Sorting — computed post-fetch for stock/price (variant subdocuments), DB-sort otherwise
-    const SORTS: Record<string, Record<string, 1 | -1>> = {
-      newest: { createdAt: -1 },
-      oldest: { createdAt: 1 },
-      name: { name: 1 },
-      pricedesc: { "variants.price": -1 },
+    // Sorting — computed post-fetch for stock/price (variant rows), DB-sort otherwise
+    const ORDER_BY: Record<string, Prisma.ProductOrderByWithRelationInput> = {
+      newest: { createdAt: "desc" },
+      oldest: { createdAt: "asc" },
+      name: { name: "asc" },
     };
-    const products = await Product.find(where)
-      .sort(SORTS[sort] ?? { createdAt: -1 })
-      .populate("categoryId")
-      .lean<any[]>();
+    const products = await db.product.findMany({
+      where,
+      orderBy: ORDER_BY[sort] ?? { createdAt: "desc" },
+      include: { category: true, variants: true, images: true },
+    });
     // Admin view keeps ALL variants (even inactive), sorted by price asc
     let rows = products.map((p) => {
         const s = serializeProduct(p);
         return {
           ...s,
           variants: [...(p.variants ?? [])]
-            .sort((a: any, b: any) => a.price - b.price)
-            .map((v: any) => ({
-              id: String(v._id),
+            .sort((a: any, b: any) => Number(a.price) - Number(b.price))
+            .map((v) => ({
+              id: v.id,
               sku: v.sku,
               name: v.name,
               price: v.price,
@@ -491,7 +457,10 @@ adminRouter.get(
             })),
         };
       });
-    if (sort === "priceasc") rows = rows.sort((a, b) => (a.variants[0]?.price ?? 0) - (b.variants[0]?.price ?? 0));
+    // Mongo sorted "variants.price" desc DB-side (max variant price); Prisma cannot
+    // order by a to-many relation scalar, so it is applied post-fetch.
+    if (sort === "pricedesc") rows = rows.sort((a, b) => maxVariantPrice(b.variants) - maxVariantPrice(a.variants));
+    if (sort === "priceasc") rows = rows.sort((a, b) => Number(a.variants[0]?.price ?? 0) - Number(b.variants[0]?.price ?? 0));
     if (sort === "stockasc") rows = rows.sort((a, b) => sumActiveStock(a.variants) - sumActiveStock(b.variants));
     if (sort === "stockdesc") rows = rows.sort((a, b) => sumActiveStock(b.variants) - sumActiveStock(a.variants));
     if (status === "OUT_OF_STOCK") rows = rows.filter((p) => sumActiveStock(p.variants) === 0);
@@ -505,6 +474,11 @@ function sumActiveStock(variants: { isActive: boolean; stock: number }[]): numbe
   return variants.reduce((n, v) => n + (v.isActive ? v.stock : 0), 0);
 }
 
+/** Max variant price — powers the "pricedesc" sort (was DB-side in Mongo). */
+function maxVariantPrice(variants: { price: unknown }[]): number {
+  return variants.reduce((m, v) => Math.max(m, Number(v.price) || 0), 0);
+}
+
 /* ================= Products: bulk actions ================= */
 
 adminRouter.patch(
@@ -514,7 +488,7 @@ adminRouter.patch(
     const admin = await requireAdmin(req);
 
     const body = (req.body ?? {}) as { ids?: unknown; action?: unknown };
-    const ids = Array.isArray(body.ids) ? body.ids.filter((i): i is string => typeof i === "string" && mongoose.isValidObjectId(i)) : [];
+    const ids = Array.isArray(body.ids) ? body.ids.filter((i): i is string => typeof i === "string" && isValidId(i)) : [];
     const action = typeof body.action === "string" ? body.action : "";
     const STATUS_MAP: Record<string, string> = { activate: "ACTIVE", draft: "DRAFT", archive: "ARCHIVED" };
     const nextStatus = STATUS_MAP[action];
@@ -522,9 +496,8 @@ adminRouter.patch(
     if (ids.length === 0) return fail(res, "VALIDATION", "Provide at least one valid product id.", 400);
     if (ids.length > 200) return fail(res, "VALIDATION", "Bulk actions are limited to 200 products at a time.", 400);
 
-    const result = await Product.updateMany(
-      { _id: { $in: ids } },
-      { $set: { status: nextStatus, updatedAt: new Date() } }
+    const result = await db.product.updateMany(
+      { where: { id: { in: ids } }, data: { status: nextStatus as never, updatedAt: new Date() } }
     );
 
     await audit(
@@ -533,12 +506,12 @@ adminRouter.patch(
         action: `admin.products.bulk.${action}`,
         entityType: "Product",
         entityId: "bulk",
-        metadata: { count: result.modifiedCount, ids },
+        metadata: { count: result.count, ids },
       },
       req
     );
 
-    return ok(res, { modified: result.modifiedCount, action: nextStatus });
+    return ok(res, { modified: result.count, action: nextStatus });
   })
 );
 
@@ -550,7 +523,7 @@ adminRouter.post(
     const data = productSchema.parse(req.body);
 
     const slug = data.slug && data.slug.length > 0 ? data.slug : slugify(data.name);
-    const clash = await Product.findOne({ slug }).lean<{ _id: any }>();
+    const clash = await db.product.findFirst({ where: { slug }, select: { id: true } });
     if (clash) {
       // 409 Conflict (was: 200 with {error} in the body — clients could read
       // that as success). Matches the PUT /admin/products/:id behaviour below.
@@ -559,8 +532,103 @@ adminRouter.post(
       });
     }
 
-    const product = await Product.create({
-      slug,
+    const product = await db.product.create({
+      data: {
+        id: newId(),
+        slug,
+        categoryId: data.categoryId,
+        name: data.name,
+        shortDescription: data.shortDescription,
+        description: data.description || null,
+        materials: data.materials || null,
+        careInstructions: data.careInstructions || null,
+        status: data.status,
+        isFeatured: data.isFeatured,
+        isNewArrival: data.isNewArrival,
+        isBestSeller: data.isBestSeller,
+        isTrending: data.isTrending,
+        videoUrl: data.videoUrl || null,
+        images: { create: data.images.map((img, i) => ({ id: newId(), url: img.url, alt: img.alt ?? null, sortOrder: i })) },
+        variants: {
+          create: data.variants.map((v) => ({
+            id: newId(),
+            name: v.name,
+            sku: v.sku.toUpperCase(),
+            price: v.price,
+            compareAtPrice: v.compareAtPrice ?? null,
+            stock: v.stock,
+            lowStockThreshold: v.lowStockThreshold,
+            isActive: v.isActive,
+          })),
+        },
+      },
+      include: { category: true, variants: true, images: true },
+    });
+
+    // Record initial stock movements
+    for (const v of product.variants) {
+      if (v.stock > 0) {
+        await db.stockMovement.create({
+          data: {
+            id: newId(),
+            variantId: v.id,
+            delta: v.stock,
+            reason: "INITIAL",
+            note: "Initial stock at product creation",
+            createdById: admin.id,
+          },
+        });
+      }
+    }
+
+    await audit(
+      {
+        actor: admin,
+        action: "admin.product.create",
+        entityType: "Product",
+        entityId: product.id,
+        metadata: { name: product.name, slug: product.slug },
+      },
+      req
+    );
+    return ok(res, serializeProduct(product), 201);
+  })
+);
+
+adminRouter.put(
+  "/admin/products/:productId",
+  handle(async (req, res) => {
+    assertSameOrigin(req);
+    const admin = await requireAdmin(req);
+    const productId = String(req.params.productId);
+    const data = productSchema.parse(req.body);
+
+    const existing = await db.product.findUnique({
+      where: { id: productId },
+      include: { variants: true, images: true },
+    });
+    if (!existing) return fail(res, "NOT_FOUND", "Product not found.", 404);
+
+    const slug = data.slug && data.slug.length > 0 ? data.slug : undefined;
+    if (slug && slug !== existing.slug) {
+      const clash = await db.product.findFirst({ where: { slug }, select: { id: true } });
+      if (clash) return fail(res, "SLUG_TAKEN", "A product with this slug already exists.", 409, { slug: "Already in use" });
+    }
+
+    // Check SKU uniqueness across OTHER products' variants
+    for (const v of data.variants) {
+      const sku = v.sku.toUpperCase();
+      const clash = await db.productVariant.findFirst({
+        where: { sku, productId: { not: productId } },
+        select: { product: { select: { name: true } } },
+      });
+      if (clash) {
+        return fail(res, "SKU_TAKEN", `SKU ${sku} is already used by "${clash.product.name}".`, 409, { sku: "Already in use" });
+      }
+    }
+
+    const productUpdate = {
+      ...(slug ? { slug } : {}),
       categoryId: data.categoryId,
       name: data.name,
       shortDescription: data.shortDescription,
@@ -573,150 +641,92 @@ adminRouter.post(
       isBestSeller: data.isBestSeller,
       isTrending: data.isTrending,
       videoUrl: data.videoUrl || null,
-      images: data.images.map((img, i) => ({ url: img.url, alt: img.alt ?? null, sortOrder: i })),
-      variants: data.variants.map((v) => ({
-        name: v.name,
-        sku: v.sku.toUpperCase(),
-        price: v.price,
-        compareAtPrice: v.compareAtPrice ?? null,
-        stock: v.stock,
-        lowStockThreshold: v.lowStockThreshold,
-        isActive: v.isActive,
-      })),
-    });
+    };
 
-    // Record initial stock movements
-    for (const v of product.variants) {
-      if (v.stock > 0) {
-        await StockMovement.create({
-          variantId: v._id,
-          delta: v.stock,
-          reason: "INITIAL",
-          note: "Initial stock at product creation",
-          createdById: admin.id,
+    await db.$transaction(
+      async (tx) => {
+        // Replace images wholesale (embedded array → child table rows)
+        await tx.productImage.deleteMany({ where: { productId } });
+        await tx.product.update({
+          where: { id: productId },
+          data: {
+            ...productUpdate,
+            images: {
+              create: data.images.map((img, i) => ({
+                id: newId(),
+                url: img.url,
+                alt: img.alt ?? null,
+                sortOrder: i,
+              })),
+            },
+          },
         });
-      }
-    }
 
-    await audit(
-      {
-        actor: admin,
-        action: "admin.product.create",
-        entityType: "Product",
-        entityId: String(product._id),
-        metadata: { name: product.name, slug: product.slug },
+        // Variants: update by id, create new, remove deleted
+        const keepIds: string[] = [];
+        for (const v of data.variants) {
+          if (v.id) {
+            const ev = existing.variants.find((x) => x.id === v.id);
+            if (ev) {
+              await tx.productVariant.update({
+                where: { id: ev.id },
+                data: {
+                  name: v.name,
+                  sku: v.sku.toUpperCase(),
+                  price: v.price,
+                  compareAtPrice: v.compareAtPrice ?? null,
+                  lowStockThreshold: v.lowStockThreshold,
+                  isActive: v.isActive,
+                  // NOTE: stock is NOT overwritten here; use inventory adjust for stock changes
+                },
+              });
+              keepIds.push(ev.id);
+            }
+          } else {
+            const created = await tx.productVariant.create({
+              data: {
+                id: newId(),
+                productId,
+                name: v.name,
+                sku: v.sku.toUpperCase(),
+                price: v.price,
+                compareAtPrice: v.compareAtPrice ?? null,
+                stock: v.stock,
+                lowStockThreshold: v.lowStockThreshold,
+                isActive: v.isActive,
+              },
+            });
+            keepIds.push(created.id);
+            if (created.stock > 0) {
+              await tx.stockMovement.create({
+                data: {
+                  id: newId(),
+                  variantId: created.id,
+                  delta: created.stock,
+                  reason: "INITIAL",
+                  note: "Stock at variant creation",
+                  createdById: admin.id,
+                },
+              });
+            }
+          }
+        }
+        // Delete removed variants (soft-deactivate if they have order history)
+        for (const ev of existing.variants) {
+          if (!keepIds.includes(ev.id)) {
+            const used = await tx.orderItem.count({ where: { variantId: ev.id } });
+            if (used > 0) {
+              await tx.productVariant.update({ where: { id: ev.id }, data: { isActive: false } });
+            }
+            // else drop entirely
+            else {
+              await tx.productVariant.delete({ where: { id: ev.id } });
+            }
+          }
+        }
       },
-      req
+      { timeout: 15_000 }
     );
-    return ok(res, serializeProduct(product.toObject()), 201);
-  })
-);
-
-adminRouter.put(
-  "/admin/products/:productId",
-  handle(async (req, res) => {
-    assertSameOrigin(req);
-    const admin = await requireAdmin(req);
-    const productId = String(req.params.productId);
-    const data = productSchema.parse(req.body);
-
-    const existing = await Product.findById(productId);
-    if (!existing) return fail(res, "NOT_FOUND", "Product not found.", 404);
-
-    const slug = data.slug && data.slug.length > 0 ? data.slug : undefined;
-    if (slug && slug !== existing.slug) {
-      const clash = await Product.findOne({ slug }).lean<{ _id: any }>();
-      if (clash) return fail(res, "SLUG_TAKEN", "A product with this slug already exists.", 409, { slug: "Already in use" });
-    }
-
-    // Check SKU uniqueness across OTHER products' variants
-    for (const v of data.variants) {
-      const sku = v.sku.toUpperCase();
-      const clash = await Product.findOne({ "variants.sku": sku, _id: { $ne: productId } }).select("name").lean<{ name: string } | null>();
-      if (clash) {
-        return fail(res, "SKU_TAKEN", `SKU ${sku} is already used by "${clash.name}".`, 409, { sku: "Already in use" });
-      }
-    }
-
-    // Replace images wholesale; variants: upsert by id, create new, remove deleted
-    existing.images = data.images.map((img, i) => ({
-      url: img.url,
-      alt: img.alt ?? null,
-      sortOrder: i,
-    })) as never;
-    if (slug) existing.slug = slug;
-    existing.categoryId = data.categoryId as never;
-    existing.name = data.name;
-    existing.shortDescription = data.shortDescription;
-    existing.description = data.description || null;
-    existing.materials = data.materials || null;
-    existing.careInstructions = data.careInstructions || null;
-    existing.status = data.status;
-    existing.isFeatured = data.isFeatured;
-    existing.isNewArrival = data.isNewArrival;
-    existing.isBestSeller = data.isBestSeller;
-    existing.isTrending = data.isTrending;
-    existing.videoUrl = data.videoUrl || null;
-
-    // Order history check helper: does any order reference this variant?
-    const { Order: OrderModel } = await import("../models");
-    const keepIds: string[] = [];
-    const newVariants: any[] = [];
-    for (const v of data.variants) {
-      if (v.id) {
-        const ev = (existing.variants as unknown as any[]).find(
-          (x) => String(x._id) === v.id
-        );
-        if (ev) {
-          ev.name = v.name;
-          ev.sku = v.sku.toUpperCase();
-          ev.price = v.price;
-          ev.compareAtPrice = v.compareAtPrice ?? null;
-          ev.lowStockThreshold = v.lowStockThreshold;
-          ev.isActive = v.isActive;
-          // NOTE: stock is NOT overwritten here; use inventory adjust for stock changes
-          keepIds.push(String(ev._id));
-          newVariants.push(ev);
-        }
-      } else {
-        const created = {
-          _id: new mongoose.Types.ObjectId(),
-          name: v.name,
-          sku: v.sku.toUpperCase(),
-          price: v.price,
-          compareAtPrice: v.compareAtPrice ?? null,
-          stock: v.stock,
-          lowStockThreshold: v.lowStockThreshold,
-          isActive: v.isActive,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        newVariants.push(created);
-        keepIds.push(String(created._id));
-        if (created.stock > 0) {
-          await StockMovement.create({
-            variantId: created._id,
-            delta: created.stock,
-            reason: "INITIAL",
-            note: "Stock at variant creation",
-            createdById: admin.id,
-          });
-        }
-      }
-    }
-    // Delete removed variants (soft-deactivate if they have order history)
-    for (const ev of [...(existing.variants as unknown as any[])]) {
-      if (!keepIds.includes(String(ev._id))) {
-        const used = await OrderModel.countDocuments({ "items.variantId": String(ev._id) });
-        if (used > 0) {
-          ev.isActive = false;
-          newVariants.push(ev);
-        }
-        // else drop entirely
-      }
-    }
-    existing.variants = newVariants as never;
-    await existing.save();
 
     await audit(
       {
@@ -728,7 +738,10 @@ adminRouter.put(
       },
       req
     );
-    const updated = await Product.findById(productId).populate("categoryId").lean<any>();
+    const updated = await db.product.findUnique({
+      where: { id: productId },
+      include: { category: true, variants: true, images: true },
+    });
     return ok(res, serializeProduct(updated));
   })
 );
@@ -740,10 +753,10 @@ adminRouter.delete(
     const admin = await requireAdmin(req);
     const productId = String(req.params.productId);
 
-    const used = await Order.countDocuments({ "items.productId": productId });
+    const used = await db.orderItem.count({ where: { productId } });
     if (used > 0) {
       // Safeguard: products with order history are archived, never deleted
-      await Product.updateOne({ _id: productId }, { status: "ARCHIVED" });
+      await db.product.update({ where: { id: productId }, data: { status: "ARCHIVED" } });
       await audit(
         {
           actor: admin,
@@ -757,7 +770,12 @@ adminRouter.delete(
       return ok(res, { archived: true, message: "Product has order history — archived instead of deleted." });
     }
 
-    await Product.deleteOne({ _id: productId });
+    // Mongo's deleteOne removed the embedded variants/images arrays with the
+    // product — delete the child-table rows too. deleteMany keeps the old
+    // no-op-when-missing behaviour (never throws).
+    await db.productImage.deleteMany({ where: { productId } });
+    await db.productVariant.deleteMany({ where: { productId } });
+    await db.product.deleteMany({ where: { id: productId } });
     await audit(
       { actor: admin, action: "admin.product.delete", entityType: "Product", entityId: productId },
       req
@@ -772,13 +790,11 @@ adminRouter.get(
   "/admin/categories",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const categories = await Category.find().sort({ sortOrder: 1 }).lean<any[]>();
-    const counts = await Product.aggregate<{ _id: string; count: number }>([
-      { $group: { _id: "$categoryId", count: { $sum: 1 } } },
-    ]);
-    const countMap = new Map(counts.map((c) => [String(c._id), c.count]));
+    const categories = await db.category.findMany({ orderBy: { sortOrder: "asc" } });
+    const counts = await db.product.groupBy({ by: ["categoryId"], _count: { _all: true } });
+    const countMap = new Map(counts.map((c) => [String(c.categoryId), c._count._all]));
     return ok(res, categories.map((c) => ({
-        id: String(c._id),
+        id: c.id,
         slug: c.slug,
         name: c.name,
         description: c.description ?? null,
@@ -787,7 +803,7 @@ adminRouter.get(
         isActive: c.isActive,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
-        _count: { products: countMap.get(String(c._id)) ?? 0 },
+        _count: { products: countMap.get(c.id) ?? 0 },
       }))
     );
   })
@@ -800,22 +816,25 @@ adminRouter.post(
     const admin = await requireAdmin(req);
     const data = categorySchema.parse(req.body);
     const slug = data.slug && data.slug.length > 0 ? data.slug : slugify(data.name);
-    const clash = await Category.findOne({ slug }).lean<{ _id: any }>();
+    const clash = await db.category.findFirst({ where: { slug }, select: { id: true } });
     if (clash) return fail(res, "SLUG_TAKEN", "A category with this slug already exists.", 409, { slug: "Already in use" });
 
-    const category = await Category.create({
-      name: data.name,
-      slug,
-      description: data.description || null,
-      imageUrl: data.imageUrl || null,
-      sortOrder: data.sortOrder,
-      isActive: data.isActive,
+    const category = await db.category.create({
+      data: {
+        id: newId(),
+        name: data.name,
+        slug,
+        description: data.description || null,
+        imageUrl: data.imageUrl || null,
+        sortOrder: data.sortOrder,
+        isActive: data.isActive,
+      },
     });
     await audit(
-      { actor: admin, action: "admin.category.create", entityType: "Category", entityId: String(category._id), metadata: { name: category.name } },
+      { actor: admin, action: "admin.category.create", entityType: "Category", entityId: category.id, metadata: { name: category.name } },
       req
     );
-    return ok(res, { id: String(category._id), slug: category.slug, name: category.name, description: category.description ?? null, imageUrl: category.imageUrl ?? null, sortOrder: category.sortOrder, isActive: category.isActive, createdAt: category.createdAt, updatedAt: category.updatedAt, _count: { products: 0 } }, 201);
+    return ok(res, { id: category.id, slug: category.slug, name: category.name, description: category.description ?? null, imageUrl: category.imageUrl ?? null, sortOrder: category.sortOrder, isActive: category.isActive, createdAt: category.createdAt, updatedAt: category.updatedAt, _count: { products: 0 } }, 201);
   })
 );
 
@@ -827,27 +846,31 @@ adminRouter.put(
     const categoryId = String(req.params.categoryId);
     const data = categorySchema.parse(req.body);
 
-    const existing = await Category.findById(categoryId);
+    const existing = await db.category.findUnique({ where: { id: categoryId } });
     if (!existing) return fail(res, "NOT_FOUND", "Category not found.", 404);
 
     const slug = data.slug && data.slug.length > 0 ? data.slug : undefined;
     if (slug && slug !== existing.slug) {
-      const clash = await Category.findOne({ slug }).lean<{ _id: any }>();
+      const clash = await db.category.findFirst({ where: { slug }, select: { id: true } });
       if (clash) return fail(res, "SLUG_TAKEN", "Slug already in use.", 409, { slug: "Already in use" });
     }
 
-    existing.name = data.name;
-    if (slug) existing.slug = slug;
-    existing.description = data.description || null;
-    existing.imageUrl = data.imageUrl || null;
-    existing.sortOrder = data.sortOrder;
-    existing.isActive = data.isActive;
-    await existing.save();
+    const updated = await db.category.update({
+      where: { id: categoryId },
+      data: {
+        name: data.name,
+        ...(slug ? { slug } : {}),
+        description: data.description || null,
+        imageUrl: data.imageUrl || null,
+        sortOrder: data.sortOrder,
+        isActive: data.isActive,
+      },
+    });
     await audit(
-      { actor: admin, action: "admin.category.update", entityType: "Category", entityId: categoryId, metadata: { name: existing.name } },
+      { actor: admin, action: "admin.category.update", entityType: "Category", entityId: categoryId, metadata: { name: updated.name } },
       req
     );
-    return ok(res, { id: String(existing._id), slug: existing.slug, name: existing.name, description: existing.description ?? null, imageUrl: existing.imageUrl ?? null, sortOrder: existing.sortOrder, isActive: existing.isActive, createdAt: existing.createdAt, updatedAt: existing.updatedAt });
+    return ok(res, { id: updated.id, slug: updated.slug, name: updated.name, description: updated.description ?? null, imageUrl: updated.imageUrl ?? null, sortOrder: updated.sortOrder, isActive: updated.isActive, createdAt: updated.createdAt, updatedAt: updated.updatedAt });
   })
 );
 
@@ -857,14 +880,14 @@ adminRouter.delete(
     assertSameOrigin(req);
     const admin = await requireAdmin(req);
     const categoryId = String(req.params.categoryId);
-    const count = await Product.countDocuments({ categoryId });
+    const count = await db.product.count({ where: { categoryId } });
     if (count > 0) {
       return fail(res, "CATEGORY_IN_USE",
         `This category has ${count} product(s). Move them to another category first.`,
         422
       );
     }
-    await Category.deleteOne({ _id: categoryId });
+    await db.category.deleteMany({ where: { id: categoryId } });
     await audit(
       { actor: admin, action: "admin.category.delete", entityType: "Category", entityId: categoryId },
       req
@@ -879,16 +902,22 @@ adminRouter.get(
   "/admin/orders-list",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const orders = await Order.find()
-      .sort({ createdAt: -1 })
-      .limit(200)
-      .populate("userId", "name email")
-      .lean<any[]>();
+    const orders = await db.order.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        items: true,
+        events: { orderBy: { createdAt: "asc" } },
+        payment: true,
+        shipment: true,
+      },
+    });
     return ok(res, await Promise.all(orders.map(async (o) => {
         const detail = await serializeOrderDetail(o);
         return {
           ...detail,
-          user: o.userId && typeof o.userId === "object" ? { id: String((o.userId as any)._id), name: (o.userId as any).name, email: (o.userId as any).email } : null,
+          user: o.user ? { id: o.user.id, name: o.user.name, email: o.user.email } : null,
         };
       }))
     );
@@ -952,7 +981,7 @@ adminRouter.post(
     const orderId = String(req.params.orderId);
     const nextStatus = String(req.body?.paymentStatus ?? "");
 
-    const order = await Order.findById(orderId);
+    const order = await db.order.findUnique({ where: { id: orderId }, include: { payment: true } });
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
 
     const ALLOWED: Record<string, string[]> = {
@@ -968,12 +997,16 @@ adminRouter.post(
       );
     }
 
-    order.paymentStatus = nextStatus as never;
+    await db.order.update({ where: { id: orderId }, data: { paymentStatus: nextStatus as never } });
     if (order.payment) {
-      order.payment.status = nextStatus as never;
-      order.payment.verifiedAt = nextStatus === "PAID" ? new Date() : null;
+      await db.orderPayment.update({
+        where: { id: order.payment.id },
+        data: {
+          status: nextStatus as never,
+          verifiedAt: nextStatus === "PAID" ? new Date() : null,
+        },
+      });
     }
-    await order.save();
 
     // Realtime: customer's order page reflects the payment instantly.
     try {
@@ -1007,21 +1040,17 @@ adminRouter.get(
   "/admin/customers-list",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const customers = await User.find({ role: "CUSTOMER" })
-      .sort({ createdAt: -1 })
-      .lean<any[]>();
-    const counts = await Order.aggregate<{ _id: string; count: number }>([
-      { $group: { _id: "$userId", count: { $sum: 1 } } },
-    ]);
-    const countMap = new Map(counts.map((c) => [String(c._id), c.count]));
+    const customers = await db.user.findMany({ where: { role: "CUSTOMER" }, orderBy: { createdAt: "desc" } });
+    const counts = await db.order.groupBy({ by: ["userId"], _count: { _all: true } });
+    const countMap = new Map(counts.map((c) => [String(c.userId), c._count._all]));
     return ok(res, customers.map((u) => ({
-        id: String(u._id),
+        id: u.id,
         name: u.name,
         email: u.email,
         phone: u.phone ?? null,
         isActive: u.isActive,
         createdAt: u.createdAt,
-        _count: { orders: countMap.get(String(u._id)) ?? 0 },
+        _count: { orders: countMap.get(u.id) ?? 0 },
       }))
     );
   })
@@ -1035,11 +1064,11 @@ adminRouter.patch(
     const customerId = String(req.params.customerId);
     const isActive = Boolean(req.body?.isActive);
 
-    const target = await User.findOne({ _id: customerId, role: "CUSTOMER" }).lean<{ _id: any; email: string } | null>();
+    const target = await db.user.findFirst({ where: { id: customerId, role: "CUSTOMER" }, select: { id: true, email: true } });
     if (!target) return fail(res, "NOT_FOUND", "Customer not found.", 404);
 
-    await User.updateOne({ _id: customerId }, { isActive });
-    if (!isActive) await Session.deleteMany({ userId: customerId });
+    await db.user.update({ where: { id: customerId }, data: { isActive } });
+    if (!isActive) await db.session.deleteMany({ where: { userId: customerId } });
 
     await audit(
       {
@@ -1061,11 +1090,12 @@ adminRouter.get(
   "/admin/users",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const users = await User.find({ role: "ADMIN" })
-      .sort({ createdAt: 1 })
-      .select("name email role isActive createdAt")
-      .lean<any[]>();
-    return ok(res, users.map((u) => ({ id: String(u._id), name: u.name, email: u.email, role: u.role, isActive: u.isActive, createdAt: u.createdAt }))
+    const users = await db.user.findMany({
+      where: { role: "ADMIN" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
+    });
+    return ok(res, users.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, isActive: u.isActive, createdAt: u.createdAt }))
     );
   })
 );
@@ -1077,26 +1107,29 @@ adminRouter.post(
     const admin = await requireAdmin(req);
     const data = adminUserSchema.parse(req.body);
 
-    const clash = await User.findOne({ email: data.email }).lean<{ _id: any }>();
+    const clash = await db.user.findFirst({ where: { email: data.email }, select: { id: true } });
     if (clash) return fail(res, "EMAIL_TAKEN", "A user with this email already exists.", 409, { email: "Already registered" });
 
-    const user = await User.create({
-      email: data.email,
-      passwordHash: await hashPassword(data.password),
-      name: data.name,
-      role: data.role,
+    const user = await db.user.create({
+      data: {
+        id: newId(),
+        email: data.email,
+        passwordHash: await hashPassword(data.password),
+        name: data.name,
+        role: data.role,
+      },
     });
     await audit(
       {
         actor: admin,
         action: "admin.user.create",
         entityType: "User",
-        entityId: String(user._id),
+        entityId: user.id,
         metadata: { email: user.email, role: user.role },
       },
       req
     );
-    return ok(res, { id: String(user._id), email: user.email, name: user.name, role: user.role }, 201);
+    return ok(res, { id: user.id, email: user.email, name: user.name, role: user.role }, 201);
   })
 );
 
@@ -1108,14 +1141,14 @@ adminRouter.patch(
     const userId = String(req.params.userId);
     const isActive = Boolean(req.body?.isActive);
 
-    const target = await User.findOne({ _id: userId, role: "ADMIN" }).lean<{ _id: any; email: string } | null>();
+    const target = await db.user.findFirst({ where: { id: userId, role: "ADMIN" }, select: { id: true, email: true } });
     if (!target) return fail(res, "NOT_FOUND", "Admin user not found.", 404);
-    if (String(target._id) === admin.id && !isActive) {
+    if (target.id === admin.id && !isActive) {
       return fail(res, "SELF_LOCKOUT", "You cannot deactivate your own account.", 422);
     }
 
-    await User.updateOne({ _id: userId }, { isActive });
-    if (!isActive) await Session.deleteMany({ userId });
+    await db.user.update({ where: { id: userId }, data: { isActive } });
+    if (!isActive) await db.session.deleteMany({ where: { userId } });
 
     await audit(
       {
@@ -1141,25 +1174,27 @@ adminRouter.post(
     const variantId = String(req.params.variantId);
     const data = inventoryAdjustSchema.parse(req.body);
 
-    const product = await Product.findOne({ "variants._id": variantId }).select("variants").lean<{ variants: { _id: any; sku: string; stock: number }[] } | null>();
-    const variant = product?.variants.find((v) => String(v._id) === variantId);
-    if (!product || !variant) return fail(res, "NOT_FOUND", "Variant not found.", 404);
+    const variant = await db.productVariant.findUnique({ where: { id: variantId } });
+    if (!variant) return fail(res, "NOT_FOUND", "Variant not found.", 404);
     if (variant.stock + data.delta < 0) {
       return fail(res, "NEGATIVE_STOCK", `Cannot reduce below zero (current: ${variant.stock}).`, 422);
     }
 
-    await Product.updateOne(
-      { "variants._id": variantId },
-      { $inc: { "variants.$.stock": data.delta }, $currentDate: { "variants.$.updatedAt": true } }
-    );
+    await db.productVariant.update({
+      where: { id: variantId },
+      data: { stock: { increment: data.delta } },
+    });
     const updatedStock = variant.stock + data.delta;
 
-    await StockMovement.create({
-      variantId,
-      delta: data.delta,
-      reason: "MANUAL_ADJUST",
-      note: data.note || null,
-      createdById: admin.id,
+    await db.stockMovement.create({
+      data: {
+        id: newId(),
+        variantId,
+        delta: data.delta,
+        reason: "MANUAL_ADJUST",
+        note: data.note || null,
+        createdById: admin.id,
+      },
     });
 
     await audit(
@@ -1181,12 +1216,13 @@ adminRouter.get(
   handle(async (req, res) => {
     await requireAdmin(req);
     const variantId = String(req.params.variantId);
-    const movements = await StockMovement.find({ variantId })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .lean<any[]>();
+    const movements = await db.stockMovement.findMany({
+      where: { variantId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
     return ok(res, movements.map((m) => ({
-        id: String(m._id),
+        id: m.id,
         variantId: String(m.variantId),
         delta: m.delta,
         reason: m.reason,
@@ -1205,9 +1241,12 @@ adminRouter.get(
   "/admin/coupons",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const coupons = await Coupon.find().sort({ createdAt: -1 }).lean<any[]>();
+    const coupons = await db.coupon.findMany({
+      orderBy: { createdAt: "desc" },
+      include: { _count: { select: { redemptions: true } } },
+    });
     return ok(res, coupons.map((c) => ({
-        id: String(c._id),
+        id: c.id,
         code: c.code,
         description: c.description ?? null,
         discountType: c.discountType,
@@ -1222,7 +1261,7 @@ adminRouter.get(
         isActive: c.isActive,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
-        _count: { redemptions: (c.redemptions ?? []).length },
+        _count: { redemptions: c._count.redemptions },
       }))
     );
   })
@@ -1251,19 +1290,19 @@ adminRouter.post(
     const admin = await requireAdmin(req);
     const data = couponSchema.parse(req.body);
 
-    const clash = await Coupon.findOne({ code: data.code }).lean<{ _id: any }>();
+    const clash = await db.coupon.findFirst({ where: { code: data.code }, select: { id: true } });
     if (clash) return fail(res, "CODE_TAKEN", "This coupon code already exists.", 409, { code: "Already in use" });
 
     if (data.discountType === "PERCENT" && data.value > 100) {
       return fail(res, "VALIDATION_ERROR", "Percent discount cannot exceed 100.", 422, { value: "Max 100" });
     }
 
-    const coupon = await Coupon.create(couponPayload(data));
+    const coupon = await db.coupon.create({ data: { id: newId(), ...couponPayload(data) } });
     await audit(
-      { actor: admin, action: "admin.coupon.create", entityType: "Coupon", entityId: String(coupon._id), metadata: { code: coupon.code } },
+      { actor: admin, action: "admin.coupon.create", entityType: "Coupon", entityId: coupon.id, metadata: { code: coupon.code } },
       req
     );
-    return ok(res, { id: String(coupon._id), code: coupon.code, discountType: coupon.discountType, value: coupon.value, isActive: coupon.isActive }, 201);
+    return ok(res, { id: coupon.id, code: coupon.code, discountType: coupon.discountType, value: coupon.value, isActive: coupon.isActive }, 201);
   })
 );
 
@@ -1275,21 +1314,20 @@ adminRouter.put(
     const couponId = String(req.params.couponId);
     const data = couponSchema.parse(req.body);
 
-    const existing = await Coupon.findById(couponId);
+    const existing = await db.coupon.findUnique({ where: { id: couponId } });
     if (!existing) return fail(res, "NOT_FOUND", "Coupon not found.", 404);
 
     if (data.code !== existing.code) {
-      const clash = await Coupon.findOne({ code: data.code }).lean<{ _id: any }>();
+      const clash = await db.coupon.findFirst({ where: { code: data.code }, select: { id: true } });
       if (clash) return fail(res, "CODE_TAKEN", "Code already in use.", 409, { code: "Already in use" });
     }
 
-    Object.assign(existing, couponPayload(data));
-    await existing.save();
+    const updated = await db.coupon.update({ where: { id: couponId }, data: couponPayload(data) });
     await audit(
-      { actor: admin, action: "admin.coupon.update", entityType: "Coupon", entityId: couponId, metadata: { code: existing.code } },
+      { actor: admin, action: "admin.coupon.update", entityType: "Coupon", entityId: couponId, metadata: { code: updated.code } },
       req
     );
-    return ok(res, { id: String(existing._id), code: existing.code, discountType: existing.discountType, value: existing.value, isActive: existing.isActive });
+    return ok(res, { id: updated.id, code: updated.code, discountType: updated.discountType, value: updated.value, isActive: updated.isActive });
   })
 );
 
@@ -1299,16 +1337,20 @@ adminRouter.delete(
     assertSameOrigin(req);
     const admin = await requireAdmin(req);
     const couponId = String(req.params.couponId);
-    const coupon = await Coupon.findById(couponId).select("redemptions").lean<{ redemptions: unknown[] } | null>();
-    if (coupon && (coupon.redemptions ?? []).length > 0) {
-      await Coupon.updateOne({ _id: couponId }, { isActive: false });
+    const coupon = await db.coupon.findUnique({
+      where: { id: couponId },
+      include: { _count: { select: { redemptions: true } } },
+    });
+    if (coupon && coupon._count.redemptions > 0) {
+      await db.coupon.update({ where: { id: couponId }, data: { isActive: false } });
       await audit(
         { actor: admin, action: "admin.coupon.deactivate", entityType: "Coupon", entityId: couponId, metadata: { reason: "has redemptions" } },
         req
       );
       return ok(res, { deactivated: true, message: "Coupon has redemptions — deactivated instead of deleted." });
     }
-    await Coupon.deleteOne({ _id: couponId });
+    // Mongo's deleteOne was a no-op for missing ids — deleteMany preserves that.
+    await db.coupon.deleteMany({ where: { id: couponId } });
     await audit(
       { actor: admin, action: "admin.coupon.delete", entityType: "Coupon", entityId: couponId },
       req
@@ -1323,8 +1365,8 @@ adminRouter.get(
   "/admin/banners",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const banners = await HomepageBanner.find().sort({ sortOrder: 1 }).lean<any[]>();
-    return ok(res, banners.map((b) => ({ id: String(b._id), title: b.title, subtitle: b.subtitle ?? null, imageUrl: b.imageUrl, ctaLabel: b.ctaLabel ?? null, ctaHref: b.ctaHref ?? null, sortOrder: b.sortOrder, isActive: b.isActive }))
+    const banners = await db.homepageBanner.findMany({ orderBy: { sortOrder: "asc" } });
+    return ok(res, banners.map((b) => ({ id: b.id, title: b.title, subtitle: b.subtitle ?? null, imageUrl: b.imageUrl, ctaLabel: b.ctaLabel ?? null, ctaHref: b.ctaHref ?? null, sortOrder: b.sortOrder, isActive: b.isActive }))
     );
   })
 );
@@ -1335,20 +1377,23 @@ adminRouter.post(
     assertSameOrigin(req);
     const admin = await requireAdmin(req);
     const data = bannerSchema.parse(req.body);
-    const banner = await HomepageBanner.create({
-      title: data.title,
-      subtitle: data.subtitle || null,
-      imageUrl: data.imageUrl,
-      ctaLabel: data.ctaLabel || null,
-      ctaHref: data.ctaHref || null,
-      sortOrder: data.sortOrder,
-      isActive: data.isActive,
+    const banner = await db.homepageBanner.create({
+      data: {
+        id: newId(),
+        title: data.title,
+        subtitle: data.subtitle || null,
+        imageUrl: data.imageUrl,
+        ctaLabel: data.ctaLabel || null,
+        ctaHref: data.ctaHref || null,
+        sortOrder: data.sortOrder,
+        isActive: data.isActive,
+      },
     });
     await audit(
-      { actor: admin, action: "admin.banner.create", entityType: "HomepageBanner", entityId: String(banner._id), metadata: { title: banner.title } },
+      { actor: admin, action: "admin.banner.create", entityType: "HomepageBanner", entityId: banner.id, metadata: { title: banner.title } },
       req
     );
-    return ok(res, { id: String(banner._id), title: banner.title }, 201);
+    return ok(res, { id: banner.id, title: banner.title }, 201);
   })
 );
 
@@ -1359,9 +1404,11 @@ adminRouter.put(
     const admin = await requireAdmin(req);
     const bannerId = String(req.params.bannerId);
     const data = bannerSchema.parse(req.body);
-    const banner = await HomepageBanner.findByIdAndUpdate(
-      bannerId,
-      {
+    const existing = await db.homepageBanner.findUnique({ where: { id: bannerId } });
+    if (!existing) return fail(res, "NOT_FOUND", "Banner not found.", 404);
+    const banner = await db.homepageBanner.update({
+      where: { id: bannerId },
+      data: {
         title: data.title,
         subtitle: data.subtitle || null,
         imageUrl: data.imageUrl,
@@ -1370,14 +1417,12 @@ adminRouter.put(
         sortOrder: data.sortOrder,
         isActive: data.isActive,
       },
-      { new: true }
-    );
-    if (!banner) return fail(res, "NOT_FOUND", "Banner not found.", 404);
+    });
     await audit(
       { actor: admin, action: "admin.banner.update", entityType: "HomepageBanner", entityId: bannerId },
       req
     );
-    return ok(res, { id: String(banner._id), title: banner.title });
+    return ok(res, { id: banner.id, title: banner.title });
   })
 );
 
@@ -1387,7 +1432,7 @@ adminRouter.delete(
     assertSameOrigin(req);
     const admin = await requireAdmin(req);
     const bannerId = String(req.params.bannerId);
-    await HomepageBanner.deleteOne({ _id: bannerId });
+    await db.homepageBanner.deleteMany({ where: { id: bannerId } });
     await audit(
       { actor: admin, action: "admin.banner.delete", entityType: "HomepageBanner", entityId: bannerId },
       req
@@ -1425,7 +1470,7 @@ adminRouter.put(
     if (st.webhookSecret !== undefined) updates[PAYMENT_SETTING_KEYS.stripeWebhookSecret] = st.webhookSecret;
 
     for (const [key, value] of Object.entries(updates)) {
-      await SiteSetting.updateOne({ key }, { value }, { upsert: true });
+      await db.siteSetting.upsert({ where: { key }, create: { id: newId(), key, value }, update: { value } });
     }
 
     await audit(
@@ -1485,7 +1530,7 @@ adminRouter.get(
   "/admin/settings",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const rows = await SiteSetting.find().sort({ key: 1 }).lean<any[]>();
+    const rows = await db.siteSetting.findMany({ orderBy: { key: "asc" } });
     return ok(res, rows.filter((r) => !isPaymentSecretKey(r.key)).map((r) => ({ key: r.key, value: r.value, updatedAt: r.updatedAt })));
   })
 );
@@ -1499,7 +1544,7 @@ adminRouter.put(
 
     const entries = Object.entries(data).filter(([key]) => !isPaymentSecretKey(key));
     for (const [key, value] of entries) {
-      await SiteSetting.updateOne({ key }, { value }, { upsert: true });
+      await db.siteSetting.upsert({ where: { key }, create: { id: newId(), key, value }, update: { value } });
     }
 
     // Delivery partner settings changed → refresh the short-lived cache.
@@ -1561,8 +1606,8 @@ adminRouter.get(
     const config = await getAutomationConfig();
     const cutoff = new Date(Date.now() - config.staleOrderHours * 60 * 60 * 1000);
     const [stalePending, pendingRestockAlerts] = await Promise.all([
-      Order.countDocuments({ status: "PENDING", createdAt: { $lt: cutoff } }),
-      RestockAlert.countDocuments({ notifiedAt: null }),
+      db.order.count({ where: { status: "PENDING", createdAt: { lt: cutoff } } }),
+      db.restockAlert.count({ where: { notifiedAt: null } }),
     ]);
     return ok(res, {
       ...schedulerSnapshot(),
@@ -1608,8 +1653,8 @@ adminRouter.get(
   "/admin/shipping",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const rates = await ShippingRate.find().sort({ sortOrder: 1 }).lean<any[]>();
-    return ok(res, rates.map((r) => ({ id: String(r._id), name: r.name, baseFee: r.baseFee, freeAbove: r.freeAbove ?? null, isActive: r.isActive, sortOrder: r.sortOrder }))
+    const rates = await db.shippingRate.findMany({ orderBy: { sortOrder: "asc" } });
+    return ok(res, rates.map((r) => ({ id: r.id, name: r.name, baseFee: r.baseFee, freeAbove: r.freeAbove ?? null, isActive: r.isActive, sortOrder: r.sortOrder }))
     );
   })
 );
@@ -1620,18 +1665,21 @@ adminRouter.post(
     assertSameOrigin(req);
     const admin = await requireAdmin(req);
     const data = shippingRateSchema.parse(req.body);
-    const rate = await ShippingRate.create({
-      name: data.name,
-      baseFee: data.baseFee,
-      freeAbove: data.freeAbove ?? null,
-      isActive: data.isActive,
-      sortOrder: data.sortOrder,
+    const rate = await db.shippingRate.create({
+      data: {
+        id: newId(),
+        name: data.name,
+        baseFee: data.baseFee,
+        freeAbove: data.freeAbove ?? null,
+        isActive: data.isActive,
+        sortOrder: data.sortOrder,
+      },
     });
     await audit(
-      { actor: admin, action: "admin.shipping.create", entityType: "ShippingRate", entityId: String(rate._id), metadata: { name: rate.name } },
+      { actor: admin, action: "admin.shipping.create", entityType: "ShippingRate", entityId: rate.id, metadata: { name: rate.name } },
       req
     );
-    return ok(res, { id: String(rate._id), name: rate.name }, 201);
+    return ok(res, { id: rate.id, name: rate.name }, 201);
   })
 );
 
@@ -1642,23 +1690,23 @@ adminRouter.put(
     const admin = await requireAdmin(req);
     const rateId = String(req.params.rateId);
     const data = shippingRateSchema.parse(req.body);
-    const rate = await ShippingRate.findByIdAndUpdate(
-      rateId,
-      {
+    const existing = await db.shippingRate.findUnique({ where: { id: rateId } });
+    if (!existing) return fail(res, "NOT_FOUND", "Rate not found.", 404);
+    const rate = await db.shippingRate.update({
+      where: { id: rateId },
+      data: {
         name: data.name,
         baseFee: data.baseFee,
         freeAbove: data.freeAbove ?? null,
         isActive: data.isActive,
         sortOrder: data.sortOrder,
       },
-      { new: true }
-    );
-    if (!rate) return fail(res, "NOT_FOUND", "Rate not found.", 404);
+    });
     await audit(
       { actor: admin, action: "admin.shipping.update", entityType: "ShippingRate", entityId: rateId },
       req
     );
-    return ok(res, { id: String(rate._id), name: rate.name });
+    return ok(res, { id: rate.id, name: rate.name });
   })
 );
 
@@ -1668,7 +1716,7 @@ adminRouter.delete(
     assertSameOrigin(req);
     const admin = await requireAdmin(req);
     const rateId = String(req.params.rateId);
-    await ShippingRate.deleteOne({ _id: rateId });
+    await db.shippingRate.deleteMany({ where: { id: rateId } });
     await audit(
       { actor: admin, action: "admin.shipping.delete", entityType: "ShippingRate", entityId: rateId },
       req
@@ -1683,9 +1731,9 @@ adminRouter.get(
   "/admin/messages-list",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const messages = await ContactMessage.find().sort({ createdAt: -1 }).limit(200).lean<any[]>();
+    const messages = await db.contactMessage.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
     return ok(res, messages.map((m) => ({
-        id: String(m._id),
+        id: m.id,
         name: m.name,
         email: m.email,
         subject: m.subject,
@@ -1707,13 +1755,14 @@ adminRouter.patch(
     if (!["NEW", "HANDLED"].includes(status)) {
       return fail(res, "VALIDATION_ERROR", "Invalid status.", 422);
     }
-    const updated = await ContactMessage.findByIdAndUpdate(messageId, { status }, { new: true }).lean<any>();
-    if (!updated) return fail(res, "NOT_FOUND", "Message not found.", 404);
+    const existing = await db.contactMessage.findUnique({ where: { id: messageId } });
+    if (!existing) return fail(res, "NOT_FOUND", "Message not found.", 404);
+    const updated = await db.contactMessage.update({ where: { id: messageId }, data: { status: status as never } });
     await audit(
       { actor: admin, action: "admin.message.status", entityType: "ContactMessage", entityId: messageId, metadata: { status } },
       req
     );
-    return ok(res, { id: String(updated._id), status: updated.status });
+    return ok(res, { id: updated.id, status: updated.status });
   })
 );
 
@@ -1797,52 +1846,52 @@ adminRouter.post(
 
     // Resolve the customer: attached by mobile number (mobile-first shop) or
     // email — else the shared walk-in account (Order.userId is required).
-    let customer: { _id: any; name: string; email: string | null; phone?: string | null } | null = null;
+    let customer: { id: string; name: string; email: string | null; phone?: string | null } | null = null;
     if (data.customerPhone) {
-      customer = await User.findOne({ phone: data.customerPhone })
-        .select("_id name email phone")
-        .lean<{ _id: any; name: string; email: string | null; phone?: string | null } | null>();
+      customer = await db.user.findFirst({
+        where: { phone: data.customerPhone },
+        select: { id: true, name: true, email: true, phone: true },
+      });
     }
     if (!customer && data.customerEmail) {
-      customer = await User.findOne({ email: data.customerEmail })
-        .select("_id name email phone")
-        .lean<{ _id: any; name: string; email: string | null; phone?: string | null } | null>();
+      customer = await db.user.findFirst({
+        where: { email: data.customerEmail },
+        select: { id: true, name: true, email: true, phone: true },
+      });
     }
     if (!customer) {
-      customer = await User.findOneAndUpdate(
-        { email: WALKIN_EMAIL },
-        {
-          $setOnInsert: {
-            email: WALKIN_EMAIL,
-            name: "Walk-in Customer",
-            role: "CUSTOMER",
-            passwordHash: randomBytes(24).toString("hex"), // unusable random password
-            phone: null,
-          },
+      customer = await db.user.upsert({
+        where: { email: WALKIN_EMAIL },
+        create: {
+          id: newId(),
+          email: WALKIN_EMAIL,
+          name: "Walk-in Customer",
+          role: "CUSTOMER",
+          passwordHash: randomBytes(24).toString("hex"), // unusable random password
+          phone: null,
         },
-        { new: true, upsert: true, select: "_id name email" }
-      ).lean<any>();
+        update: {},
+        select: { id: true, name: true, email: true },
+      });
     }
 
-    // Load every referenced product once; build a variant lookup map
-    const variantIds = data.items.map((i) => new mongoose.Types.ObjectId(i.variantId));
-    const products = await Product.find({
-      status: "ACTIVE",
-      "variants._id": { $in: variantIds },
-    }).lean<any[]>();
-    const variantMap = new Map<string, { product: any; variant: any }>();
-    for (const p of products) {
-      for (const v of p.variants ?? []) {
-        if (v.isActive && variantIds.some((id) => String(id) === String(v._id))) {
-          variantMap.set(String(v._id), { product: p, variant: v });
-        }
-      }
-    }
+    // Load every referenced variant once (active variants of ACTIVE products
+    // only); build a variant lookup map
+    const variantIds = data.items.map((i) => i.variantId);
+    const variants = await db.productVariant.findMany({
+      where: {
+        id: { in: variantIds },
+        isActive: true,
+        product: { is: { status: "ACTIVE" } },
+      },
+      include: { product: { include: { images: true } } },
+    });
+    const variantMap = new Map(variants.map((v) => [v.id, { product: v.product, variant: v }]));
 
     // Resolve lines server-side — client only sends variantId + quantity
     const lines: {
-      productId: any;
-      variantId: any;
+      productId: string;
+      variantId: string;
       productName: string;
       variantName: string;
       sku: string;
@@ -1866,16 +1915,16 @@ adminRouter.post(
           409
         );
       }
-      const lineTotal = Math.round(variant.price * item.quantity * 100) / 100;
+      const lineTotal = Math.round(Number(variant.price) * item.quantity * 100) / 100;
       subtotal += lineTotal;
       lines.push({
-        productId: product._id,
-        variantId: variant._id,
+        productId: product.id,
+        variantId: variant.id,
         productName: product.name,
         variantName: variant.name,
         sku: variant.sku,
         imageUrl: (product.images ?? []).sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))[0]?.url ?? null,
-        unitPrice: variant.price,
+        unitPrice: Number(variant.price),
         quantity: item.quantity,
         lineTotal,
       });
@@ -1890,7 +1939,7 @@ adminRouter.post(
         const result = await validateCoupon(
           data.couponCode,
           subtotal,
-          customer && customer.email !== WALKIN_EMAIL ? String(customer._id) : null
+          customer && customer.email !== WALKIN_EMAIL ? customer.id : null
         );
         couponDiscount = result.discount;
         appliedCouponCode = result.coupon.code;
@@ -1927,71 +1976,83 @@ adminRouter.post(
     const orderNumber = generateOrderNumber();
     const now = new Date();
 
-    const session = await mongoose.startSession();
     let createdOrderId = "";
-    try {
-      await session.withTransaction(async () => {
+    await db.$transaction(
+      async (tx) => {
         for (const line of lines) {
-          const updated = await Product.updateOne(
-            {
-              _id: line.productId,
-              status: "ACTIVE",
-              variants: {
-                $elemMatch: { _id: line.variantId, stock: { $gte: line.quantity }, isActive: true },
-              },
+          // Conditional stock decrement — race-safe (UPDATE ... WHERE stock >= qty)
+          const updated = await tx.productVariant.updateMany({
+            where: {
+              id: line.variantId,
+              productId: line.productId,
+              isActive: true,
+              stock: { gte: line.quantity },
+              product: { is: { status: "ACTIVE" } },
             },
-            { $inc: { "variants.$[v].stock": -line.quantity } },
-            { arrayFilters: [{ "v._id": line.variantId }], session }
-          );
-          if (updated.modifiedCount !== 1) {
+            data: { stock: { decrement: line.quantity } },
+          });
+          if (updated.count !== 1) {
             throw new HttpError(
               "OUT_OF_STOCK",
               `${line.productName} (${line.variantName}) just went out of stock.`,
               409
             );
           }
-          await StockMovement.create(
-            [
-              {
-                variantId: line.variantId,
-                delta: -line.quantity,
-                reason: "ORDER_COMMIT",
-                reference: orderNumber,
-                note: "POS sale",
-                createdById: admin.id,
-              },
-            ],
-            { session }
-          );
+          await tx.stockMovement.create({
+            data: {
+              id: newId(),
+              variantId: line.variantId,
+              delta: -line.quantity,
+              reason: "ORDER_COMMIT",
+              reference: orderNumber,
+              note: "POS sale",
+              createdById: admin.id,
+            },
+          });
         }
 
-        const [order] = await Order.create(
-          [
-            {
-              orderNumber,
-              userId: customer!._id,
-              status: "CONFIRMED",
-              paymentStatus: "PAID",
-              paymentMethod: "GATEWAY",
-              source: "POS",
-              subtotal,
-              discountTotal: discountAmount,
-              shippingFee,
-              grandTotal,
-              couponCode: appliedCouponCode,
-              pointsRedeemed: 0,
-              idempotencyKey: `pos-${orderNumber}`,
-              shipName: customer!.name,
-              shipPhone: data.customerPhone || "In-store",
-              shipLine1: "Counter sale (POS)",
-              shipLine2: null,
-              shipCity: "In-store",
-              shipState: "In-store",
-              shipPincode: "000000",
-              shipCountry: "India",
-              adminNote: data.note || null,
-              items: lines,
-              payment: {
+        const order = await tx.order.create({
+          data: {
+            id: newId(),
+            orderNumber,
+            userId: customer!.id,
+            status: "CONFIRMED",
+            paymentStatus: "PAID",
+            paymentMethod: "GATEWAY",
+            source: "POS",
+            subtotal,
+            discountTotal: discountAmount,
+            shippingFee,
+            grandTotal,
+            couponCode: appliedCouponCode,
+            pointsRedeemed: 0,
+            idempotencyKey: `pos-${orderNumber}`,
+            shipName: customer!.name,
+            shipPhone: data.customerPhone || "In-store",
+            shipLine1: "Counter sale (POS)",
+            shipLine2: null,
+            shipCity: "In-store",
+            shipState: "In-store",
+            shipPincode: "000000",
+            shipCountry: "India",
+            adminNote: data.note || null,
+            items: {
+              create: lines.map((l) => ({
+                id: newId(),
+                productId: l.productId,
+                variantId: l.variantId,
+                productName: l.productName,
+                variantName: l.variantName,
+                sku: l.sku,
+                imageUrl: l.imageUrl,
+                unitPrice: l.unitPrice,
+                quantity: l.quantity,
+                lineTotal: l.lineTotal,
+              })),
+            },
+            payment: {
+              create: {
+                id: newId(),
                 method: "GATEWAY",
                 status: "PAID",
                 amount: grandTotal,
@@ -2002,38 +2063,43 @@ adminRouter.post(
                 }`,
                 verifiedAt: now,
               },
-              events: [
+            },
+            events: {
+              create: [
                 {
+                  id: newId(),
                   status: "CONFIRMED",
                   note: `Billed at counter via POS (${tenders.map((t) => t.method).join(" + ")})`,
                 },
               ],
             },
-          ],
-          { session }
-        );
-        createdOrderId = String(order._id);
+          },
+        });
+        createdOrderId = order.id;
 
         // Coupon accounting — mirror the online checkout (usage + redemption).
         if (appliedCouponCode) {
-          await Coupon.updateOne({ code: appliedCouponCode }, { $inc: { timesUsed: 1 } }, { session });
-          const couponDoc = await Coupon.findOne({ code: appliedCouponCode }).select("_id").session(session);
-          if (couponDoc) {
-            await Coupon.updateOne(
-              { _id: couponDoc._id },
-              { $push: { redemptions: { orderId: order._id, userId: customer!._id, amount: discountAmount } } },
-              { session }
-            );
-          }
+          const couponDoc = await tx.coupon.update({
+            where: { code: appliedCouponCode },
+            data: { timesUsed: { increment: 1 } },
+          });
+          await tx.couponRedemption.create({
+            data: {
+              id: newId(),
+              couponId: couponDoc.id,
+              orderId: order.id,
+              userId: customer!.id,
+              amount: discountAmount,
+            },
+          });
         }
-      });
-    } finally {
-      await session.endSession();
-    }
+      },
+      { timeout: 15_000 }
+    );
 
     // Rewards earn for registered customers (never for the walk-in account).
     let pointsEarned = 0;
-    if (String(customer!._id) && customer!.email !== WALKIN_EMAIL) {
+    if (customer!.id && customer!.email !== WALKIN_EMAIL) {
       const earn = await accrueEarn(createdOrderId, "POS sale confirmed");
       pointsEarned = earn.earned;
     }
@@ -2058,12 +2124,21 @@ adminRouter.post(
       req
     );
 
-    const populated = await Order.findById(createdOrderId).populate("userId", "name email").lean<any>();
+    const populated = await db.order.findUnique({
+      where: { id: createdOrderId },
+      include: {
+        user: { select: { name: true, email: true } },
+        items: true,
+        events: { orderBy: { createdAt: "asc" } },
+        payment: true,
+        shipment: true,
+      },
+    });
 
     // Realtime: POS sale lands on every admin's dashboard instantly + stock ticks.
     try {
       const { notifyNewOrder, notifyLowStock, notifyStockUpdate } = await import("../services/realtime");
-      const owner = populated?.userId && typeof populated.userId === "object" ? populated.userId : null;
+      const owner = populated?.user ?? null;
       notifyNewOrder({
         orderNumber,
         orderId: createdOrderId,
@@ -2076,23 +2151,24 @@ adminRouter.post(
         city: null,
         at: now.toISOString(),
       });
-      const products = await Product.find({ "variants._id": { $in: lines.map((l) => l.variantId) } })
-        .select("name slug variants")
-        .lean<{
-          _id: any;
-          name: string;
-          slug: string;
-          variants: { _id: any; name: string; sku: string; stock: number; lowStockThreshold: number }[];
-        }[]>();
+      const soldVariants = await db.productVariant.findMany({
+        where: { id: { in: lines.map((l) => l.variantId) } },
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          stock: true,
+          lowStockThreshold: true,
+          productId: true,
+          product: { select: { name: true, slug: true } },
+        },
+      });
       const ticks: { productId: string; variantId: string; stock: number }[] = [];
       const low: { productName: string; variantName: string; sku: string; stock: number; threshold: number; slug: string }[] = [];
-      for (const p of products) {
-        for (const v of p.variants ?? []) {
-          if (!lines.some((l) => String(l.variantId) === String(v._id))) continue;
-          ticks.push({ productId: String(p._id), variantId: String(v._id), stock: v.stock });
-          if (v.stock <= v.lowStockThreshold) {
-            low.push({ productName: p.name, variantName: v.name, sku: v.sku, stock: v.stock, threshold: v.lowStockThreshold, slug: p.slug });
-          }
+      for (const v of soldVariants) {
+        ticks.push({ productId: v.productId, variantId: v.id, stock: v.stock });
+        if (v.stock <= v.lowStockThreshold) {
+          low.push({ productName: v.product.name, variantName: v.name, sku: v.sku, stock: v.stock, threshold: v.lowStockThreshold, slug: v.product.slug });
         }
       }
       notifyStockUpdate(ticks);
@@ -2139,12 +2215,13 @@ adminRouter.post(
     const openingBalance = Math.max(Number(req.body?.openingBalance) || 0, 0);
     const note = String(req.body?.note ?? "").trim().slice(0, 300) || null;
 
-    const existing = await CashSession.findOne({ terminalId, status: "OPEN" }).lean<any>();
+    const existing = await db.cashSession.findFirst({ where: { terminalId, status: "OPEN" } });
     if (existing) {
       return fail(res, "CONFLICT", "This terminal already has an open register session.", 409);
     }
-    const [doc] = await CashSession.create([
-      {
+    const doc = await db.cashSession.create({
+      data: {
+        id: newId(),
         terminalId,
         status: "OPEN",
         openedById: admin.id,
@@ -2153,18 +2230,18 @@ adminRouter.post(
         openingNote: note,
         openedAt: new Date(),
       },
-    ]);
+    });
     await audit(
       {
         actor: admin,
         action: "admin.pos.register.open",
         entityType: "CashSession",
-        entityId: String(doc._id),
+        entityId: doc.id,
         metadata: { terminalId, openingBalance },
       },
       req
     );
-    return ok(res, { session: JSON.parse(JSON.stringify(doc)) }, 201);
+    return ok(res, { session: normalizeJson(doc) }, 201);
   })
 );
 
@@ -2174,15 +2251,13 @@ adminRouter.get(
     await requireAdmin(req);
     const terminalId = String(req.query.terminalId ?? "").trim().slice(0, 16);
     if (!terminalId) return fail(res, "VALIDATION_ERROR", "Terminal id is required.", 422);
-    const session = await CashSession.findOne({ terminalId, status: "OPEN" }).lean<any>();
+    const session = await db.cashSession.findFirst({ where: { terminalId, status: "OPEN" } });
     if (!session) return ok(res, { session: null });
     // Live drawer math: opening float + cash sales − change paid out.
-    const orders = await Order.find({
-      source: "POS",
-      createdAt: { $gte: session.openedAt },
-    })
-      .select("payment.providerRef")
-      .lean<any[]>();
+    const orders = await db.order.findMany({
+      where: { source: "POS", createdAt: { gte: session.openedAt } },
+      select: { payment: { select: { providerRef: true } } },
+    });
     let cashIn = 0;
     let change = 0;
     let nonCash = 0;
@@ -2198,9 +2273,9 @@ adminRouter.get(
         if (method && method !== "CASH") nonCash += Number(amount) || 0;
       }
     }
-    const expectedCash = Math.round((session.openingBalance + cashIn - change) * 100) / 100;
+    const expectedCash = Math.round((Number(session.openingBalance) + cashIn - change) * 100) / 100;
     return ok(res, {
-      session: JSON.parse(JSON.stringify(session)),
+      session: normalizeJson(session),
       live: {
         expectedCash,
         cashIn: Math.round(cashIn * 100) / 100,
@@ -2221,15 +2296,13 @@ adminRouter.post(
     const counted = Math.max(Number(req.body?.countedBalance) || 0, 0);
     const note = String(req.body?.note ?? "").trim().slice(0, 300) || null;
 
-    const session = await CashSession.findOne({ terminalId, status: "OPEN" });
+    const session = await db.cashSession.findFirst({ where: { terminalId, status: "OPEN" } });
     if (!session) return fail(res, "NOT_FOUND", "No open register session for this terminal.", 404);
 
-    const orders = await Order.find({
-      source: "POS",
-      createdAt: { $gte: session.openedAt },
-    })
-      .select("payment.providerRef")
-      .lean<any[]>();
+    const orders = await db.order.findMany({
+      where: { source: "POS", createdAt: { gte: session.openedAt } },
+      select: { payment: { select: { providerRef: true } } },
+    });
     let cashIn = 0;
     let change = 0;
     for (const o of orders) {
@@ -2239,30 +2312,34 @@ adminRouter.post(
         change += parsed.change;
       }
     }
-    const expectedCash = Math.round((session.openingBalance + cashIn - change) * 100) / 100;
+    const expectedCash = Math.round((Number(session.openingBalance) + cashIn - change) * 100) / 100;
     const variance = Math.round((counted - expectedCash) * 100) / 100;
 
-    session.status = "CLOSED";
-    session.countedBalance = counted;
-    session.expectedCash = expectedCash;
-    session.cashSales = Math.round(cashIn * 100) / 100;
-    session.variance = variance;
-    session.closingNote = note;
-    session.closedAt = new Date();
-    await session.save();
+    const closed = await db.cashSession.update({
+      where: { id: session.id },
+      data: {
+        status: "CLOSED",
+        countedBalance: counted,
+        expectedCash,
+        cashSales: Math.round(cashIn * 100) / 100,
+        variance,
+        closingNote: note,
+        closedAt: new Date(),
+      },
+    });
 
     await audit(
       {
         actor: admin,
         action: "admin.pos.register.close",
         entityType: "CashSession",
-        entityId: String(session._id),
+        entityId: session.id,
         metadata: { terminalId, counted, expectedCash, variance },
       },
       req
     );
     return ok(res, {
-      session: JSON.parse(JSON.stringify(session)),
+      session: normalizeJson(closed),
       summary: { expectedCash, counted, variance, cashIn: Math.round(cashIn * 100) / 100, change: Math.round(change * 100) / 100 },
     });
   })
@@ -2275,23 +2352,24 @@ adminRouter.get(
   handle(async (req, res) => {
     await requireAdmin(req);
     const q = (req.query.q as string | undefined)?.trim() ?? "";
-    const where: Record<string, unknown> = { role: "CUSTOMER", isActive: true };
+    const where: Prisma.UserWhereInput = { role: "CUSTOMER", isActive: true };
     if (q) {
-      where.$or = [
-        { name: new RegExp(escapeRegex(q), "i") },
-        { email: new RegExp(escapeRegex(q), "i") },
-        { phone: new RegExp(escapeRegex(q), "i") },
+      where.OR = [
+        { name: { contains: q } },
+        { email: { contains: q } },
+        { phone: { contains: q } },
       ];
     }
-    const users = await User.find(where)
-      .sort({ createdAt: -1 })
-      .limit(8)
-      .select("name email phone loyaltyPoints")
-      .lean<any[]>();
+    const users = await db.user.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: { id: true, name: true, email: true, phone: true, loyaltyPoints: true },
+    });
     return ok(
       res,
       users.map((u) => ({
-        id: String(u._id),
+        id: u.id,
         name: u.name,
         email: u.email,
         phone: u.phone ?? null,
@@ -2315,7 +2393,7 @@ adminRouter.post(
     if (name.length < 2) return fail(res, "VALIDATION_ERROR", "Customer name is required.", 422);
     if (!phone) return fail(res, "VALIDATION_ERROR", "Enter a valid 10-digit mobile number.", 422);
 
-    const dup = await User.findOne({ $or: [{ phone }, ...(email ? [{ email }] : [])] }).lean<any>();
+    const dup = await db.user.findFirst({ where: { OR: [{ phone }, ...(email ? [{ email }] : [])] } });
     if (dup) {
       return fail(
         res,
@@ -2329,30 +2407,31 @@ adminRouter.post(
 
     // Counter-created customers get an unusable random password — they can set
     // one later via the storefront's forgot-password flow (or in person).
-    const [user] = await User.create([
-      {
+    // (MySQL's unique index allows multiple NULL emails, so the Mongo
+    // sparse-index workaround of storing undefined is no longer needed.)
+    const user = await db.user.create({
+      data: {
+        id: newId(),
         name,
         phone,
-        /* undefined (not null) — the sparse unique email index skips ABSENT
-           fields but collides on explicit nulls. */
-        email: email || undefined,
+        email: email || null,
         role: "CUSTOMER",
         passwordHash: await hashPassword(randomBytes(24).toString("hex")),
       },
-    ]);
+    });
     await audit(
       {
         actor: admin,
         action: "admin.pos.customer.create",
         entityType: "User",
-        entityId: String(user._id),
+        entityId: user.id,
         metadata: { name, phone, email },
       },
       req
     );
     return ok(
       res,
-      { customer: { id: String(user._id), name: user.name, email: user.email, phone: user.phone, points: 0 } },
+      { customer: { id: user.id, name: user.name, email: user.email, phone: user.phone, points: 0 } },
       201
     );
   })
@@ -2375,23 +2454,20 @@ adminRouter.get(
     const now = new Date();
 
     // Which variants moved since the last poll?
-    const moves = await StockMovement.find({ createdAt: { $gte: since } })
-      .select("variantId")
-      .limit(1000)
-      .lean<{ variantId: any }[]>();
+    const moves = await db.stockMovement.findMany({
+      where: { createdAt: { gte: since } },
+      select: { variantId: true },
+      take: 1000,
+    });
     const changedIds = Array.from(new Set(moves.map((m) => String(m.variantId))));
     const stocks: { variantId: string; stock: number }[] = [];
     if (changedIds.length > 0) {
-      const prods = await Product.find({ "variants._id": { $in: changedIds } })
-        .select("variants._id variants.stock")
-        .lean<any[]>();
-      const wanted = new Set(changedIds);
-      for (const p of prods) {
-        for (const v of p.variants ?? []) {
-          if (wanted.has(String(v._id))) {
-            stocks.push({ variantId: String(v._id), stock: Number(v.stock) || 0 });
-          }
-        }
+      const movedVariants = await db.productVariant.findMany({
+        where: { id: { in: changedIds } },
+        select: { id: true, stock: true },
+      });
+      for (const v of movedVariants) {
+        stocks.push({ variantId: v.id, stock: Number(v.stock) || 0 });
       }
     }
 
@@ -2399,12 +2475,14 @@ adminRouter.get(
     const IST = 5.5 * 60 * 60 * 1000;
     const istMidnight = new Date(Math.floor((now.getTime() + IST) / 86400000) * 86400000 - IST);
 
-    const todayOrders = await Order.find({
-      createdAt: { $gte: istMidnight },
-      status: { $ne: "CANCELLED" },
-    })
-      .select("grandTotal payment.providerRef items")
-      .lean<any[]>();
+    const todayOrders = await db.order.findMany({
+      where: { createdAt: { gte: istMidnight }, status: { not: "CANCELLED" } },
+      select: {
+        grandTotal: true,
+        items: { select: { quantity: true } },
+        payment: { select: { providerRef: true } },
+      },
+    });
     let revenue = 0;
     let itemsSold = 0;
     let cashSales = 0;
@@ -2430,11 +2508,12 @@ adminRouter.get(
     let session: any = null;
     let live: { expectedCash: number; cashIn: number; change: number; nonCash: number } | null = null;
     if (terminalId) {
-      session = await CashSession.findOne({ terminalId, status: "OPEN" }).lean<any>();
+      session = await db.cashSession.findFirst({ where: { terminalId, status: "OPEN" } });
       if (session) {
-        const regOrders = await Order.find({ source: "POS", createdAt: { $gte: session.openedAt } })
-          .select("payment.providerRef")
-          .lean<any[]>();
+        const regOrders = await db.order.findMany({
+          where: { source: "POS", createdAt: { gte: session.openedAt } },
+          select: { payment: { select: { providerRef: true } } },
+        });
         let cashIn = 0;
         let change = 0;
         let nonCash = 0;
@@ -2450,7 +2529,7 @@ adminRouter.get(
           }
         }
         live = {
-          expectedCash: Math.round((session.openingBalance + cashIn - change) * 100) / 100,
+          expectedCash: Math.round((Number(session.openingBalance) + cashIn - change) * 100) / 100,
           cashIn: r2(cashIn),
           change: r2(change),
           nonCash: r2(nonCash),
@@ -2469,7 +2548,7 @@ adminRouter.get(
         nonCashSales: r2(nonCashSales),
         itemsSold,
       },
-      session: session ? JSON.parse(JSON.stringify(session)) : null,
+      session: session ? normalizeJson(session) : null,
       live,
     });
   })
@@ -2513,14 +2592,26 @@ adminRouter.get(
     // Match order: (1) exact SKU — labels printed in CODE128 of the SKU,
     // (2) exact assigned barcode number (EAN-13 numeric labels). Both are
     // scanner-shaped: the whole code arrives in one shot, no fuzzy match.
-    const product =
-      (await Product.findOne({ status: "ACTIVE", "variants.sku": code })
-        .populate("categoryId", "name slug")
-        .lean<any>()) ??
-      (await Product.findOne({ status: "ACTIVE", "variants.barcode": code })
-        .populate("categoryId", "name slug")
-        .lean<any>());
-    if (product) {
+    const lookupInclude = {
+      product: {
+        include: {
+          variants: true,
+          images: true,
+          category: { select: { id: true, name: true, slug: true } },
+        },
+      },
+    } as const;
+    const hit =
+      (await db.productVariant.findFirst({
+        where: { sku: code, product: { is: { status: "ACTIVE" } } },
+        include: lookupInclude,
+      })) ??
+      (await db.productVariant.findFirst({
+        where: { barcode: code, product: { is: { status: "ACTIVE" } } },
+        include: lookupInclude,
+      }));
+    if (hit) {
+      const product = hit.product;
       const api = serializeProduct(product);
       const variant = api.variants.find(
         (v: any) =>
@@ -2565,17 +2656,16 @@ adminRouter.post(
 
     // Collect targets: every ACTIVE variant, optionally restricted to ids,
     // skipping ones that already carry a number unless overwrite was asked.
-    const products = await Product.find({ status: "ACTIVE" })
-      .select("variants")
-      .lean<any>();
+    const catalogVariants = await db.productVariant.findMany({
+      where: { product: { is: { status: "ACTIVE" } } },
+      select: { id: true, barcode: true, productId: true },
+    });
     const targets: { productId: string; variantId: string }[] = [];
     const wanted = requestedIds ? new Set(requestedIds.map((x) => x.toLowerCase())) : null;
-    for (const p of products) {
-      for (const v of p.variants ?? []) {
-        if (wanted && !wanted.has(String(v._id))) continue;
-        if (!overwrite && v.barcode) continue;
-        targets.push({ productId: String(p._id), variantId: String(v._id) });
-      }
+    for (const v of catalogVariants) {
+      if (wanted && !wanted.has(String(v.id))) continue;
+      if (!overwrite && v.barcode) continue;
+      targets.push({ productId: v.productId, variantId: v.id });
     }
     if (targets.length === 0) {
       return ok(res, { assigned: 0, items: [] });
@@ -2583,13 +2673,12 @@ adminRouter.post(
 
     // Uniqueness against the live catalog before writing.
     const taken = new Set<string>();
-    const existing = await Product.find({ "variants.barcode": { $ne: null } })
-      .select("variants.barcode")
-      .lean<any>();
-    for (const p of existing) {
-      for (const v of p.variants ?? []) {
-        if (v.barcode) taken.add(String(v.barcode));
-      }
+    const existing = await db.productVariant.findMany({
+      where: { barcode: { not: null } },
+      select: { barcode: true },
+    });
+    for (const row of existing) {
+      if (row.barcode) taken.add(String(row.barcode));
     }
 
     const assigned: { productId: string; variantId: string; barcode: string }[] = [];
@@ -2608,14 +2697,14 @@ adminRouter.post(
       assigned.push({ ...t, barcode: code });
     }
 
-    // Persist each embedded variant with a positional update.
+    // Persist each variant's new barcode (updateMany: no-op safe).
     let written = 0;
     for (const a of assigned) {
-      const r = await Product.updateOne(
-        { _id: a.productId, "variants._id": a.variantId },
-        { $set: { "variants.$.barcode": a.barcode } }
-      );
-      written += r.modifiedCount ?? 0;
+      const r = await db.productVariant.updateMany({
+        where: { id: a.variantId },
+        data: { barcode: a.barcode },
+      });
+      written += r.count;
     }
 
     return ok(res, {

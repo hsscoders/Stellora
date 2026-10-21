@@ -1,7 +1,6 @@
-import { Cart, Product } from "../models";
-import { HttpError } from "../lib/http";
+import { db, newId } from "../lib/db";
+import { HttpError } from "../lib/http-errors";
 import { d, money } from "../lib/money";
-import type { Types } from "mongoose";
 
 export interface CartLine {
   itemId: string;
@@ -24,78 +23,82 @@ export interface CartView {
   subtotal: number;
 }
 
-type CartDoc = {
-  _id: Types.ObjectId;
-  userId?: Types.ObjectId | null;
-  sessionKey?: string | null;
-  items: { _id: Types.ObjectId; variantId: Types.ObjectId; quantity: number }[];
+export type CartRow = {
+  id: string;
+  userId: string | null;
+  sessionKey: string | null;
+  items: { id: string; variantId: string; quantity: number; createdAt: Date }[];
 };
 
 /** Resolve the active cart for a logged-in user or a guest key (creates one if missing). */
 export async function resolveCart(
   userId: string | null,
   sessionKey: string | null
-): Promise<CartDoc> {
-  const query = userId ? { userId } : sessionKey ? { sessionKey } : null;
-  if (!query) throw new HttpError("BAD_REQUEST", "Missing cart identity.", 400);
+): Promise<CartRow> {
+  const where = userId ? { userId } : sessionKey ? { sessionKey } : null;
+  if (!where) throw new HttpError("BAD_REQUEST", "Missing cart identity.", 400);
 
-  const existing = await Cart.findOne(query).lean<CartDoc>();
-  if (existing) return existing;
-  const created = await Cart.create(query);
-  return created.toObject() as unknown as CartDoc;
+  const existing = await db.cart.findFirst({
+    where,
+    include: { items: { orderBy: { createdAt: "asc" } } },
+  });
+  if (existing) return existing as unknown as CartRow;
+
+  const created = await db.cart.create({
+    data: { id: newId(), ...(userId ? { userId } : { sessionKey: sessionKey! }) },
+    include: { items: true },
+  });
+  return created as unknown as CartRow;
 }
 
 /** Build a fully server-computed view of the cart. */
 export async function getCartView(cartId: string): Promise<CartView> {
-  const cart = await Cart.findById(cartId).lean<{
-    _id: Types.ObjectId;
-    items: { _id: Types.ObjectId; variantId: Types.ObjectId; quantity: number }[];
-  }>();
+  const cart = await db.cart.findUnique({
+    where: { id: cartId },
+    include: { items: { orderBy: { createdAt: "asc" } } },
+  });
   if (!cart) return { items: [], itemCount: 0, subtotal: 0 };
 
   const variantIds = cart.items.map((i) => i.variantId);
   if (variantIds.length === 0) return { items: [], itemCount: 0, subtotal: 0 };
 
-  // Variants are embedded in products — fetch every product containing a wanted variant
-  const products = await Product.find({ "variants._id": { $in: variantIds } })
-    .select("slug name status images variants")
-    .lean<{
-      _id: Types.ObjectId;
-      slug: string;
-      name: string;
-      status: string;
-      images: { url: string; alt?: string | null; sortOrder: number }[];
-      variants: VariantDocLite[];
-    }[]>();
+  // Variants live in their own table — fetch them with their parent product
+  const variants = await db.productVariant.findMany({
+    where: { id: { in: variantIds } },
+    include: {
+      product: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          status: true,
+          images: { orderBy: { sortOrder: "asc" } },
+        },
+      },
+    },
+  });
 
-  const variantMap = new Map<string, { v: VariantDocLite; p: (typeof products)[number] }>();
-  for (const p of products) {
-    for (const v of p.variants ?? []) {
-      variantMap.set(String(v._id), { v, p });
-    }
-  }
+  const variantMap = new Map(variants.map((v) => [v.id, v]));
 
   const items: CartLine[] = [];
   let subtotal = d(0);
-  for (const item of [...cart.items].sort(
-    (a, b) => a._id.getTimestamp().getTime() - b._id.getTimestamp().getTime()
-  )) {
-    const entry = variantMap.get(String(item.variantId));
-    if (!entry) continue;
-    const { v, p } = entry;
+  for (const item of cart.items) {
+    const v = variantMap.get(item.variantId);
+    if (!v) continue;
+    const p = v.product;
     if (!v.isActive || p.status !== "ACTIVE") continue; // hide unavailable lines
-    const lineTotal = money(d(v.price).mul(item.quantity));
+    const lineTotal = money(d(Number(v.price)).mul(item.quantity));
     subtotal = subtotal.plus(lineTotal);
     items.push({
-      itemId: String(item._id),
-      variantId: String(v._id),
-      productId: String(p._id),
+      itemId: item.id,
+      variantId: v.id,
+      productId: p.id,
       slug: p.slug,
       productName: p.name,
       variantName: v.name,
       sku: v.sku,
       imageUrl: p.images?.[0]?.url ?? null,
-      unitPrice: money(v.price),
+      unitPrice: money(Number(v.price)),
       quantity: item.quantity,
       lineTotal,
       stock: v.stock,
@@ -108,36 +111,32 @@ export async function getCartView(cartId: string): Promise<CartView> {
   };
 }
 
-type VariantDocLite = {
-  _id: Types.ObjectId;
-  sku: string;
-  name: string;
-  price: number;
-  stock: number;
-  isActive: boolean;
-};
-
 /** Merge a guest cart into the user's cart after login. */
 export async function mergeGuestCart(userId: string, sessionKey: string) {
-  const guestCart = await Cart.findOne({ sessionKey }).lean<CartDoc>();
+  const guestCart = await db.cart.findFirst({
+    where: { sessionKey },
+    include: { items: true },
+  });
   if (!guestCart || guestCart.items.length === 0) return;
 
   const userCart = await resolveCart(userId, null);
-  const items = userCart.items ?? [];
 
   for (const gi of guestCart.items) {
-    const existing = items.find((ui) => String(ui.variantId) === String(gi.variantId));
+    const existing = (userCart.items ?? []).find(
+      (ui) => ui.variantId === gi.variantId
+    );
     if (existing) {
-      await Cart.updateOne(
-        { _id: userCart._id, "items._id": existing._id },
-        { $set: { "items.$.quantity": Math.min(existing.quantity + gi.quantity, 10) } }
-      );
+      await db.cartItem.update({
+        where: { id: existing.id },
+        data: { quantity: Math.min(existing.quantity + gi.quantity, 10) },
+      });
     } else {
-      await Cart.updateOne(
-        { _id: userCart._id },
-        { $push: { items: { variantId: gi.variantId, quantity: gi.quantity } } }
-      );
+      await db.cartItem.create({
+        data: { id: newId(), cartId: userCart.id, variantId: gi.variantId, quantity: gi.quantity },
+      });
     }
   }
-  await Cart.deleteOne({ _id: guestCart._id });
+  // Mongo semantics: the guest cart (and its embedded items) disappears.
+  await db.cartItem.deleteMany({ where: { cartId: guestCart.id } });
+  await db.cart.delete({ where: { id: guestCart.id } });
 }

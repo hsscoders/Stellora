@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Order, User } from "../models";
+import { db } from "../lib/db";
 import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireUser, getCurrentUser, readCartKey } from "../lib/auth";
 import { checkoutSchema, trackOrderSchema, normalizePhone } from "../validation";
@@ -55,7 +55,16 @@ commerceRouter.get(
   "/orders",
   handle(async (req, res) => {
     const user = await requireUser(req);
-    const all = await Order.find({ userId: user.id }).sort({ createdAt: -1 }).lean<any[]>();
+    const all = await db.order.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        items: true,
+        events: { orderBy: { createdAt: "asc" } },
+        payment: true,
+        shipment: true,
+      },
+    });
     return ok(res, await Promise.all(all.map(async (o) => {
         const itemCount = (o.items ?? []).length;
         // Full order shape with the first 3 items (preview thumbnails)
@@ -73,23 +82,33 @@ commerceRouter.get(
   handle(async (req, res) => {
     const user = await requireUser(req);
     const orderNumber = String(req.params.orderNumber);
-    const order = await Order.findOne({ orderNumber, userId: user.id }).lean<any>();
+    const order = await db.order.findFirst({
+      where: { orderNumber, userId: user.id },
+      include: {
+        items: true,
+        events: { orderBy: { createdAt: "asc" } },
+        payment: true,
+        shipment: true,
+      },
+    });
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
     return ok(res, await serializeOrderDetail(order));
   })
 );
 
+/**
+ * Serialize a Prisma order row (with included items/events/payment/shipment)
+ * into the exact API shape the storefront has always consumed. `o.user` may
+ * be included by admin routes — userId itself is always the plain id string.
+ */
 export async function serializeOrderDetail(o: any) {
   const cfg = await getDeliveryConfig();
   return {
-    id: String(o._id),
+    id: o.id,
     orderNumber: o.orderNumber,
-    // userId may be a populated User doc (admin detail endpoint) or a raw ObjectId —
-    // always serialize the plain id so it never renders as "[object Object]".
-    userId:
-      o.userId && typeof o.userId === "object" && (o.userId as { _id?: unknown })._id
-        ? String((o.userId as { _id: unknown })._id)
-        : String(o.userId ?? ""),
+    // userId is a plain Char(24) string in MySQL (admin endpoints may also
+    // include a `user` relation object — never serialized into this field).
+    userId: typeof o.userId === "string" ? o.userId : String(o.userId ?? ""),
     status: o.status,
     paymentStatus: o.paymentStatus,
     paymentMethod: o.paymentMethod,
@@ -115,9 +134,9 @@ export async function serializeOrderDetail(o: any) {
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
     items: (o.items ?? []).map((i: any) => ({
-      id: String(i._id),
-      productId: i.productId ? String(i.productId) : null,
-      variantId: i.variantId ? String(i.variantId) : null,
+      id: i.id,
+      productId: i.productId ?? null,
+      variantId: i.variantId ?? null,
       productName: i.productName,
       variantName: i.variantName,
       sku: i.sku,
@@ -129,7 +148,7 @@ export async function serializeOrderDetail(o: any) {
     payments: o.payment
       ? [
           {
-            id: String(o.payment._id ?? "payment"),
+            id: o.payment.id ?? "payment",
             method: o.payment.method,
             status: o.payment.status,
             amount: o.payment.amount,
@@ -140,7 +159,7 @@ export async function serializeOrderDetail(o: any) {
         ]
       : [],
     events: (o.events ?? []).map((e: any) => ({
-      id: String(e._id ?? ""),
+      id: e.id ?? "",
       status: e.status,
       note: e.note ?? null,
       createdAt: e.createdAt,
@@ -151,7 +170,7 @@ export async function serializeOrderDetail(o: any) {
         : estimateDeliveryIso(cfg.etaDays, o.shipment?.shippedAt ?? o.createdAt),
     shipment: o.shipment
       ? {
-          id: String(o.shipment._id ?? "shipment"),
+          id: o.shipment.id ?? "shipment",
           carrier: resolvePartner(cfg, o.shipment.carrier ?? null).name,
           partnerId: resolvePartner(cfg, o.shipment.carrier ?? null).id,
           trackingNumber: o.shipment.trackingNumber ?? null,
@@ -179,7 +198,13 @@ commerceRouter.post(
 
     const data = trackOrderSchema.parse(req.body);
     const orderNumber = data.orderNumber.trim().toUpperCase();
-    const order = await Order.findOne({ orderNumber }).lean<any>();
+    const order = await db.order.findUnique({
+      where: { orderNumber },
+      include: {
+        events: { orderBy: { createdAt: "asc" } },
+        shipment: true,
+      },
+    });
     if (!order) {
       return fail(res, "NOT_FOUND",
         "We could not find an order with that order number and contact combination.",
@@ -192,7 +217,7 @@ commerceRouter.post(
        against the actual record, no enumeration either way. */
     const contact = (data.contact ?? data.email ?? "").trim();
     const phoneCandidate = normalizePhone(contact);
-    const owner = await User.findById(order.userId).select("email").lean<{ email: string | null } | null>();
+    const owner = await db.user.findUnique({ where: { id: order.userId }, select: { email: true } });
     const shipPhone = normalizePhone(order.shipPhone ?? "");
     const emailMatch = !!owner?.email && !!contact && owner.email === contact.toLowerCase();
     const phoneMatch = !!phoneCandidate && !!shipPhone && phoneCandidate === shipPhone;
@@ -242,7 +267,7 @@ commerceRouter.post(
     const sessionKey = user ? null : readCartKey(req);
     if (!user && !sessionKey) return fail(res, "EMPTY_CART", "Your cart is empty.", 422);
     const cart = await resolveCart(user?.id ?? null, sessionKey);
-    const view = await getCartView(String(cart._id));
+    const view = await getCartView(cart.id);
     if (view.items.length === 0) return fail(res, "EMPTY_CART", "Your cart is empty.", 422);
 
     try {

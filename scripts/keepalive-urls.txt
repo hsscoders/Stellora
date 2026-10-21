@@ -1,0 +1,22 @@
+# ============================================================
+# keepalive-urls.txt — external URLs jo keepalive.sh har cycle
+# me ping karega (website par "activity" banata hai).
+#
+# Rules:
+#  - Ek URL per line
+#  - # se shuru wali lines comment hain
+#  - Khali lines ignore hoti hain
+#
+# NOTE: Apna ASLI preview URL browser ke address bar se copy
+# karke # hataake neeche daal do (jo abhi comments me hain wo
+# andar se 404 de rahe the — sahi bot-id yahan daalna hoga).
+# Local services (localhost:3000/4000/3001) to har case me
+# ping hote hi rehte hain — wo main activity hai.
+# ============================================================
+
+# https://preview-<APNA-BOT-ID>.space-z.ai/
+
+# --- Render deploy hone ke baad yahan apne URLs add karo ---
+# https://stellora.onrender.com
+# https://stellora-api.onrender.com/api/health
+# https://stellora-admin.onrender.com/admin-console

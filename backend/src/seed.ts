@@ -1,11 +1,12 @@
 /**
- * Stellora development seed (MongoDB) — FICTIONAL DATA, clearly labelled.
- * Run: bun src/seed.ts
+ * Stellora development seed (MySQL/Prisma) — FICTIONAL DATA, clearly labelled.
+ * Run: npx tsx src/seed.ts   (DATABASE_URL / DB_* env vars required)
+ * Idempotent: existing rows are skipped, so re-running is safe.
  */
-import mongoose from "mongoose";
+import "./env"; // loads .env and builds DATABASE_URL from DB_* parts BEFORE the Prisma client initializes
 import { randomBytes, scrypt as _scrypt } from "crypto";
 import { promisify } from "util";
-import { User, Category, Product, ShippingRate, Coupon, HomepageBanner, SiteSetting } from "./models";
+import { db, newId } from "./lib/db";
 import { products, type SeedProduct } from "./data/products";
 
 const scrypt = promisify(_scrypt) as (p: string, s: string, k: number) => Promise<Buffer>;
@@ -20,8 +21,7 @@ const IMG = (name: string) => `/images/products/${name}.jpg`;
 const BANNER = (name: string) => `/images/banners/${name}.jpg`;
 
 async function main() {
-  const uri = process.env.MONGODB_URI ?? process.env.MONGODB_LOCAL_FALLBACK ?? "mongodb://127.0.0.1:27017/stellora";
-  await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000 });
+  await db.$connect();
   console.log("Seeding Stellora development database (FICTIONAL DATA)...");
   console.log("All products, prices, stock and people below are sample data for development only.\n");
 
@@ -31,44 +31,46 @@ async function main() {
   const custEmail = process.env.DEMO_CUSTOMER_EMAIL || "customer@stellora.local";
   const custPassword = process.env.DEMO_CUSTOMER_PASSWORD || "Customer#2026";
 
-  const existingAdmin = await User.findOne({ email: adminEmail });
+  const existingAdmin = await db.user.findUnique({ where: { email: adminEmail } });
   if (!existingAdmin) {
-    await User.create({
-      email: adminEmail,
-      passwordHash: await hashPassword(adminPassword),
-      name: "Store Administrator",
-      role: "ADMIN",
+    await db.user.create({
+      data: {
+        id: newId(),
+        email: adminEmail,
+        passwordHash: await hashPassword(adminPassword),
+        name: "Store Administrator",
+        role: "ADMIN",
+      },
     });
   }
-  const existingCustomer = await User.findOne({ email: custEmail });
-  let customer = existingCustomer;
+  let customer = await db.user.findUnique({ where: { email: custEmail } });
   if (!customer) {
-    customer = await User.create({
-      email: custEmail,
-      passwordHash: await hashPassword(custPassword),
-      name: "Demo Customer",
-      phone: "9800000000",
-      role: "CUSTOMER",
+    customer = await db.user.create({
+      data: {
+        id: newId(),
+        email: custEmail,
+        passwordHash: await hashPassword(custPassword),
+        name: "Demo Customer",
+        phone: "9800000000",
+        role: "CUSTOMER",
+      },
     });
   }
-  if ((customer.addresses ?? []).length === 0) {
-    await User.updateOne(
-      { _id: customer._id },
-      {
-        $push: {
-          addresses: {
-            fullName: "Demo Customer",
-            phone: "9800000000",
-            line1: "12 Sample Residency, Model Town",
-            city: "Sample City",
-            state: "Punjab",
-            pincode: "140001",
-            country: "India",
-            isDefault: true,
-          },
-        },
-      }
-    );
+  if ((await db.address.count({ where: { userId: customer.id } })) === 0) {
+    await db.address.create({
+      data: {
+        id: newId(),
+        userId: customer.id,
+        fullName: "Demo Customer",
+        phone: "9800000000",
+        line1: "12 Sample Residency, Model Town",
+        city: "Sample City",
+        state: "Punjab",
+        pincode: "140001",
+        country: "India",
+        isDefault: true,
+      },
+    });
   }
   console.log(`✓ Admin: ${adminEmail} / (password from env)`);
   console.log(`✓ Demo customer: ${custEmail} / (password from env)`);
@@ -110,50 +112,65 @@ async function main() {
   ];
   const catMap = new Map<string, string>();
   for (const c of catData) {
-    const doc = await Category.findOneAndUpdate({ slug: c.slug }, { $set: c }, { new: true, upsert: true });
-    catMap.set(c.slug, String(doc!._id));
+    const row = await db.category.upsert({
+      where: { slug: c.slug },
+      create: { id: newId(), ...c },
+      update: c,
+    });
+    catMap.set(c.slug, row.id);
   }
   console.log("✓ 4 categories");
 
   // ---------- Products (fictional) ----------
   const seedProducts = products as SeedProduct[];
   for (const p of seedProducts) {
-    const doc = await Product.findOne({ slug: p.slug });
-    if (doc) continue; // idempotent seed — never overwrite live data
-    await Product.create({
-      slug: p.slug,
-      categoryId: catMap.get(p.cat),
-      name: p.name,
-      shortDescription: p.short,
-      description: p.desc,
-      materials: p.materials ?? null,
-      careInstructions: p.care ?? null,
-      status: "ACTIVE",
-      isFeatured: !!p.featured,
-      isNewArrival: !!p.fresh,
-      isBestSeller: !!p.best,
-      images: [{ url: IMG(p.slug), alt: p.name, sortOrder: 0 }],
-      variants: p.variants.map((v) => ({
-        name: v.name,
-        sku: v.sku.toUpperCase(),
-        price: v.price,
-        compareAtPrice: v.compareAt ?? null,
-        stock: v.stock,
-        lowStockThreshold: 5,
-        isActive: true,
-      })),
+    const existing = await db.product.findUnique({ where: { slug: p.slug } });
+    if (existing) continue; // idempotent seed — never overwrite live data
+    await db.product.create({
+      data: {
+        id: newId(),
+        slug: p.slug,
+        categoryId: catMap.get(p.cat)!,
+        name: p.name,
+        shortDescription: p.short,
+        description: p.desc,
+        materials: p.materials ?? null,
+        careInstructions: p.care ?? null,
+        status: "ACTIVE",
+        isFeatured: !!p.featured,
+        isNewArrival: !!p.fresh,
+        isBestSeller: !!p.best,
+        images: {
+          create: [{ id: newId(), url: IMG(p.slug), alt: p.name, sortOrder: 0 }],
+        },
+        variants: {
+          create: p.variants.map((v) => ({
+            id: newId(),
+            name: v.name,
+            sku: v.sku.toUpperCase(),
+            price: v.price,
+            compareAtPrice: v.compareAt ?? null,
+            stock: v.stock,
+            lowStockThreshold: 5,
+            isActive: true,
+          })),
+        },
+      },
     });
   }
   console.log(`✓ ${seedProducts.length} products with variants (existing products skipped)`);
 
   // ---------- Shipping ----------
-  if ((await ShippingRate.countDocuments()) === 0) {
-    await ShippingRate.create({
-      name: "Standard Delivery",
-      baseFee: 79,
-      freeAbove: 1999,
-      sortOrder: 0,
-      isActive: true,
+  if ((await db.shippingRate.count()) === 0) {
+    await db.shippingRate.create({
+      data: {
+        id: newId(),
+        name: "Standard Delivery",
+        baseFee: 79,
+        freeAbove: 1999,
+        sortOrder: 0,
+        isActive: true,
+      },
     });
   }
   console.log("✓ Shipping rate (sample configuration — replace with actual rates)");
@@ -181,7 +198,11 @@ async function main() {
     },
   ];
   for (const c of coupons) {
-    await Coupon.updateOne({ code: c.code }, { $setOnInsert: { ...c, timesUsed: 0, redemptions: [] } }, { upsert: true });
+    await db.coupon.upsert({
+      where: { code: c.code },
+      create: { id: newId(), ...c, timesUsed: 0, isActive: true },
+      update: {},
+    });
   }
   console.log("✓ 2 sample coupons");
 
@@ -204,8 +225,10 @@ async function main() {
       sortOrder: 1,
     },
   ];
-  if ((await HomepageBanner.countDocuments()) === 0) {
-    await HomepageBanner.insertMany(banners);
+  if ((await db.homepageBanner.count()) === 0) {
+    for (const b of banners) {
+      await db.homepageBanner.create({ data: { id: newId(), ...b, isActive: true } });
+    }
   }
   console.log("✓ Homepage banners");
 
@@ -226,12 +249,16 @@ async function main() {
       "Returns and exchanges are accepted under the store's policy. Please review the policy page; the final terms will be published by the store owner.",
   };
   for (const [key, value] of Object.entries(settings)) {
-    await SiteSetting.updateOne({ key }, { $setOnInsert: { value } }, { upsert: true });
+    await db.siteSetting.upsert({
+      where: { key },
+      create: { id: newId(), key, value },
+      update: {},
+    });
   }
   console.log("✓ Site settings (contact details intentionally blank — owner must configure)");
 
   console.log("\nDone. All seed data is FICTIONAL and for development only.");
-  await mongoose.disconnect();
+  await db.$disconnect();
 }
 
 main().catch((e) => {

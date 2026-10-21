@@ -1,6 +1,11 @@
-# Stellora — Localhost Setup Guide
+# Stellora — Localhost Setup Guide (MySQL edition)
 
-Complete manual setup for running Stellora locally on Windows.
+Complete manual setup for running Stellora locally.
+
+## Requirements
+
+- Node.js >= 20.9
+- MySQL 8+ / MariaDB 10.6+ running locally
 
 ## URLs (important)
 
@@ -12,20 +17,30 @@ Complete manual setup for running Stellora locally on Windows.
 | Backend API | http://localhost:4000/api | 4000 |
 
 > **Note:** Admin app runs internally on port 3001, but the client app proxies
-> `/admin-console/*` to it. Always open admin via **port 3000** — going to
-> `localhost:3001/admin/login` directly will 404 (that page only exists on the
-> storefront app).
+> `/admin-console/*` to it. Always open admin via **port 3000**.
 
 ## One-time setup (first time)
 
-### 1. Create `backend/.env`
+### 1. Create the MySQL database
 
-Copy `backend/.env.example` to `backend/.env` and fill in:
+```sql
+CREATE DATABASE Stellora CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'Stellora'@'localhost' IDENTIFIED BY 'YourStrongPassword';
+GRANT ALL PRIVILEGES ON Stellora.* TO 'Stellora'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### 2. Create `backend/.env`
 
 ```env
-MONGODB_URI="mongodb+srv://<user>:<password>@<cluster>.mongodb.net/stellora?retryWrites=true&w=majority"
+DB_HOST="127.0.0.1"
+DB_PORT="3306"
+DB_NAME="Stellora"
+DB_USER="Stellora"
+DB_PASSWORD="YourStrongPassword"
 PORT=4000
 APP_URL="http://localhost:3000"
+ORIGIN_SUFFIXES=".space-z.ai,.z.ai,.onrender.com"
 
 ADMIN_BOOTSTRAP_EMAIL="admin@stellora.local"
 ADMIN_BOOTSTRAP_PASSWORD="Admin@12345"
@@ -35,96 +50,59 @@ DEMO_CUSTOMER_PASSWORD="Customer@12345"
 PAYMENT_DEMO_SECRET="stellora_demo_secret_2026"
 ```
 
-Leave the payment provider fields empty for local dev (built-in DEMO gateway
-works out of the box). See `.env.example` for all options.
+(Leave payment provider fields empty — the built-in DEMO gateway works out of the box.)
 
-### 2. Install dependencies (4 folders)
+### 3. Install + schema + data
 
 ```bash
-npm install                          # D:\Desktop\Stellora (root)
-cd backend && npm install
-cd frontend\client && npm install
-cd frontend\admin && npm install
-```
-
-### 3. Seed the database
-
-The seed script does **not** load `.env` by itself, so pass the URI inline:
-
-**CMD:**
-```bat
+npm install                      # repo root (workspaces)
 cd backend
-set MONGODB_URI=mongodb+srv://<user>:<password>@<cluster>.mongodb.net/stellora?retryWrites=true^&w=majority
+npx prisma migrate deploy        # create all tables
+
+# EITHER import existing data from MongoDB (one-time, read-only source):
+MIGRATE_MONGODB_URI="mongodb+srv://<user>:<pass>@cluster/stellora?retryWrites=true&w=majority" \
+  npx tsx src/migrate-mongo-to-mysql.ts
+
+# OR (fresh dev install only) fictional seed:
 npx tsx src/seed.ts
 ```
-
-**PowerShell:**
-```powershell
-cd backend
-$env:MONGODB_URI = "mongodb+srv://<user>:<password>@<cluster>.mongodb.net/stellora?retryWrites=true&w=majority"
-npx tsx src/seed.ts
-```
-
-**Git Bash:**
-```bash
-cd backend
-set -a && source .env && set +a
-npx tsx src/seed.ts
-```
-
-Seed creates: admin user, demo customer, 4 categories, 16 products,
-shipping rate, 2 coupons, banners, site settings. Products are skipped if
-they already exist, so re-running is safe.
 
 ## Daily start (3 terminals, in this order)
 
-**Terminal 1 — Backend:**
 ```bash
-cd backend
-npm run dev          # http://localhost:4000 (loads .env automatically)
+npm run dev:backend    # Terminal 1 — API on :4000
+npm run dev:frontend   # Terminal 2 — storefront :3000
+npm run dev:admin      # Terminal 3 — admin app :3001 (access via :3000/admin-console)
 ```
-
-**Terminal 2 — Storefront:**
-```bash
-cd frontend\client
-npm run dev          # http://localhost:3000
-```
-
-**Terminal 3 — Admin app:**
-```bash
-cd frontend\admin
-npm run dev          # internal, port 3001 — access via localhost:3000/admin-console
-```
-
-Start backend first, then the frontends.
 
 ## Login credentials
 
-- **Admin:** `admin@stellora.local` + the `ADMIN_BOOTSTRAP_PASSWORD` from `.env`
-  (or `StelloraAdmin#2026` if seeded without setting it)
+- **Admin:** `admin@stellora.local` + `ADMIN_BOOTSTRAP_PASSWORD` from `.env`
 - **Demo customer:** `customer@stellora.local` + `DEMO_CUSTOMER_PASSWORD` from `.env`
 
-Admins sign in ONLY at `http://localhost:3000/admin/login` — never the
-storefront customer login.
+Admins sign in ONLY at `http://localhost:3000/admin/login`.
 
 ## Verify it's working
 
 ```bash
 curl http://localhost:4000/api/health     # {"status":"healthy","database":"connected"}
-curl -o NUL -w "%{http_code}" http://localhost:3000   # 200
+curl -o /dev/null -w "%{http_code}" http://localhost:3000   # 200
+```
+
+## Useful prisma commands
+
+```bash
+npx prisma migrate deploy      # apply pending migrations (production)
+npx prisma migrate dev         # create a new migration from schema changes (dev)
+npx prisma studio              # browse data in a GUI
+npx tsx src/migrate-mongo-to-mysql.ts --fresh   # re-import Mongo data (truncates MySQL first)
 ```
 
 ## Troubleshooting
 
-- **`ECONNREFUSED 127.0.0.1:27017`** → seed is not seeing your
-  `MONGODB_URI`; pass it inline as shown in step 3.
-- **Admin page 404 on port 3001** → expected; use
-  `http://localhost:3000/admin-console` instead.
-- **Storefront shows no products** → run the seed (step 3).
-- **Port already in use** → `npx kill-port 3000 3001 4000` or close the old
-  terminal.
-- **Atlas connection timeout** → check IP allowlist in MongoDB Atlas
-  (Network Access → add current IP), and that the password in the URI is
-  URL-encoded if it contains special characters.
-- **Never commit `backend/.env`** — it holds real credentials (it is already
-  in `.gitignore`).
+- **`P1001: Can't reach database`** → MySQL not running, or wrong `DB_HOST`/`DB_PORT`/`DB_PASSWORD`.
+- **`P2021: table does not exist`** → run `npx prisma migrate deploy`.
+- **Storefront shows no products** → run the seed or the Mongo→MySQL migration.
+- **Port already in use** → `npx kill-port 3000 3001 4000` or close the old terminal.
+- **Seed "already exists" messages** → the seed is idempotent; existing rows are skipped.
+- **Never commit `backend/.env`** — it holds real credentials (already in `.gitignore`).

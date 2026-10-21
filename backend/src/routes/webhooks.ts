@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { Router } from "express";
 import { handle } from "../lib/http";
 import crypto from "node:crypto";
-import { Order, WebhookEvent } from "../models";
+import { db, newId } from "../lib/db";
 import { settleGatewayPayment } from "../services/payments";
 import { getGatewayConfig, resolveActiveProvider } from "../services/gateway-config";
 
@@ -41,7 +41,16 @@ async function recordEvent(
   status: string
 ): Promise<boolean> {
   try {
-    await WebhookEvent.create({ provider, eventId, payload, status, processedAt: status === "PROCESSED" ? new Date() : null });
+    await db.webhookEvent.create({
+      data: {
+        id: newId(),
+        provider,
+        eventId,
+        payload: payload as never,
+        status,
+        processedAt: status === "PROCESSED" ? new Date() : null,
+      },
+    });
     return true;
   } catch {
     // Duplicate eventId → already stored; treat as received-and-seen.
@@ -57,12 +66,20 @@ async function settleByOrderNumber(
 ): Promise<{ settled: boolean; reason: string }> {
   const normalized = String(orderNumber ?? "").trim().toUpperCase();
   if (!normalized) return { settled: false, reason: "NO_ORDER_REF" };
-  const order = await Order.findOne({ orderNumber: normalized });
+  const order = await db.order.findUnique({
+    where: { orderNumber: normalized },
+    select: {
+      id: true,
+      paymentStatus: true,
+      paymentIntentProvider: true,
+      paymentIntentGatewayOrderId: true,
+    },
+  });
   if (!order) return { settled: false, reason: "ORDER_NOT_FOUND" };
-  if (!order.paymentIntent || order.paymentIntent.provider !== provider) {
+  if (!order.paymentIntentProvider || order.paymentIntentProvider !== provider) {
     return { settled: false, reason: "PROVIDER_MISMATCH" };
   }
-  if (gatewayOrderId && order.paymentIntent.gatewayOrderId && order.paymentIntent.gatewayOrderId !== gatewayOrderId) {
+  if (gatewayOrderId && order.paymentIntentGatewayOrderId && order.paymentIntentGatewayOrderId !== gatewayOrderId) {
     return { settled: false, reason: "GATEWAY_ORDER_MISMATCH" };
   }
   if (order.paymentStatus === "PAID") return { settled: false, reason: "ALREADY_PAID" };
@@ -71,7 +88,7 @@ async function settleByOrderNumber(
     provider === "stripe"
       ? "Payment received via Stripe (webhook) — order confirmed."
       : "Payment received via Razorpay (webhook) — order confirmed.";
-  await settleGatewayPayment(order, provider, providerRef, note);
+  await settleGatewayPayment(order.id, provider, providerRef, note);
   return { settled: true, reason: "SETTLED" };
 }
 

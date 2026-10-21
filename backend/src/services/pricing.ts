@@ -1,6 +1,7 @@
-import { Coupon, ShippingRate } from "../models";
-import { HttpError } from "../lib/http";
+import { db } from "../lib/db";
+import { HttpError } from "../lib/http-errors";
 import { d, money, computeCouponDiscount } from "../lib/money";
+import type { Prisma } from "@prisma/client";
 
 export interface CouponCheck {
   valid: boolean;
@@ -8,6 +9,8 @@ export interface CouponCheck {
   discount: number;
   code?: string;
 }
+
+type CouponRow = Prisma.CouponGetPayload<{ include: { redemptions: true } }>;
 
 /** Validate a coupon against a subtotal for an optional user. Server-authoritative. */
 export async function validateCoupon(
@@ -25,21 +28,10 @@ export async function validateCoupon(
   discount: number;
 }> {
   const code = rawCode.trim().toUpperCase();
-  const coupon = await Coupon.findOne({ code }).lean<{
-    _id: any;
-    code: string;
-    isActive: boolean;
-    startsAt: Date | null;
-    endsAt: Date | null;
-    usageLimit: number | null;
-    perUserLimit: number | null;
-    minSubtotal: number | null;
-    timesUsed: number;
-    discountType: "PERCENT" | "FIXED";
-    value: number;
-    maxDiscount: number | null;
-    redemptions: { userId?: any; orderId: any; amount: number }[];
-  }>();
+  const coupon = await db.coupon.findUnique({
+    where: { code },
+    include: { redemptions: { select: { userId: true } } },
+  });
   if (!coupon || !coupon.isActive) {
     throw new HttpError("INVALID_COUPON", "This coupon code is not valid.", 422);
   }
@@ -55,38 +47,56 @@ export async function validateCoupon(
   }
   if (userId && coupon.perUserLimit !== null) {
     const used = (coupon.redemptions ?? []).filter(
-      (r) => r.userId && String(r.userId) === String(userId)
+      (r) => r.userId && r.userId === userId
     ).length;
     if (used >= coupon.perUserLimit) {
       throw new HttpError("INVALID_COUPON", "You have already used this coupon.", 422);
     }
   }
-  if (coupon.minSubtotal && d(subtotal).lt(d(coupon.minSubtotal))) {
+  if (coupon.minSubtotal && d(subtotal).lt(d(Number(coupon.minSubtotal)))) {
     throw new HttpError(
       "COUPON_MIN_SUBTOTAL",
-      `This coupon requires a minimum order of Rs.${money(coupon.minSubtotal)}.`,
+      `This coupon requires a minimum order of Rs.${money(Number(coupon.minSubtotal))}.`,
       422
     );
   }
-  const discount = computeCouponDiscount(subtotal, coupon, subtotal);
+  const discount = computeCouponDiscount(subtotal, couponRowToPlain(coupon), subtotal);
   return {
     coupon: {
-      id: String(coupon._id),
+      id: coupon.id,
       code: coupon.code,
-      discountType: coupon.discountType,
-      value: String(coupon.value),
-      maxDiscount: coupon.maxDiscount !== null ? String(coupon.maxDiscount) : null,
+      discountType: coupon.discountType as "PERCENT" | "FIXED",
+      value: String(Number(coupon.value)),
+      maxDiscount: coupon.maxDiscount !== null ? String(Number(coupon.maxDiscount)) : null,
     },
     discount,
   };
 }
 
+/** Plain-number view of a coupon for the money helpers. */
+export function couponRowToPlain(coupon: any) {
+  return {
+    code: coupon.code,
+    discountType: coupon.discountType as "PERCENT" | "FIXED",
+    value: Number(coupon.value),
+    maxDiscount: coupon.maxDiscount !== null ? Number(coupon.maxDiscount) : null,
+    minSubtotal: coupon.minSubtotal !== null ? Number(coupon.minSubtotal) : null,
+  };
+}
+
 /** Get the active shipping rate (first active by sortOrder). */
 export async function getActiveShippingRate() {
-  const rate = await ShippingRate.findOne({ isActive: true })
-    .sort({ sortOrder: 1 })
-    .lean<{ _id: any; baseFee: number; freeAbove: number | null; name: string }>();
-  return rate;
+  const rate = await db.shippingRate.findFirst({
+    where: { isActive: true },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+  if (!rate) return null;
+  return {
+    id: rate.id,
+    name: rate.name,
+    baseFee: Number(rate.baseFee),
+    freeAbove: rate.freeAbove !== null ? Number(rate.freeAbove) : null,
+  };
 }
 
 export function computeShipping(

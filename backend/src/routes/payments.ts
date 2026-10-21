@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Order } from "../models";
+import { db, newId } from "../lib/db";
 import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireUser } from "../lib/auth";
 import { rateLimit } from "../lib/rate-limit";
@@ -57,7 +57,7 @@ paymentsRouter.post(
     const orderNumber = readOrderNumber(req.body);
     if (!orderNumber) return fail(res, "VALIDATION_ERROR", "Order number is required.", 422);
 
-    const order = await Order.findOne({ orderNumber, userId: user.id });
+    const order = await db.order.findFirst({ where: { orderNumber, userId: user.id } });
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
     if (order.status === "CANCELLED") return fail(res, "ORDER_CANCELLED", "This order was cancelled.", 409);
     if (order.paymentStatus === "PAID") {
@@ -66,29 +66,44 @@ paymentsRouter.post(
 
     const gateway = await createGatewayOrder({
       orderNumber: order.orderNumber,
-      grandTotal: order.grandTotal,
+      grandTotal: Number(order.grandTotal),
       currency: order.currency ?? "INR",
     });
 
-    order.paymentMethod = "GATEWAY";
-    order.payment = {
-      method: "GATEWAY",
-      status: "PENDING",
-      amount: order.grandTotal,
-      providerRef: null,
-      verifiedAt: null,
-      createdAt: new Date(),
-    };
-    order.paymentIntent = {
-      provider: gateway.provider,
-      gatewayOrderId: gateway.gatewayOrderId,
-      createdAt: new Date(),
-    };
-    await order.save();
+    await db.$transaction([
+      db.order.update({
+        where: { id: order.id },
+        data: {
+          paymentMethod: "GATEWAY",
+          paymentIntentProvider: gateway.provider,
+          paymentIntentGatewayOrderId: gateway.gatewayOrderId,
+          paymentIntentCreatedAt: new Date(),
+        },
+      }),
+      db.orderPayment.upsert({
+        where: { orderId: order.id },
+        create: {
+          id: newId(),
+          orderId: order.id,
+          method: "GATEWAY",
+          status: "PENDING",
+          amount: order.grandTotal,
+          providerRef: null,
+          verifiedAt: null,
+        },
+        update: {
+          method: "GATEWAY",
+          status: "PENDING",
+          amount: order.grandTotal,
+          providerRef: null,
+          verifiedAt: null,
+        },
+      }),
+    ]);
 
     return ok(res, {
       orderNumber: order.orderNumber,
-      amount: money(order.grandTotal),
+      amount: money(Number(order.grandTotal)),
       currency: order.currency ?? "INR",
       provider: gateway.provider,
       demo: await isDemoMode(),
@@ -116,12 +131,20 @@ paymentsRouter.post(
     const expiry = String(req.body?.expiry ?? "");
     const cvv = String(req.body?.cvv ?? "");
 
-    const order = await Order.findOne({ orderNumber, userId: user.id });
+    const order = await db.order.findFirst({
+      where: { orderNumber, userId: user.id },
+      select: {
+        id: true,
+        paymentStatus: true,
+        paymentIntentProvider: true,
+        paymentIntentGatewayOrderId: true,
+      },
+    });
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
     if (order.paymentStatus === "PAID") {
       return ok(res, { alreadyPaid: true, approved: true, orderNumber });
     }
-    if (!order.paymentIntent || order.paymentIntent.provider !== "demo") {
+    if (!order.paymentIntentProvider || order.paymentIntentProvider !== "demo") {
       return fail(res, "NO_PAYMENT_INTENT", "Start the payment again from the checkout.", 409);
     }
 
@@ -130,7 +153,7 @@ paymentsRouter.post(
     if (upiId) {
       const upi = demoProcessUpi(upiId);
       if (!upi.approved) return ok(res, { approved: false, reason: upi.reason });
-      const gatewaySignature = await computeSignature("demo", order.paymentIntent.gatewayOrderId, upi.gatewayPaymentId!);
+      const gatewaySignature = await computeSignature("demo", order.paymentIntentGatewayOrderId!, upi.gatewayPaymentId!);
       return ok(res, { approved: true, gatewayPaymentId: upi.gatewayPaymentId, gatewaySignature });
     }
 
@@ -147,7 +170,7 @@ paymentsRouter.post(
       return ok(res, { approved: false, reason: result.reason });
     }
 
-    const gatewaySignature = await computeSignature("demo", order.paymentIntent.gatewayOrderId, result.gatewayPaymentId!);
+    const gatewaySignature = await computeSignature("demo", order.paymentIntentGatewayOrderId!, result.gatewayPaymentId!);
     return ok(res, {
       approved: true,
       gatewayPaymentId: result.gatewayPaymentId,
@@ -173,24 +196,39 @@ paymentsRouter.post(
       return fail(res, "VALIDATION_ERROR", "Payment details are incomplete.", 422);
     }
 
-    const order = await Order.findOne({ orderNumber, userId: user.id });
+    const order = await db.order.findFirst({
+      where: { orderNumber, userId: user.id },
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        paymentStatus: true,
+        grandTotal: true,
+        currency: true,
+        paymentIntentProvider: true,
+        paymentIntentGatewayOrderId: true,
+      },
+    });
     if (!order) return fail(res, "NOT_FOUND", "Order not found.", 404);
     if (order.paymentStatus === "PAID") {
       return ok(res, { alreadyPaid: true, orderNumber, paymentStatus: order.paymentStatus, status: order.status });
     }
 
-    const intent = order.paymentIntent;
-    if (!intent) return fail(res, "NO_PAYMENT_INTENT", "Start the payment again from the checkout.", 409);
+    const provider = order.paymentIntentProvider;
+    const intentGatewayOrderId = order.paymentIntentGatewayOrderId;
+    if (!provider || !intentGatewayOrderId) {
+      return fail(res, "NO_PAYMENT_INTENT", "Start the payment again from the checkout.", 409);
+    }
 
     let providerRef = gatewayPaymentId;
     let confirmedNote: string;
 
-    if (intent.provider === "stripe") {
+    if (provider === "stripe") {
       // Stripe: verify server-side by retrieving the PaymentIntent from
       // Stripe's API — status, amount, currency and metadata must all match.
       const verified = await verifyStripePayment(gatewayPaymentId, {
         orderNumber: order.orderNumber,
-        grandTotal: order.grandTotal,
+        grandTotal: Number(order.grandTotal),
         currency: order.currency ?? "INR",
       });
       if (!verified.ok) {
@@ -203,19 +241,19 @@ paymentsRouter.post(
       if (!gatewaySignature) {
         return fail(res, "VALIDATION_ERROR", "Payment details are incomplete.", 422);
       }
-      const valid = await verifySignature(intent.provider, intent.gatewayOrderId, gatewayPaymentId, gatewaySignature);
+      const valid = await verifySignature(provider, intentGatewayOrderId, gatewayPaymentId, gatewaySignature);
       if (!valid) {
         return fail(res, "SIGNATURE_INVALID", "We could not verify this payment. Please try again.", 400);
       }
-      confirmedNote = `Payment received via ${intent.provider === "razorpay" ? "Razorpay" : "online checkout"} — order confirmed.`;
+      confirmedNote = `Payment received via ${provider === "razorpay" ? "Razorpay" : "online checkout"} — order confirmed.`;
     }
 
-    const pointsEarned = await settleGatewayPayment(order, intent.provider, providerRef, confirmedNote);
+    const pointsEarned = await settleGatewayPayment(order.id, provider, providerRef, confirmedNote);
 
     return ok(res, {
       orderNumber: order.orderNumber,
-      paymentStatus: order.paymentStatus,
-      status: order.status,
+      paymentStatus: "PAID",
+      status: order.status === "PENDING" ? "CONFIRMED" : order.status,
       pointsEarned,
     });
   })

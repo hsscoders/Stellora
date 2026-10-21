@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { HttpError } from "../lib/http";
+import { HttpError } from "../lib/http-errors";
 import { env } from "../env";
-import { Order } from "../models";
+import { db, newId } from "../lib/db";
 import { accrueEarn } from "./loyalty";
 import {
   getGatewayConfig,
@@ -287,44 +287,80 @@ export async function testGatewayConnection(
  * so whichever arrives first settles the order and the other is a no-op.
  */
 export async function settleGatewayPayment(
-  order: InstanceType<typeof Order>,
+  orderId: string,
   provider: PaymentProvider,
   providerRef: string,
   confirmedNote: string
 ): Promise<number> {
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      userId: true,
+      status: true,
+      paymentStatus: true,
+      grandTotal: true,
+    },
+  });
+  if (!order) return 0;
   if (order.paymentStatus === "PAID") return 0;
 
-  order.paymentMethod = "GATEWAY";
-  order.payment = {
-    method: "GATEWAY",
-    status: "PAID",
-    amount: order.grandTotal,
-    providerRef,
-    verifiedAt: new Date(),
-    createdAt: new Date(),
-  };
-  order.paymentStatus = "PAID";
+  const becameConfirmed = order.status === "PENDING";
+  await db.$transaction(async (tx) => {
+    // Idempotency guard inside the transaction — only the first writer wins.
+    const updated = await tx.order.updateMany({
+      where: { id: orderId, paymentStatus: { not: "PAID" } },
+      data: {
+        paymentMethod: "GATEWAY",
+        paymentStatus: "PAID",
+        status: becameConfirmed ? "CONFIRMED" : order.status,
+      },
+    });
+    if (updated.count !== 1) return;
 
-  if (order.status === "PENDING") {
-    order.status = "CONFIRMED";
-    order.events.push({ status: "CONFIRMED", note: confirmedNote });
-  } else {
-    order.events.push({ status: order.status, note: "Payment received online." });
-  }
-  await order.save();
+    await tx.orderPayment.upsert({
+      where: { orderId },
+      create: {
+        id: newId(),
+        orderId,
+        method: "GATEWAY",
+        status: "PAID",
+        amount: order.grandTotal,
+        providerRef,
+        verifiedAt: new Date(),
+      },
+      update: {
+        method: "GATEWAY",
+        status: "PAID",
+        amount: order.grandTotal,
+        providerRef,
+        verifiedAt: new Date(),
+      },
+    });
+
+    await tx.orderEvent.create({
+      data: {
+        id: newId(),
+        orderId,
+        status: becameConfirmed ? "CONFIRMED" : (order.status as never),
+        note: becameConfirmed ? confirmedNote : "Payment received online.",
+      },
+    });
+  });
 
   // Realtime: payment confirmed — customer sees the update instantly.
   try {
     const { notifyPaymentStatus, notifyOrderStatus } = await import("./realtime");
     notifyPaymentStatus({
       orderNumber: order.orderNumber,
-      userId: String(order.userId ?? ""),
+      userId: order.userId ?? "",
       paymentStatus: "PAID",
     });
-    if (order.status === "CONFIRMED") {
+    if (becameConfirmed) {
       notifyOrderStatus({
         orderNumber: order.orderNumber,
-        userId: String(order.userId ?? ""),
+        userId: order.userId ?? "",
         status: "CONFIRMED",
         note: "Payment received online.",
       });
@@ -336,8 +372,8 @@ export async function settleGatewayPayment(
   // Stellora Rewards: credit earn points once the order is confirmed via
   // payment. Ledger-guarded, so retries and double-confirms are no-ops.
   let pointsEarned = 0;
-  if (order.status === "CONFIRMED") {
-    const earn = await accrueEarn(String(order._id), "Payment received online");
+  if (becameConfirmed) {
+    const earn = await accrueEarn(orderId, "Payment received online");
     pointsEarned = earn.earned;
   }
   return pointsEarned;

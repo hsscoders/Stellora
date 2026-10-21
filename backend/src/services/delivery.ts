@@ -1,4 +1,4 @@
-import { SiteSetting } from "../models";
+import { db } from "../lib/db";
 
 /**
  * Stellora Delivery Partners — courier catalog + store-level configuration.
@@ -62,9 +62,10 @@ export function invalidateDeliveryCache(): void {
 /** Load delivery settings with a short cache — safe to call per-request. */
 export async function getDeliveryConfig(force = false): Promise<DeliveryConfig> {
   if (!force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.config;
-  const rows = await SiteSetting.find({ key: { $in: [...DELIVERY_SETTING_KEYS] } }).lean<
-    { key: string; value: string }[]
-  >();
+  const rows = await db.siteSetting.findMany({
+    where: { key: { in: [...DELIVERY_SETTING_KEYS] } },
+    select: { key: true, value: true },
+  });
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   const config: DeliveryConfig = {
     enabled: (map["delivery.enabled"] ?? "true") === "true",

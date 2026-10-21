@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { ChatThread, ChatMessage, User } from "../models";
+import { Prisma } from "@prisma/client";
+import { db, newId } from "../lib/db";
 import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireAdmin, getCurrentUser } from "../lib/auth";
 import { newGuestChatKey, threadPayload, unreadAdminChatCount } from "../services/realtime";
@@ -34,12 +35,14 @@ chatRouter.get(
 
     let thread;
     if (user) {
-      thread = await ChatThread.findOne({ customerId: user.id }).sort({ lastMessageAt: -1 }).lean<any>();
+      thread = await db.chatThread.findFirst({
+        where: { customerId: user.id },
+        orderBy: { lastMessageAt: "desc" },
+      });
       if (!thread) {
-        const [created] = await ChatThread.create([
-          { customerId: user.id, displayName: user.name },
-        ]);
-        thread = created.toObject();
+        thread = await db.chatThread.create({
+          data: { id: newId(), customerId: user.id, displayName: user.name },
+        });
       }
     } else {
       // Guest identity: the client's localStorage chat key (x-chat-key header)
@@ -48,33 +51,39 @@ chatRouter.get(
       const headerKey = typeof req.headers["x-chat-key"] === "string" ? req.headers["x-chat-key"].slice(0, 64) : "";
       const existingKey = headerKey || (req.cookies?.[GUEST_COOKIE] as string | undefined) || "";
       if (existingKey) {
-        thread = await ChatThread.findOne({ guestKey: existingKey }).sort({ lastMessageAt: -1 }).lean<any>();
+        thread = await db.chatThread.findFirst({
+          where: { guestKey: existingKey },
+          orderBy: { lastMessageAt: "desc" },
+        });
       }
       if (!thread) {
         // Reuse the guest's cart cookie when present so we do not multiply
         // identities; otherwise mint a dedicated long-lived chat key.
         const key = existingKey || req.cookies?.[CART_COOKIE] || newGuestChatKey();
-        const [created] = await ChatThread.create([
-          { guestKey: key, displayName: "Guest visitor" },
-        ]);
-        thread = created.toObject();
+        thread = await db.chatThread.create({
+          data: { id: newId(), guestKey: key, displayName: "Guest visitor" },
+        });
         if (!existingKey && !req.cookies?.[CART_COOKIE]) setGuestCookie(res, key);
       }
     }
 
-    const messages = await ChatMessage.find({ threadId: thread._id })
-      .sort({ createdAt: 1 })
-      .limit(100)
-      .lean<any[]>();
+    const messages = await db.chatMessage.findMany({
+      where: { threadId: thread.id },
+      orderBy: { createdAt: "asc" },
+      take: 100,
+    });
+
+    // threadPayload still reads the legacy `_id` field — bridge the Prisma row.
+    const legacyThread = { ...thread, _id: thread.id };
 
     return ok(res, {
       thread: {
-        ...threadPayload(thread),
+        ...threadPayload(legacyThread),
         closedByName: thread.closedByName ?? null,
       },
       messages: messages.map((m) => ({
-        id: String(m._id),
-        threadId: String(m.threadId),
+        id: m.id,
+        threadId: m.threadId,
         senderRole: m.senderRole,
         senderName: m.senderName,
         body: m.body,
@@ -92,24 +101,24 @@ chatRouter.get(
   handle(async (req, res) => {
     await requireAdmin(req);
     const status = String(req.query.status ?? "OPEN");
-    const where = status === "ALL" ? {} : { status: status === "CLOSED" ? "CLOSED" : "OPEN" };
-    const threads = await ChatThread.find(where)
-      .sort({ lastMessageAt: -1 })
-      .limit(100)
-      .lean<any[]>();
+    const where: Prisma.ChatThreadWhereInput =
+      status === "ALL" ? {} : { status: status === "CLOSED" ? "CLOSED" : "OPEN" };
+    const threads = await db.chatThread.findMany({
+      where,
+      orderBy: { lastMessageAt: "desc" },
+      take: 100,
+    });
 
     // Enrich registered customers with their email for the inbox.
-    const customerIds = threads.map((t) => t.customerId).filter(Boolean);
+    const customerIds = threads.map((t) => t.customerId).filter((id): id is string => !!id);
     const customers = customerIds.length
-      ? await User.find({ _id: { $in: customerIds } })
-          .select("email")
-          .lean<{ _id: any; email: string | null }[]>()
+      ? await db.user.findMany({ where: { id: { in: customerIds } }, select: { id: true, email: true } })
       : [];
-    const emailMap = new Map(customers.map((c) => [String(c._id), c.email]));
+    const emailMap = new Map(customers.map((c) => [c.id, c.email]));
 
     return ok(res, {
       threads: threads.map((t) => ({
-        ...threadPayload(t),
+        ...threadPayload({ ...t, _id: t.id }),
         email: t.customerId ? emailMap.get(String(t.customerId)) ?? null : null,
       })),
       unreadTotal: await unreadAdminChatCount(),
@@ -121,17 +130,18 @@ chatRouter.get(
   "/admin/chat/threads/:id/messages",
   handle(async (req, res) => {
     await requireAdmin(req);
-    const thread = await ChatThread.findById(req.params.id).lean<any>();
+    const thread = await db.chatThread.findUnique({ where: { id: String(req.params.id) } });
     if (!thread) return fail(res, "NOT_FOUND", "Conversation not found.", 404);
-    const messages = await ChatMessage.find({ threadId: thread._id })
-      .sort({ createdAt: 1 })
-      .limit(200)
-      .lean<any[]>();
+    const messages = await db.chatMessage.findMany({
+      where: { threadId: thread.id },
+      orderBy: { createdAt: "asc" },
+      take: 200,
+    });
     return ok(res, {
-      thread: { ...threadPayload(thread), closedByName: thread.closedByName ?? null },
+      thread: { ...threadPayload({ ...thread, _id: thread.id }), closedByName: thread.closedByName ?? null },
       messages: messages.map((m) => ({
-        id: String(m._id),
-        threadId: String(m.threadId),
+        id: m.id,
+        threadId: m.threadId,
         senderRole: m.senderRole,
         senderName: m.senderName,
         body: m.body,
@@ -147,13 +157,13 @@ chatRouter.post(
   assertSameOrigin,
   handle(async (req, res) => {
     const admin = await requireAdmin(req);
-    const thread = await ChatThread.findById(req.params.id);
+    const thread = await db.chatThread.findUnique({ where: { id: String(req.params.id) } });
     if (!thread) return fail(res, "NOT_FOUND", "Conversation not found.", 404);
-    thread.status = "CLOSED";
-    thread.closedAt = new Date();
-    thread.closedByName = admin.name;
-    await thread.save();
-    return ok(res, { thread: threadPayload(thread.toObject()) });
+    const updated = await db.chatThread.update({
+      where: { id: thread.id },
+      data: { status: "CLOSED", closedAt: new Date(), closedByName: admin.name },
+    });
+    return ok(res, { thread: threadPayload({ ...updated, _id: updated.id }) });
   })
 );
 
@@ -162,13 +172,13 @@ chatRouter.post(
   assertSameOrigin,
   handle(async (req, res) => {
     await requireAdmin(req);
-    const thread = await ChatThread.findById(req.params.id);
+    const thread = await db.chatThread.findUnique({ where: { id: String(req.params.id) } });
     if (!thread) return fail(res, "NOT_FOUND", "Conversation not found.", 404);
-    thread.status = "OPEN";
-    thread.closedAt = null;
-    thread.closedByName = null;
-    await thread.save();
-    return ok(res, { thread: threadPayload(thread.toObject()) });
+    const updated = await db.chatThread.update({
+      where: { id: thread.id },
+      data: { status: "OPEN", closedAt: null, closedByName: null },
+    });
+    return ok(res, { thread: threadPayload({ ...updated, _id: updated.id }) });
   })
 );
 

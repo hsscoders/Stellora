@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { User } from "../models";
+import { db, newId } from "../lib/db";
 import { ok, fail, handle, assertSameOrigin } from "../lib/http";
 import { requireUser } from "../lib/auth";
 import { profileUpdateSchema, passwordChangeSchema, addressSchema } from "../validation";
@@ -14,13 +14,13 @@ accountRouter.put(
     assertSameOrigin(req);
     const user = await requireUser(req);
     const data = profileUpdateSchema.parse(req.body);
-    const updated = await User.findByIdAndUpdate(
-      user.id,
-      { name: data.name, phone: data.phone || null },
-      { new: true }
-    ).lean<{ _id: any; name: string; phone: string | null; email: string | null }>();
+    const updated = await db.user.update({
+      where: { id: user.id },
+      data: { name: data.name, phone: data.phone || null },
+      select: { id: true, name: true, phone: true, email: true },
+    });
     await audit({ actor: user, action: "account.profile_update", entityType: "User", entityId: user.id }, req);
-    return ok(res, { id: String(updated!._id), name: updated!.name, phone: updated!.phone ?? null, email: updated!.email ?? null });
+    return ok(res, { id: updated.id, name: updated.name, phone: updated.phone ?? null, email: updated.email ?? null });
   })
 );
 
@@ -31,23 +31,29 @@ accountRouter.put(
     const user = await requireUser(req);
     const data = passwordChangeSchema.parse(req.body);
 
-    const record = await User.findById(user.id).select("passwordHash").lean<{ passwordHash: string } | null>();
+    const record = await db.user.findUnique({
+      where: { id: user.id },
+      select: { passwordHash: true },
+    });
     if (!record || !(await verifyPassword(data.currentPassword, record.passwordHash))) {
       return fail(res, "INVALID_CREDENTIALS", "Your current password is incorrect.", 401, {
         currentPassword: "Your current password is incorrect.",
       });
     }
 
-    await User.updateOne({ _id: user.id }, { passwordHash: await hashPassword(data.newPassword) });
+    await db.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await hashPassword(data.newPassword) },
+    });
     await audit({ actor: user, action: "account.password_change", entityType: "User", entityId: user.id }, req);
     return ok(res, { message: "Password updated successfully." });
   })
 );
 
-/* ---------- Addresses (embedded on user) ---------- */
+/* ---------- Addresses (own table now — was embedded on the user) ---------- */
 
-type AddressSub = {
-  _id: any;
+type AddressRow = {
+  id: string;
   fullName: string;
   phone: string;
   line1: string;
@@ -61,9 +67,9 @@ type AddressSub = {
   updatedAt: Date;
 };
 
-function serializeAddress(a: AddressSub) {
+function serializeAddress(a: AddressRow) {
   return {
-    id: String(a._id),
+    id: a.id,
     fullName: a.fullName,
     phone: a.phone,
     line1: a.line1,
@@ -82,8 +88,8 @@ accountRouter.get(
   "/account/addresses",
   handle(async (req, res) => {
     const user = await requireUser(req);
-    const doc = await User.findById(user.id).select("addresses").lean<{ addresses: AddressSub[] } | null>();
-    const addresses = [...(doc?.addresses ?? [])].sort((a, b) => {
+    const rows = await db.address.findMany({ where: { userId: user.id } });
+    const addresses = [...rows].sort((a, b) => {
       if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
@@ -97,31 +103,29 @@ accountRouter.post(
     assertSameOrigin(req);
     const user = await requireUser(req);
     const data = addressSchema.parse(req.body);
-    const address = {
-      fullName: data.fullName,
-      phone: data.phone,
-      line1: data.line1,
-      line2: data.line2 || null,
-      city: data.city,
-      state: data.state,
-      pincode: data.pincode,
-      country: data.country || "India",
-      isDefault: data.isDefault,
-    };
-    const updated = await User.findByIdAndUpdate(
-      user.id,
-      { $push: { addresses: address } },
-      { new: true, select: "addresses" }
-    ).lean<{ addresses: AddressSub[] } | null>();
-    const created = updated?.addresses?.[updated.addresses.length - 1];
-    if (data.isDefault && created) {
-      await User.updateOne(
-        { _id: user.id },
-        { $set: { "addresses.$[a].isDefault": false } },
-        { arrayFilters: [{ "a._id": { $ne: created._id } }] }
-      );
+    const created = await db.address.create({
+      data: {
+        id: newId(),
+        userId: user.id,
+        fullName: data.fullName,
+        phone: data.phone,
+        line1: data.line1,
+        line2: data.line2 || null,
+        city: data.city,
+        state: data.state,
+        pincode: data.pincode,
+        country: data.country || "India",
+        isDefault: data.isDefault,
+      },
+    });
+    if (data.isDefault) {
+      // Exactly one default — clear the flag on every other address.
+      await db.address.updateMany({
+        where: { userId: user.id, id: { not: created.id } },
+        data: { isDefault: false },
+      });
     }
-    return ok(res, serializeAddress(created!), 201);
+    return ok(res, serializeAddress(created), 201);
   })
 );
 
@@ -133,39 +137,32 @@ accountRouter.put(
     const addressId = String(req.params.addressId);
     const data = addressSchema.parse(req.body);
 
-    const doc = await User.findOne(
-      { _id: user.id, "addresses._id": addressId },
-      { select: "addresses" }
-    ).lean<{ addresses: AddressSub[] } | null>();
-    const existing = doc?.addresses?.find((a) => String(a._id) === addressId);
+    const existing = await db.address.findFirst({
+      where: { id: addressId, userId: user.id },
+    });
     if (!existing) return fail(res, "NOT_FOUND", "Address not found.", 404);
 
-    const fields = {
-      "addresses.$[a].fullName": data.fullName,
-      "addresses.$[a].phone": data.phone,
-      "addresses.$[a].line1": data.line1,
-      "addresses.$[a].line2": data.line2 || null,
-      "addresses.$[a].city": data.city,
-      "addresses.$[a].state": data.state,
-      "addresses.$[a].pincode": data.pincode,
-      "addresses.$[a].country": data.country || "India",
-      ...(data.isDefault ? { "addresses.$[a].isDefault": true } : {}),
-      "addresses.$[a].updatedAt": new Date(),
-    };
-    await User.updateOne(
-      { _id: user.id, "addresses._id": addressId },
-      { $set: fields },
-      { arrayFilters: [{ "a._id": addressId }] }
-    );
+    await db.address.update({
+      where: { id: existing.id },
+      data: {
+        fullName: data.fullName,
+        phone: data.phone,
+        line1: data.line1,
+        line2: data.line2 || null,
+        city: data.city,
+        state: data.state,
+        pincode: data.pincode,
+        country: data.country || "India",
+        ...(data.isDefault ? { isDefault: true } : {}),
+      },
+    });
     if (data.isDefault) {
-      await User.updateOne(
-        { _id: user.id },
-        { $set: { "addresses.$[a].isDefault": false } },
-        { arrayFilters: [{ "a._id": { $ne: addressId } }] }
-      );
+      await db.address.updateMany({
+        where: { userId: user.id, id: { not: addressId } },
+        data: { isDefault: false },
+      });
     }
-    const refreshed = await User.findById(user.id).select("addresses").lean<{ addresses: AddressSub[] } | null>();
-    const updatedAddress = refreshed?.addresses?.find((a) => String(a._id) === addressId);
+    const updatedAddress = await db.address.findUnique({ where: { id: addressId } });
     return ok(res, updatedAddress ? serializeAddress(updatedAddress) : { id: addressId });
   })
 );
@@ -177,20 +174,14 @@ accountRouter.delete(
     const user = await requireUser(req);
     const addressId = String(req.params.addressId);
 
-    // Ownership pre-check. NOTE: trusting updateOne().modifiedCount here is
-    // wrong — Mongoose timestamps bump updatedAt on ANY matched doc, so a
-    // $pull that removed nothing still reports modifiedCount=1 (a foreign or
-    // unknown addressId would falsely 200). Match the subdocument first.
-    const owner = await User.findOne(
-      { _id: user.id, "addresses._id": addressId },
-      { select: "_id" }
-    ).lean<{ _id: any } | null>();
+    // Ownership pre-check keeps the exact 404 semantics of the old code.
+    const owner = await db.address.findFirst({
+      where: { id: addressId, userId: user.id },
+      select: { id: true },
+    });
     if (!owner) return fail(res, "NOT_FOUND", "Address not found.", 404);
 
-    await User.updateOne(
-      { _id: user.id },
-      { $pull: { addresses: { _id: addressId } } }
-    );
+    await db.address.delete({ where: { id: owner.id } });
     return ok(res, { deleted: true });
   })
 );

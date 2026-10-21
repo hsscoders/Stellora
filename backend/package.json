@@ -11,9 +11,14 @@
     "start:dist": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "db:seed": "tsx src/seed.ts",
-    "db:seed:bun": "bun src/seed.ts"
+    "db:seed:bun": "bun src/seed.ts",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:migrate:mongo": "tsx src/migrate-mongo-to-mysql.ts"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "@types/multer": "^2.3.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -21,8 +26,8 @@
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "mongoose": "^8.16.0",
     "multer": "^2.4.0",
+    "prisma": "^6.19.3",
     "socket.io": "^4.8.4",
     "tsx": "^4.19.0",
     "zod": "^4.0.2"
@@ -32,6 +37,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^22.15.0",
+    "mongodb": "^7.7.0",
     "typescript": "^5.8.0"
   }
 }

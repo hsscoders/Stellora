@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
 import { randomToken, sha256 } from "./password";
-import { HttpError } from "./http";
-import { Session, User } from "../models";
+import { HttpError } from "./http-errors";
+import { db, newId } from "./db";
+import type { User as PrismaUser } from "@prisma/client";
 
 export const SESSION_COOKIE = "stellora_session";
 export const CART_COOKIE = "stellora_cart";
@@ -32,12 +33,15 @@ export async function createSession(
 ): Promise<void> {
   const token = randomToken(32);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  await Session.create({
-    tokenHash: sha256(token),
-    userId,
-    expiresAt,
-    ip: meta.ip,
-    userAgent: meta.userAgent,
+  await db.session.create({
+    data: {
+      id: newId(),
+      tokenHash: sha256(token),
+      userId,
+      expiresAt,
+      ip: meta.ip ?? null,
+      userAgent: meta.userAgent ?? null,
+    },
   });
   res.cookie(SESSION_COOKIE, token, { ...cookieBase, expires: expiresAt });
 }
@@ -46,7 +50,7 @@ export async function createSession(
 export async function destroySession(req: Request, res: Response): Promise<void> {
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
-    await Session.deleteMany({ tokenHash: sha256(token) }).catch(() => {});
+    await db.session.deleteMany({ where: { tokenHash: sha256(token) } }).catch(() => {});
   }
   res.cookie(SESSION_COOKIE, "", { ...cookieBase, maxAge: 0 });
 }
@@ -55,19 +59,19 @@ export async function destroySession(req: Request, res: Response): Promise<void>
 export async function getCurrentUser(req: Request): Promise<SessionUser | null> {
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return null;
-  const session = await Session.findOne({ tokenHash: sha256(token) }).lean();
+  const session = await db.session.findUnique({ where: { tokenHash: sha256(token) } });
   if (!session) return null;
   if (session.expiresAt < new Date()) {
-    await Session.deleteOne({ _id: session._id }).catch(() => {});
+    await db.session.delete({ where: { id: session.id } }).catch(() => {});
     return null;
   }
-  const user = await User.findById(session.userId).lean();
+  const user = await db.user.findUnique({ where: { id: session.userId } });
   if (!user || !user.isActive) return null;
   return {
-    id: String(user._id),
+    id: user.id,
     email: user.email ?? null,
     name: user.name,
-    role: user.role,
+    role: user.role as "CUSTOMER" | "ADMIN",
     phone: user.phone ?? null,
   };
 }
@@ -88,12 +92,14 @@ export function readCartKey(req: Request): string | null {
   return req.cookies?.[CART_COOKIE] ?? null;
 }
 
+/** Require a signed-in user (401 otherwise). */
 export async function requireUser(req: Request): Promise<SessionUser> {
   const user = await getCurrentUser(req);
   if (!user) throw new HttpError("UNAUTHENTICATED", "Please sign in to continue.", 401);
   return user;
 }
 
+/** Require an admin (401/403 otherwise). */
 export async function requireAdmin(req: Request): Promise<SessionUser> {
   const user = await requireUser(req);
   if (user.role !== "ADMIN") {
@@ -101,3 +107,12 @@ export async function requireAdmin(req: Request): Promise<SessionUser> {
   }
   return user;
 }
+
+/** The full DB user row for the current session (or null). */
+export async function getCurrentUserRow(req: Request): Promise<PrismaUser | null> {
+  const ref = await getCurrentUser(req);
+  if (!ref) return null;
+  return db.user.findUnique({ where: { id: ref.id } });
+}
+
+export { isProd };
