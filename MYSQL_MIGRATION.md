@@ -1,3 +1,10 @@
+# Note (post-cleanup 2026-10-22)
+
+> The migration is complete and `migrate-mongo-to-mysql.ts` + the `mongodb`
+> devDependency have been REMOVED from the repo. This document is kept as the
+> historical migration report. To restore real data into a fresh MySQL today,
+> import a full SQL dump (`mysql -u USER -p DBNAME < dump.sql`) or run the seed.
+
 # Stellora — MongoDB → MySQL Migration
 
 **Branch:** `migration/mongodb-to-mysql`

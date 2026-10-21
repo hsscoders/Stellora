@@ -57,15 +57,21 @@ PAYMENT_DEMO_SECRET="stellora_demo_secret_2026"
 ```bash
 npm install                      # repo root (workspaces)
 cd backend
+npx prisma generate              # generate the Prisma client
 npx prisma migrate deploy        # create all tables
+cd ..
 
-# EITHER import existing data from MongoDB (one-time, read-only source):
-MIGRATE_MONGODB_URI="mongodb+srv://<user>:<pass>@cluster/stellora?retryWrites=true&w=majority" \
-  npx tsx src/migrate-mongo-to-mysql.ts
+# Option A (fresh/dev install) — fictional demo data:
+npm run seed
 
-# OR (fresh dev install only) fictional seed:
-npx tsx src/seed.ts
+# Option B (real store data) — if you have a full MySQL dump (e.g. the
+# exported migrated data), import it instead of seeding:
+#   mysql -h 127.0.0.1 -u Stellora -p Stellora < stellora-import.sql
 ```
+
+> Seed data is fictional and clearly labelled for development. Option B is for
+> restoring a real catalogue/orders snapshot from an existing Stellora MySQL
+> database.
 
 ## Daily start (3 terminals, in this order)
 
@@ -95,14 +101,13 @@ curl -o /dev/null -w "%{http_code}" http://localhost:3000   # 200
 npx prisma migrate deploy      # apply pending migrations (production)
 npx prisma migrate dev         # create a new migration from schema changes (dev)
 npx prisma studio              # browse data in a GUI
-npx tsx src/migrate-mongo-to-mysql.ts --fresh   # re-import Mongo data (truncates MySQL first)
 ```
 
 ## Troubleshooting
 
 - **`P1001: Can't reach database`** → MySQL not running, or wrong `DB_HOST`/`DB_PORT`/`DB_PASSWORD`.
 - **`P2021: table does not exist`** → run `npx prisma migrate deploy`.
-- **Storefront shows no products** → run the seed or the Mongo→MySQL migration.
+- **Storefront shows no products** → run the seed (`npm run seed`) or import a data dump.
 - **Port already in use** → `npx kill-port 3000 3001 4000` or close the old terminal.
 - **Seed "already exists" messages** → the seed is idempotent; existing rows are skipped.
 - **Never commit `backend/.env`** — it holds real credentials (already in `.gitignore`).
