@@ -30,3 +30,6 @@ tsconfig.tsbuildinfo
 
 # Backend build output (tsc -p tsconfig.build.json)
 backend/dist/
+
+# Runtime logs (keepalive, backend, etc.)
+logs/
