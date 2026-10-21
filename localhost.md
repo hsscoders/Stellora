@@ -38,6 +38,10 @@ DB_PORT="3306"
 DB_NAME="Stellora"
 DB_USER="Stellora"
 DB_PASSWORD="YourStrongPassword"
+# Prisma CLI (generate / migrate deploy) reads this URL directly — keep it in
+# sync with the DB_* values above. At runtime the server also accepts the
+# DB_* parts; DATABASE_URL wins when both are set.
+DATABASE_URL="mysql://Stellora:YourStrongPassword@127.0.0.1:3306/Stellora"
 PORT=4000
 APP_URL="http://localhost:3000"
 ORIGIN_SUFFIXES=".space-z.ai,.z.ai,.onrender.com"
@@ -106,6 +110,7 @@ npx prisma studio              # browse data in a GUI
 ## Troubleshooting
 
 - **`P1001: Can't reach database`** → MySQL not running, or wrong `DB_HOST`/`DB_PORT`/`DB_PASSWORD`.
+- **`P1012: URL must start with protocol mysql://`** → your shell already exports a stray `DATABASE_URL` from another project. Run `unset DATABASE_URL` (or export the correct `mysql://` URL) — the CLI gives shell env vars priority over `.env`.
 - **`P2021: table does not exist`** → run `npx prisma migrate deploy`.
 - **Storefront shows no products** → run the seed (`npm run seed`) or import a data dump.
 - **Port already in use** → `npx kill-port 3000 3001 4000` or close the old terminal.
