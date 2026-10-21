@@ -115,12 +115,16 @@ cartRouter.delete(
     const sessionKey = user ? null : readCartKey(req);
     if (!user && !sessionKey) throw new HttpError("UNAUTHENTICATED", "Cart not found.", 404);
     const cart = await resolveCart(user?.id ?? null, sessionKey);
+    // Existence pre-check (updateOne().modifiedCount always reports 1 on a
+    // matched doc — Mongoose timestamps bump updatedAt even when the $pull
+    // removed nothing — so it cannot detect a missing item).
     const { Cart } = await import("../models");
-    const updated = await Cart.updateOne(
+    const exists = await Cart.exists({ _id: cart._id, "items._id": itemId });
+    if (!exists) return fail(res, "NOT_FOUND", "Cart item not found.", 404);
+    await Cart.updateOne(
       { _id: cart._id },
       { $pull: { items: { _id: itemId } } }
     );
-    if (updated.modifiedCount === 0) return fail(res, "NOT_FOUND", "Cart item not found.", 404);
     return ok(res, await getCartView(String(cart._id)));
   })
 );

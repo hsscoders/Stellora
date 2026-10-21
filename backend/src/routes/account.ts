@@ -176,11 +176,21 @@ accountRouter.delete(
     assertSameOrigin(req);
     const user = await requireUser(req);
     const addressId = String(req.params.addressId);
-    const updated = await User.updateOne(
+
+    // Ownership pre-check. NOTE: trusting updateOne().modifiedCount here is
+    // wrong — Mongoose timestamps bump updatedAt on ANY matched doc, so a
+    // $pull that removed nothing still reports modifiedCount=1 (a foreign or
+    // unknown addressId would falsely 200). Match the subdocument first.
+    const owner = await User.findOne(
+      { _id: user.id, "addresses._id": addressId },
+      { select: "_id" }
+    ).lean<{ _id: any } | null>();
+    if (!owner) return fail(res, "NOT_FOUND", "Address not found.", 404);
+
+    await User.updateOne(
       { _id: user.id },
       { $pull: { addresses: { _id: addressId } } }
     );
-    if (updated.modifiedCount === 0) return fail(res, "NOT_FOUND", "Address not found.", 404);
     return ok(res, { deleted: true });
   })
 );

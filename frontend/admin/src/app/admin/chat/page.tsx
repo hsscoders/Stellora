@@ -101,8 +101,22 @@ export default function AdminChatPage() {
   }, [filter]);
 
   useEffect(() => {
-    void loadThreads();
-  }, [loadThreads]);
+    // Initial load — the async IIFE keeps every setState provably after an
+    // await boundary (React Compiler: no synchronous setState in effects).
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/chat/threads?status=${filter}`, { cache: "no-store" });
+        const json = await res.json();
+        if (!cancelled && json.ok) setThreads(json.data.threads as Thread[]);
+      } catch {
+        if (!cancelled) setThreads((prev) => prev ?? []);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filter]);
 
   const loadMessages = useCallback(async (threadId: string) => {
     try {

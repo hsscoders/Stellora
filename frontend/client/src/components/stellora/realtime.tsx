@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { io, type Socket } from "socket.io-client";
 
 /**
@@ -13,9 +13,54 @@ import { io, type Socket } from "socket.io-client";
  * Usage:
  *   const socket = useRealtime();
  *   useRealtimeEvent("order:status", (p) => { ... });
+ *
+ * Implementation note: the connection is a module-level singleton exposed
+ * through useSyncExternalStore (the React-blessed way to subscribe to an
+ * external system). This avoids setState-in-effect cascades entirely: the
+ * snapshot flips exactly once (null → socket) and consumers re-render once.
  */
 
 const RealtimeContext = createContext<Socket | null>(null);
+
+let sharedSocket: Socket | null = null;
+const snapshotListeners = new Set<() => void>();
+
+function notifySnapshotListeners() {
+  for (const listener of snapshotListeners) listener();
+}
+
+/** Idempotent, lazily-created shared connection (client only). */
+function ensureSocket(): Socket | null {
+  if (typeof window === "undefined") return null;
+  if (!sharedSocket) {
+    // Polling-first with websocket upgrade: works through any proxy/hosting,
+    // degrades gracefully behind restrictive CDNs.
+    sharedSocket = io({
+      path: "/socket.io",
+      withCredentials: true,
+      transports: ["polling", "websocket"],
+      reconnectionDelayMax: 10_000,
+      auth: { chatKey: guestChatKey() },
+    });
+    // The socket reference itself is already a valid snapshot the moment it
+    // exists; the microtask just covers consumers mounted before creation.
+    queueMicrotask(notifySnapshotListeners);
+  }
+  return sharedSocket;
+}
+
+function subscribeSnapshot(callback: () => void): () => void {
+  snapshotListeners.add(callback);
+  return () => snapshotListeners.delete(callback);
+}
+
+function getSnapshot(): Socket | null {
+  return sharedSocket;
+}
+
+function getServerSnapshot(): Socket | null {
+  return null;
+}
 
 /** Stable per-browser chat identity for guests (survives first visits). */
 function guestChatKey(): string | undefined {
@@ -36,25 +81,8 @@ function guestChatKey(): string | undefined {
 }
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
-  const [socket, setSocket] = useState<Socket | null>(null);
-
-  useEffect(() => {
-    // Polling-first with websocket upgrade: works through any proxy/hosting,
-    // degrades gracefully behind restrictive CDNs.
-    const s = io({
-      path: "/socket.io",
-      withCredentials: true,
-      transports: ["polling", "websocket"],
-      reconnectionDelayMax: 10_000,
-      auth: { chatKey: guestChatKey() },
-    });
-    setSocket(s);
-    return () => {
-      s.close();
-      setSocket(null);
-    };
-  }, []);
-
+  // Lazily connects on the client; SSR/hydration snapshots stay null.
+  const socket = useSyncExternalStore(subscribeSnapshot, ensureSocket, getServerSnapshot);
   return <RealtimeContext.Provider value={socket}>{children}</RealtimeContext.Provider>;
 }
 
@@ -74,7 +102,12 @@ export function useRealtimeEvent<T = unknown>(
 ): void {
   const socket = useRealtime();
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+
+  // Keep the latest handler without re-subscribing (latest-ref pattern — the
+  // write happens in an effect, never during render).
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
 
   useEffect(() => {
     if (!socket || !enabled) return;

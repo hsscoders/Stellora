@@ -37,7 +37,13 @@ export function rateLimit(
   return { allowed: true, retryAfterSec: 0 };
 }
 
-export function getClientIp(req: { headers: Record<string, unknown> }): string {
+export function getClientIp(
+  req: { ip?: string; headers: Record<string, unknown> }
+): string {
+  // Prefer Express's trust-proxy-aware value (app.set("trust proxy", 1)):
+  // it uses the IP the proxy actually observed, so a client cannot rotate
+  // its rate-limit bucket by injecting extra X-Forwarded-For entries.
+  if (typeof req.ip === "string" && req.ip) return req.ip;
   const fwd = req.headers["x-forwarded-for"];
   if (typeof fwd === "string" && fwd.length > 0) return fwd.split(",")[0].trim();
   const real = req.headers["x-real-ip"];

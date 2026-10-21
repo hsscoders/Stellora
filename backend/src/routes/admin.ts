@@ -552,7 +552,11 @@ adminRouter.post(
     const slug = data.slug && data.slug.length > 0 ? data.slug : slugify(data.name);
     const clash = await Product.findOne({ slug }).lean<{ _id: any }>();
     if (clash) {
-      return ok(res, { error: "A product with this slug already exists." });
+      // 409 Conflict (was: 200 with {error} in the body — clients could read
+      // that as success). Matches the PUT /admin/products/:id behaviour below.
+      return fail(res, "SLUG_TAKEN", "A product with this slug already exists.", 409, {
+        slug: "Already in use",
+      });
     }
 
     const product = await Product.create({

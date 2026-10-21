@@ -622,7 +622,10 @@ function NotificationsBell() {
   /* Realtime: any push (order, chat, low stock, review…) refreshes the badge
      without polling. Bursts are coalesced to one refresh per 1.5s. */
   const rtLoadRef = useRef(load);
-  rtLoadRef.current = load;
+  useEffect(() => {
+    // Latest-ref pattern: write happens in an effect, never during render.
+    rtLoadRef.current = load;
+  });
   const rtTimer = useRef<number | null>(null);
   useRtBus(() => {
     if (rtTimer.current) return;

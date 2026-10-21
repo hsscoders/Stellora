@@ -178,7 +178,7 @@ export function SupportChat() {
     typingTimer.current = setTimeout(() => {
       socket.emit("chat:typing", { threadId: thread.id, typing: false });
     }, 1600);
-  }, [socket, thread?.id]);
+  }, [socket, thread]);
 
   /* ---------- send ---------- */
   const send = useCallback(
@@ -211,7 +211,7 @@ export function SupportChat() {
         setSending(false);
       }, 6000);
     },
-    [draft, socket, sending, thread?.id]
+    [draft, socket, sending, thread]
   );
 
   const startNewConversation = useCallback(() => {

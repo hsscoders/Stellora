@@ -272,8 +272,11 @@ storefrontRouter.get(
         });
       } else {
         list = [...list].sort((a: any, b: any) => {
-          const pa = a.variants?.filter((v: any) => v.isActive)[0]?.price ?? Infinity;
-          const pb = b.variants?.filter((v: any) => v.isActive)[0]?.price ?? Infinity;
+          // Sort key = cheapest ACTIVE variant, mirroring serializeProduct's
+          // display order (variants[0] after its price sort). Using the first
+          // STORED variant made the sort disagree with the displayed price.
+          const pa = Math.min(...(a.variants?.filter((v: any) => v.isActive).map((v: any) => v.price) ?? [Infinity]));
+          const pb = Math.min(...(b.variants?.filter((v: any) => v.isActive).map((v: any) => v.price) ?? [Infinity]));
           return query.sort === "price-asc" ? pa - pb : pb - pa;
         });
       }

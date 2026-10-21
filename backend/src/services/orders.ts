@@ -84,10 +84,12 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
   // Totals — computed entirely server-side
   const subtotal = view.subtotal;
   let discountTotal = 0;
+  let couponDiscount = 0; // coupon's own share (redemption bookkeeping excludes loyalty points)
   let couponId: string | null = null;
   let couponCode: string | null = null;
   if (input.couponCode) {
     const result = await validateCoupon(input.couponCode, subtotal, input.userId);
+    couponDiscount = result.discount;
     discountTotal = result.discount;
     couponId = result.coupon.id;
     couponCode = result.coupon.code;
@@ -227,7 +229,9 @@ export async function createOrderFromCart(input: CheckoutInput): Promise<Checkou
           await Coupon.updateOne({ _id: couponId }, { $inc: { timesUsed: 1 } }, { session });
           await Coupon.updateOne(
             { _id: couponId },
-            { $push: { redemptions: { orderId: createdOrder._id, userId: input.userId, amount: discountTotal } } },
+            // Redemption amount = the COUPON's share only (loyalty points are
+            // recorded separately in the loyalty ledger)
+            { $push: { redemptions: { orderId: createdOrder._id, userId: input.userId, amount: couponDiscount } } },
             { session }
           );
         }

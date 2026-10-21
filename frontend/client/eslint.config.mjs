@@ -44,7 +44,9 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "**/node_modules/**", "**/.next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
+  // passenger.js is a cPanel/Phusion Passenger entry file — CommonJS by design,
+  // executed by the hosting runtime, never bundled or type-checked by Next.
+  ignores: ["node_modules/**", ".next/**", "**/node_modules/**", "**/.next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "passenger.js"]
 }];
 
 export default eslintConfig;

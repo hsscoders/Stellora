@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { formatINR } from "@/lib/utils";
@@ -15,6 +15,10 @@ import { playPosSound } from "@/lib/pos-sound";
  *
  * Global side effects live here (order chime + toasts); pages subscribe to the
  * window event bus ("stellora:rt") for their own refreshes.
+ *
+ * Implementation note: the connection is a module-level singleton exposed via
+ * useSyncExternalStore (the React-blessed external-store subscription), so no
+ * setState-in-effect cascades are needed; the snapshot flips exactly once.
  */
 
 const RealtimeContext = createContext<Socket | null>(null);
@@ -37,22 +41,40 @@ export function dispatchRt(type: RtEvent["type"], payload: unknown): void {
   window.dispatchEvent(new CustomEvent<RtEvent>("stellora:rt", { detail: { type, payload } }));
 }
 
-export function RealtimeProvider({ children }: { children: ReactNode }) {
-  const [socket, setSocket] = useState<Socket | null>(null);
+let sharedSocket: Socket | null = null;
+const snapshotListeners = new Set<() => void>();
 
-  useEffect(() => {
-    const s = io({
+function ensureSocket(): Socket | null {
+  if (typeof window === "undefined") return null;
+  if (!sharedSocket) {
+    sharedSocket = io({
       path: "/socket.io",
       withCredentials: true,
       transports: ["polling", "websocket"],
       reconnectionDelayMax: 10_000,
     });
-    setSocket(s);
-    return () => {
-      s.close();
-      setSocket(null);
-    };
-  }, []);
+    queueMicrotask(() => {
+      for (const listener of snapshotListeners) listener();
+    });
+  }
+  return sharedSocket;
+}
+
+function subscribeSnapshot(callback: () => void): () => void {
+  snapshotListeners.add(callback);
+  return () => snapshotListeners.delete(callback);
+}
+
+function getSnapshot(): Socket | null {
+  return sharedSocket;
+}
+
+function getServerSnapshot(): Socket | null {
+  return null;
+}
+
+export function RealtimeProvider({ children }: { children: ReactNode }) {
+  const socket = useSyncExternalStore(subscribeSnapshot, ensureSocket, getServerSnapshot);
 
   return (
     <RealtimeContext.Provider value={socket}>
@@ -64,7 +86,10 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
 function RealtimeEffects({ socket }: { socket: Socket | null }) {
   const handlerRef = useRef<((p: { type: string; payload: unknown }) => void) | null>(null);
-  handlerRef.current = (p) => {
+
+  // Latest-ref pattern: the ref is written in an effect (never during render).
+  useEffect(() => {
+    handlerRef.current = (p) => {
     dispatchRt(p.type as RtEvent["type"], p.payload);
     switch (p.type) {
       case "order:new": {
@@ -125,6 +150,7 @@ function RealtimeEffects({ socket }: { socket: Socket | null }) {
         break;
     }
   };
+  });
 
   // Bind every business event once; the ref keeps handlers fresh.
   useEffect(() => {
@@ -166,7 +192,11 @@ export function useRealtimeEvent<T = unknown>(
 ): void {
   const socket = useRealtime();
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+
+  // Latest-ref: write happens in an effect, never during render.
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
 
   useEffect(() => {
     if (!socket || !enabled) return;
@@ -181,7 +211,9 @@ export function useRealtimeEvent<T = unknown>(
 /** Listen to the internal realtime event bus (works even without a socket). */
 export function useRtBus(handler: (e: RtEvent) => void): void {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
   useEffect(() => {
     const listener = (e: Event) => handlerRef.current((e as CustomEvent<RtEvent>).detail);
     window.addEventListener("stellora:rt", listener);

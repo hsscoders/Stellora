@@ -103,6 +103,37 @@ app.use("/api", (_req, res) => {
   fail(res, "NOT_FOUND", "Endpoint not found.", 404);
 });
 
+// Global error middleware — LAST RESORT for anything that bypasses handle():
+// body-parser failures (malformed JSON), multer errors, middleware throws.
+// In development Express's default handler would leak stack traces to the
+// client, so every error leaves as the standard JSON envelope instead.
+app.use(
+  (
+    err: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
+  ) => {
+    if (res.headersSent) return;
+    const isParse =
+      typeof err === "object" &&
+      err !== null &&
+      (err as { type?: string }).type === "entity.parse.failed";
+    const isTooLarge =
+      typeof err === "object" &&
+      err !== null &&
+      (err as { type?: string; statusCode?: number }).type === "entity.too.large";
+    if (isParse) {
+      return fail(res, "BAD_JSON", "Request body is not valid JSON.", 400);
+    }
+    if (isTooLarge) {
+      return fail(res, "PAYLOAD_TOO_LARGE", "Request body is too large.", 413);
+    }
+    console.error("[api] middleware error:", err);
+    return fail(res, "INTERNAL_ERROR", "Something went wrong. Please try again.", 500);
+  }
+);
+
 async function main() {
   await mongoose.connect(env.MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   console.log(`[backend] MongoDB connected: ${mongoose.connection.host}/${mongoose.connection.name}`);
