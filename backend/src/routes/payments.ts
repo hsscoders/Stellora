@@ -158,7 +158,9 @@ paymentsRouter.post(
     }
 
     // Light field sanity checks for a realistic gateway feel.
-    if (!/^\d{2}\s*\/\s*\d{2}$/.test(expiry)) {
+    const expiryMatch = /^(\d{2})\s*\/\s*(\d{2})$/.exec(expiry);
+    const expiryMonth = expiryMatch ? Number(expiryMatch[1]) : 0;
+    if (!expiryMatch || expiryMonth < 1 || expiryMonth > 12) {
       return ok(res, { approved: false, reason: "Enter the card expiry as MM/YY." });
     }
     if (!/^\d{3,4}$/.test(cvv)) {
