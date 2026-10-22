@@ -1043,6 +1043,12 @@ adminRouter.get(
     const customers = await db.user.findMany({ where: { role: "CUSTOMER" }, orderBy: { createdAt: "desc" } });
     const counts = await db.order.groupBy({ by: ["userId"], _count: { _all: true } });
     const countMap = new Map(counts.map((c) => [String(c.userId), c._count._all]));
+    const spendRows = await db.$queryRaw<{ userId: string; total: Prisma.Decimal }[]>`
+      SELECT userId, COALESCE(SUM(grandTotal), 0) AS total FROM orders
+      WHERE userId IS NOT NULL AND status <> 'CANCELLED' GROUP BY userId`;
+    const spendMap = new Map(spendRows.map((s) => [String(s.userId), Number(s.total)]));
+    const lastOrderRows = await db.order.groupBy({ by: ["userId"], _max: { createdAt: true } });
+    const lastOrderMap = new Map(lastOrderRows.map((l) => [String(l.userId), l._max.createdAt]));
     return ok(res, customers.map((u) => ({
         id: u.id,
         name: u.name,
@@ -1051,6 +1057,8 @@ adminRouter.get(
         isActive: u.isActive,
         createdAt: u.createdAt,
         _count: { orders: countMap.get(u.id) ?? 0 },
+        totalSpent: spendMap.get(u.id) ?? 0,
+        lastOrderAt: lastOrderMap.get(u.id) ?? null,
       }))
     );
   })
@@ -2479,6 +2487,7 @@ adminRouter.get(
       where: { createdAt: { gte: istMidnight }, status: { not: "CANCELLED" } },
       select: {
         grandTotal: true,
+        createdAt: true,
         items: { select: { quantity: true } },
         payment: { select: { providerRef: true } },
       },
@@ -2503,6 +2512,17 @@ adminRouter.get(
       }
     }
     const r2 = (n: number) => Math.round(n * 100) / 100;
+
+    // Hourly buckets (IST business day) for the POS day-summary chart
+    const hourly: { hour: number; revenue: number; orders: number }[] = Array.from({ length: 24 }, (_, h) => ({ hour: h, revenue: 0, orders: 0 }));
+    for (const o of todayOrders) {
+      const istHour = new Date(new Date(o.createdAt).getTime() + IST).getUTCHours();
+      const bucket = hourly[istHour];
+      if (bucket) {
+        bucket.revenue = r2(bucket.revenue + (Number(o.grandTotal) || 0));
+        bucket.orders += 1;
+      }
+    }
 
     // Register state for this terminal (same math as /register/current)
     let session: any = null;
@@ -2547,6 +2567,7 @@ adminRouter.get(
         cashSales: r2(Math.max(cashSales, 0)),
         nonCashSales: r2(nonCashSales),
         itemsSold,
+        hourly,
       },
       session: session ? normalizeJson(session) : null,
       live,

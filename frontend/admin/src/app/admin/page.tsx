@@ -5,6 +5,9 @@ import { formatINR, formatDateTime } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AutomationCard } from "@/components/stellora/automation-card";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCardGrid } from "@/components/stellora/advanced/stat-card";
+import { DonutChart } from "@/components/stellora/advanced/charts";
 import {
   Table,
   TableBody,
@@ -26,6 +29,9 @@ import {
   BarChart3,
   Plus,
   Layers,
+  LayoutDashboard,
+  Ticket,
+  Star,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -308,47 +314,26 @@ async function Dashboard() {
   const onlinePct = channelTotal > 0 ? Math.round((online.total / channelTotal) * 100) : 0;
   const posPct = channelTotal > 0 ? 100 - onlinePct : 0;
 
-  const kpis = [
-    {
-      label: "Revenue · 30 days",
-      value: formatINR(revenue30d),
-      sub: `${orders30d} orders`,
-      icon: IndianRupee,
-    },
-    {
-      label: "Revenue · 24 hours",
-      value: formatINR(revenue24h),
-      sub: "rolling last day",
-      icon: TrendingUp,
-    },
-    {
-      label: "Orders · 30 days",
-      value: String(orders30d),
-      sub: `${openOrders} awaiting action`,
-      icon: ShoppingCart,
-    },
-    {
-      label: "Customers",
-      value: String(customerCount),
-      sub: "registered accounts",
-      icon: Users,
-    },
-    {
-      label: "Products",
-      value: String(productCount),
-      sub: `${lowStockItems.length} low on stock`,
-      icon: Package,
-    },
-  ];
+  const aov = orders30d > 0 ? revenue30d / orders30d : 0;
+  const revSpark = series.map((d) => d.total);
+  const ordSpark = series.map((d) => d.count);
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="font-serif text-3xl font-medium">Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Live figures, straight from the database. Cancelled orders are excluded from revenue.
-        </p>
-      </div>
+      <PageHeader
+        iconNode={<LayoutDashboard className="h-5 w-5 text-primary" aria-hidden="true" />}
+        title="Dashboard"
+        subtitle="Live figures, straight from the database. Cancelled orders are excluded from revenue."
+        actions={
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            Live
+          </span>
+        }
+      />
 
       {/* Quick actions — one-tap jump to the most-used console flows */}
       <div className="grid grid-cols-4 gap-2 sm:gap-3">
@@ -357,6 +342,10 @@ async function Dashboard() {
           { href: "/admin/pos", label: "Open POS", icon: Store },
           { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
           { href: "/admin/inventory", label: "Inventory", icon: Layers },
+          { href: "/admin/reports", label: "Reports", icon: BarChart3 },
+          { href: "/admin/coupons", label: "Coupons", icon: Ticket },
+          { href: "/admin/customers", label: "Customers", icon: Users },
+          { href: "/admin/reviews", label: "Reviews", icon: Star },
         ].map((a) => (
           <Link
             key={a.href}
@@ -370,22 +359,16 @@ async function Dashboard() {
       </div>
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
-        {kpis.map((k) => (
-          <div key={k.label} className="rounded-lg border border-border/70 bg-card p-4 sm:p-5">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                {k.label}
-              </p>
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <k.icon className="h-4 w-4" />
-              </span>
-            </div>
-            <p className="mt-2 font-serif text-2xl font-semibold tnum">{k.value}</p>
-            <p className="mt-1 text-xs text-muted-foreground tnum">{k.sub}</p>
-          </div>
-        ))}
-      </div>
+      <StatCardGrid
+        items={[
+          { label: "Revenue · 30 days", value: formatINR(revenue30d), icon: "rupee", spark: revSpark },
+          { label: "Revenue · 24 hours", value: formatINR(revenue24h), icon: "trending" },
+          { label: "Orders · 30 days", value: String(orders30d), icon: "cart", spark: ordSpark },
+          { label: "Avg. order value", value: formatINR(aov), icon: "trending" },
+          { label: "Customers", value: String(customerCount), icon: "users" },
+          { label: "Products", value: String(productCount), icon: "package" },
+        ]}
+      />
 
       {/* Auto-pilot — unattended automation sweeps */}
       <AutomationCard />
@@ -577,7 +560,7 @@ async function Dashboard() {
               return (
                 <Link
                   key={s.status}
-                  href="/admin/orders"
+                  href={`/admin/orders?status=${s.status}`}
                   className={`tnum inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition hover:opacity-75 ${
                     STATUS_STYLES[s.status] ?? "border-border bg-card text-foreground"
                   } ${count === 0 ? "opacity-50" : ""}`}
@@ -588,6 +571,17 @@ async function Dashboard() {
               );
             })}
           </div>
+          {openOrders + (ordersByStatus["CANCELLED"] ?? 0) > 0 && (
+            <div className="border-t border-border px-5 py-4">
+              <DonutChart
+                data={PIPELINE.filter((s) => (ordersByStatus[s.status] ?? 0) > 0).map((s) => ({ label: s.label, value: ordersByStatus[s.status] ?? 0 }))}
+                format="num"
+                centerLabel="orders"
+                size={150}
+                thickness={22}
+              />
+            </div>
+          )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border px-5 py-3 text-xs text-muted-foreground">
             <Link href="/admin/reviews" className="hover:text-primary">
               {pendingReviews} review{pendingReviews === 1 ? "" : "s"} awaiting

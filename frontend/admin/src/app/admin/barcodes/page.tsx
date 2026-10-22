@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
 import { formatINR } from "@/lib/utils";
 
 /* ------------------------------ API shapes ------------------------------ */
@@ -857,25 +858,22 @@ export default function AdminBarcodesPage() {
 }`}</style>
 
       {/* header */}
-      <div className="no-print flex flex-wrap items-center gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-          <Barcode className="h-5 w-5" />
-        </span>
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight sm:text-[26px]">Print Labels</h1>
-          <p className="text-[13px] text-muted-foreground">
-            Design numbered barcode labels — commercial sheet stocks, thermal rolls, or a custom size.
-          </p>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" className="rounded-lg" onClick={() => void fetchAll()} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </Button>
-          <Button variant="outline" size="sm" className="rounded-lg" onClick={() => router.push("/admin/pos")}>
-            Back to POS
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        icon={Barcode}
+        className="no-print"
+        title="Print Labels"
+        subtitle="Design numbered barcode labels — commercial sheet stocks, thermal rolls, or a custom size."
+        actions={
+          <>
+            <Button variant="outline" size="sm" className="rounded-lg" onClick={() => void fetchAll()} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+            <Button variant="outline" size="sm" className="rounded-lg" onClick={() => router.push("/admin/pos")}>
+              Back to POS
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_430px]">
         {/* ============ LEFT — configuration column ============ */}

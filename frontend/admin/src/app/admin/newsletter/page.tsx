@@ -1,16 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Download, BellRing, Send, Check } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { BellRing, Check, Download, Mail, MailX, Send, UserCheck, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { AdvancedTable, type Column } from "@/components/stellora/advanced/data-table";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCard } from "@/components/stellora/advanced/stat-card";
+import { ChipRow, EmptyState, ErrorState } from "@/components/stellora/advanced/widgets";
 import { formatDateTime } from "@/lib/utils";
 
 interface Subscriber {
@@ -29,19 +26,46 @@ interface RestockAlert {
   requestedAt: string;
 }
 
+const SUB_FILTERS = ["ALL", "ACTIVE", "UNSUBSCRIBED"] as const;
+type SubFilter = (typeof SUB_FILTERS)[number];
+
 export default function AdminNewsletterPage() {
   const [subs, setSubs] = useState<Subscriber[] | null>(null);
-  const [alerts, setAlerts] = useState<RestockAlert[]>([]);
+  const [alerts, setAlerts] = useState<RestockAlert[] | null>(null);
+  const [subFilter, setSubFilter] = useState<SubFilter>("ALL");
+  const [subsError, setSubsError] = useState<string | null>(null);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
 
   const load = () => {
     fetch("/api/admin/newsletter")
       .then((r) => r.json())
-      .then((j) => setSubs(j.ok ? j.data : []))
-      .catch(() => setSubs([]));
+      .then((j) => {
+        setSubs(j.ok ? j.data : []);
+        setSubsError(null);
+      })
+      .catch(() => {
+        setSubs([]);
+        setSubsError("Could not load subscribers. Check your connection and try again.");
+      });
     fetch("/api/admin/restock-alerts")
       .then((r) => r.json())
-      .then((j) => setAlerts(j.ok ? j.data : []))
-      .catch(() => setAlerts([]));
+      .then((j) => {
+        setAlerts(j.ok ? j.data : []);
+        setAlertsError(null);
+      })
+      .catch(() => {
+        setAlerts([]);
+        setAlertsError("Could not load restock alerts. Check your connection and try again.");
+      });
+  };
+
+  // Retry is a user event, so resetting loading/error state here is safe.
+  const retry = () => {
+    setSubs(null);
+    setAlerts(null);
+    setSubsError(null);
+    setAlertsError(null);
+    load();
   };
 
   useEffect(() => {
@@ -58,113 +82,204 @@ export default function AdminNewsletterPage() {
     }
   }
 
+  const filteredSubs = useMemo(
+    () =>
+      (subs ?? []).filter(
+        (s) => subFilter === "ALL" || (subFilter === "ACTIVE" ? s.subscribed : !s.subscribed)
+      ),
+    [subs, subFilter]
+  );
+
+  const counts = useMemo(() => {
+    const list = subs ?? [];
+    return {
+      ALL: list.length,
+      ACTIVE: list.filter((s) => s.subscribed).length,
+      UNSUBSCRIBED: list.filter((s) => !s.subscribed).length,
+    } as Partial<Record<SubFilter, number>>;
+  }, [subs]);
+
+  const stats = useMemo(() => {
+    const list = subs ?? [];
+    const alertList = alerts ?? [];
+    return {
+      total: list.length,
+      active: list.filter((s) => s.subscribed).length,
+      unsubscribed: list.filter((s) => !s.subscribed).length,
+      awaiting: alertList.filter((a) => !a.notifiedAt).length,
+    };
+  }, [subs, alerts]);
+
+  const subColumns: Column<Subscriber>[] = [
+    {
+      key: "email",
+      header: "Email",
+      sortValue: (s) => s.email,
+      searchValue: (s) => `${s.email} ${s.source}`,
+      cell: (s) => <span className="font-medium">{s.email}</span>,
+    },
+    {
+      key: "source",
+      header: "Source",
+      sortValue: (s) => s.source,
+      hideBelow: "sm",
+      cell: (s) => <span className="text-sm text-muted-foreground">{s.source}</span>,
+    },
+    {
+      key: "status",
+      header: "Status",
+      sortValue: (s) => (s.subscribed ? "ACTIVE" : "UNSUBSCRIBED"),
+      searchValue: (s) => (s.subscribed ? "active" : "unsubscribed"),
+      cell: (s) =>
+        s.subscribed ? (
+          <Badge className="bg-emerald-100 text-[11px] text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+            Active
+          </Badge>
+        ) : (
+          <Badge variant="secondary" className="text-[11px]">
+            Unsubscribed
+          </Badge>
+        ),
+    },
+    {
+      key: "subscribedAt",
+      header: "Subscribed",
+      sortValue: (s) => new Date(s.subscribedAt).getTime(),
+      cell: (s) => <span className="text-xs text-muted-foreground">{formatDateTime(s.subscribedAt)}</span>,
+    },
+  ];
+
+  const alertColumns: Column<RestockAlert>[] = [
+    {
+      key: "email",
+      header: "Email",
+      sortValue: (a) => a.email,
+      searchValue: (a) => `${a.email} ${a.product?.name ?? ""}`,
+      cell: (a) => <span className="font-medium">{a.email}</span>,
+    },
+    {
+      key: "product",
+      header: "Product",
+      sortValue: (a) => a.product?.name ?? "",
+      hideBelow: "sm",
+      cell: (a) => <span className="text-sm">{a.product?.name ?? "—"}</span>,
+    },
+    {
+      key: "requestedAt",
+      header: "Requested",
+      sortValue: (a) => new Date(a.requestedAt).getTime(),
+      hideBelow: "md",
+      cell: (a) => <span className="text-xs text-muted-foreground">{formatDateTime(a.requestedAt)}</span>,
+    },
+    {
+      key: "notifiedAt",
+      header: "Notified",
+      align: "right",
+      sortValue: (a) => (a.notifiedAt ? new Date(a.notifiedAt).getTime() : 0),
+      cell: (a) =>
+        a.notifiedAt ? (
+          <span className="inline-flex items-center gap-1 text-xs text-primary">
+            <Check className="h-3.5 w-3.5" /> {formatDateTime(a.notifiedAt)}
+          </span>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => markNotified(a.id)} className="rounded-full text-xs">
+            <BellRing className="h-3.5 w-3.5" /> Mark notified
+          </Button>
+        ),
+    },
+  ];
+
   return (
-    <div className="space-y-10">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="space-y-6">
+      <PageHeader
+        icon={Mail}
+        title="Newsletter"
+        subtitle="Everyone subscribed through the storefront footer form."
+        actions={
+          <Button asChild variant="outline" className="rounded-full">
+            <a href="/api/admin/newsletter/export">
+              <Download className="h-4 w-4" /> Export CSV
+            </a>
+          </Button>
+        }
+      />
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Total subscribers" value={stats.total} icon={Mail} />
+        <StatCard label="Active" value={stats.active} icon={UserCheck} accent="text-emerald-600" />
+        <StatCard label="Unsubscribed" value={stats.unsubscribed} icon={UserX} accent="text-rose-500" />
+        <StatCard label="Restock alerts waiting" value={stats.awaiting} icon={BellRing} accent="text-amber-600" />
+      </div>
+
+      {/* Subscribers */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</span>
+          <ChipRow
+            label="Subscriber status"
+            value={subFilter}
+            options={SUB_FILTERS}
+            onChange={setSubFilter}
+            counts={counts}
+          />
+        </div>
+
+        {subsError ? (
+          <ErrorState title="Couldn't load subscribers" message={subsError} onRetry={retry} />
+        ) : (
+          <AdvancedTable
+            columns={subColumns}
+            rows={subs === null ? null : filteredSubs}
+            getKey={(s) => s.id}
+            searchable
+            searchPlaceholder="Search email or source…"
+            initialSort={{ key: "subscribedAt", dir: "desc" }}
+            csvName="newsletter"
+            printTitle="Newsletter subscribers"
+            loading={subs === null}
+            emptyMessage={
+              <EmptyState
+                icon={Send}
+                title={subFilter === "ALL" ? "No subscribers yet." : `No ${subFilter.toLowerCase()} subscribers.`}
+                hint="Storefront footer sign-ups will appear here."
+              />
+            }
+          />
+        )}
+      </section>
+
+      {/* Back-in-stock alerts */}
+      <section className="space-y-4">
         <div>
-          <h1 className="font-serif text-3xl font-medium">Newsletter</h1>
+          <h2 className="font-serif text-2xl font-medium">Back-in-Stock Alerts</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Everyone subscribed through the storefront footer form.
+            Customers waiting for sold-out pieces to return. Mark rows once you've emailed them.
           </p>
         </div>
-        <Button asChild variant="outline" className="rounded-full">
-          <a href="/api/admin/newsletter/export">
-            <Download className="h-4 w-4" /> Export CSV
-          </a>
-        </Button>
-      </div>
-
-      {subs === null ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : subs.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border p-10 text-center">
-          <Send className="mx-auto h-8 w-8 text-muted-foreground/50" />
-          <p className="mt-3 text-sm text-muted-foreground">No subscribers yet.</p>
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Email</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Subscribed</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {subs.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="text-sm font-medium">{s.email}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{s.source}</TableCell>
-                  <TableCell className="text-sm">
-                    {s.subscribed ? (
-                      <span className="text-primary">Active</span>
-                    ) : (
-                      <span className="text-muted-foreground">Unsubscribed</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {formatDateTime(s.subscribedAt)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-
-      <div>
-        <h2 className="font-serif text-2xl font-medium">Back-in-Stock Alerts</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Customers waiting for sold-out pieces to return. Mark rows once you've emailed them.
-        </p>
-        {alerts.length === 0 ? (
-          <div className="mt-4 rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-            No restock alerts requested.
-          </div>
+        {alertsError ? (
+          <ErrorState title="Couldn't load restock alerts" message={alertsError} onRetry={retry} />
         ) : (
-          <div className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Requested</TableHead>
-                  <TableHead className="text-right">Notified</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {alerts.map((a) => (
-                  <TableRow key={a.id}>
-                    <TableCell className="text-sm font-medium">{a.email}</TableCell>
-                    <TableCell className="text-sm">{a.product?.name ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {formatDateTime(a.requestedAt)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {a.notifiedAt ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-primary">
-                          <Check className="h-3.5 w-3.5" /> {formatDateTime(a.notifiedAt)}
-                        </span>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => markNotified(a.id)}
-                          className="rounded-full text-xs"
-                        >
-                          <BellRing className="h-3.5 w-3.5" /> Mark notified
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <AdvancedTable
+            columns={alertColumns}
+            rows={alerts}
+            getKey={(a) => a.id}
+            searchable
+            searchPlaceholder="Search email or product…"
+            initialSort={{ key: "requestedAt", dir: "desc" }}
+            csvName="restock-alerts"
+            printTitle="Back-in-Stock alerts"
+            loading={alerts === null}
+            emptyMessage={
+              <EmptyState
+                icon={MailX}
+                title="No restock alerts requested."
+                hint="Customers can subscribe to alerts from any sold-out product page."
+              />
+            }
+          />
         )}
-      </div>
+      </section>
     </div>
   );
 }

@@ -2,6 +2,11 @@ import { notFound } from "next/navigation";
 import { apiAdminOrder } from "@/lib/server-api";
 import { formatINR, formatDateTime } from "@/lib/utils";
 import { OrderActions } from "@/components/stellora/admin-order-actions";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import {
+  CopyAddressButton,
+  PrintInvoiceButton,
+} from "@/components/stellora/advanced/print-invoice-button";
 
 export const dynamic = "force-dynamic";
 
@@ -19,17 +24,28 @@ export default async function AdminOrderDetailPage({
   }
   if (!order) notFound();
 
+  // Multi-line shipping address for the copy-to-clipboard island.
+  const shippingAddress = [
+    `${order.shipName} · ${order.shipPhone}`,
+    order.shipLine1 + (order.shipLine2 ? `, ${order.shipLine2}` : ""),
+    `${order.shipCity}, ${order.shipState} — ${order.shipPincode}`,
+    order.shipCountry,
+  ].join("\n");
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-serif text-3xl font-medium">{order.orderNumber}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {formatDateTime(order.createdAt)} · {order.user?.name ?? "—"} ({order.user?.email ?? ""}
-            {order.user?.phone ? ` · ${order.user?.phone}` : ""})
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title={order.orderNumber}
+        subtitle={`${formatDateTime(order.createdAt)} · ${order.user?.name ?? "—"} (${order.user?.email ?? ""}${
+          order.user?.phone ? ` · ${order.user?.phone}` : ""
+        })`}
+        actions={
+          <>
+            <CopyAddressButton address={shippingAddress} />
+            <PrintInvoiceButton />
+          </>
+        }
+      />
 
       <div className="grid gap-6 xl:grid-cols-[1fr_400px]">
         <div className="space-y-6">

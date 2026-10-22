@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Pencil, Trash2, Tags, Eye, EyeOff, Package } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,14 +15,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { AdvancedTable, type Column } from "@/components/stellora/advanced/data-table";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCard } from "@/components/stellora/advanced/stat-card";
+import { ChipRow, EmptyState } from "@/components/stellora/advanced/widgets";
 
 interface Category {
   id: string;
@@ -35,11 +31,17 @@ interface Category {
   _count: { products: number };
 }
 
+const STATUS_FILTERS = ["ALL", "ACTIVE", "HIDDEN"] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+const ACTIVE_BADGE = "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
+
 export default function AdminCategoriesPage() {
   const [cats, setCats] = useState<Category[] | null>(null);
   const [editing, setEditing] = useState<Category | null>(null);
   const [open, setOpen] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const load = () =>
     fetch("/api/admin/categories")
@@ -89,76 +91,198 @@ export default function AdminCategoriesPage() {
     }
   }
 
-  if (!cats) return <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>;
+  const list = useMemo(() => cats ?? [], [cats]);
+
+  const filtered = useMemo(
+    () =>
+      list.filter(
+        (c) =>
+          statusFilter === "ALL" ||
+          (statusFilter === "ACTIVE" ? c.isActive : !c.isActive)
+      ),
+    [list, statusFilter]
+  );
+
+  const stats = useMemo(() => {
+    const active = list.filter((c) => c.isActive).length;
+    return {
+      total: list.length,
+      active,
+      hidden: list.length - active,
+      products: list.reduce((n, c) => n + c._count.products, 0),
+    };
+  }, [list]);
+
+  const counts = useMemo<Partial<Record<StatusFilter, number>>>(
+    () => ({ ALL: stats.total, ACTIVE: stats.active, HIDDEN: stats.hidden }),
+    [stats]
+  );
+
+  const columns: Column<Category>[] = useMemo(
+    () => [
+      {
+        key: "name",
+        header: "Category",
+        sortValue: (c) => c.name,
+        searchValue: (c) => `${c.name} ${c.slug} ${c.description ?? ""}`,
+        cell: (c) => (
+          <span className="flex min-w-0 items-center gap-3">
+            {c.imageUrl ? (
+              <img src={c.imageUrl} alt="" className="h-9 w-9 shrink-0 rounded-md border border-border/60 object-cover" />
+            ) : (
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted">
+                <Tags className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              </span>
+            )}
+            <span className="min-w-0">
+              <span className="block truncate font-medium">{c.name}</span>
+              {c.description && (
+                <span className="block max-w-72 truncate text-xs text-muted-foreground">{c.description}</span>
+              )}
+            </span>
+          </span>
+        ),
+      },
+      {
+        key: "slug",
+        header: "Slug",
+        sortValue: (c) => c.slug,
+        searchValue: (c) => c.slug,
+        hideBelow: "md",
+        cell: (c) => <span className="text-sm text-muted-foreground">/{c.slug}</span>,
+      },
+      {
+        key: "products",
+        header: "Products",
+        align: "right",
+        sortValue: (c) => c._count.products,
+        cell: (c) => (
+          <Badge variant="secondary" className="tnum text-[11px]">
+            {c._count.products}
+          </Badge>
+        ),
+      },
+      {
+        key: "sortOrder",
+        header: "Order",
+        align: "right",
+        sortValue: (c) => c.sortOrder,
+        hideBelow: "sm",
+        cell: (c) => <span className="tnum text-sm text-muted-foreground">{c.sortOrder}</span>,
+      },
+      {
+        key: "status",
+        header: "Status",
+        sortValue: (c) => (c.isActive ? "Active" : "Hidden"),
+        searchValue: (c) => (c.isActive ? "active" : "hidden"),
+        cell: (c) => (
+          <Badge variant="secondary" className={`text-[11px] ${c.isActive ? ACTIVE_BADGE : ""}`}>
+            {c.isActive ? "Active" : "Hidden"}
+          </Badge>
+        ),
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        align: "right",
+        cell: (c) => (
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Edit"
+              onClick={() => {
+                setEditing(c);
+                setOpen(true);
+              }}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Delete"
+              disabled={c._count.products > 0}
+              title={c._count.products > 0 ? "Move or delete its products first" : "Delete category"}
+              onClick={() => remove(c.id)}
+            >
+              <Trash2 className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="font-serif text-3xl font-medium">Categories</h1>
-        <Button
-          className="rounded-full bg-primary hover:bg-primary/90"
-          onClick={() => {
-            setEditing(null);
-            setOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4" /> New category
-        </Button>
+      <PageHeader
+        icon={Tags}
+        title="Categories"
+        subtitle="Group products into storefront collections — ordering here controls the navigation order."
+        actions={
+          <Button
+            className="rounded-full bg-primary hover:bg-primary/90"
+            onClick={() => {
+              setEditing(null);
+              setOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" /> New category
+          </Button>
+        }
+      />
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Categories" value={stats.total} icon={Tags} />
+        <StatCard label="Active" value={stats.active} icon={Eye} accent="text-emerald-600" />
+        <StatCard label="Hidden" value={stats.hidden} icon={EyeOff} accent="text-amber-600" />
+        <StatCard label="Products covered" value={stats.products} icon={Package} />
       </div>
 
-      <div className="rounded-lg border border-border/70 bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Slug</TableHead>
-              <TableHead>Products</TableHead>
-              <TableHead>Order</TableHead>
-              <TableHead>Active</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {cats.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="font-medium">{c.name}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">/{c.slug}</TableCell>
-                <TableCell className="tnum text-sm">{c._count.products}</TableCell>
-                <TableCell className="tnum text-sm">{c.sortOrder}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary" className={c.isActive ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300" : ""}>
-                    {c.isActive ? "Active" : "Hidden"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Edit"
-                      onClick={() => {
-                        setEditing(c);
-                        setOpen(true);
-                      }}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Delete"
-                      disabled={c._count.products > 0}
-                      onClick={() => remove(c.id)}
-                    >
-                      <Trash2 className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="flex flex-wrap items-center gap-3">
+        <ChipRow
+          label="Category status"
+          value={statusFilter}
+          options={STATUS_FILTERS}
+          onChange={setStatusFilter}
+          counts={counts}
+        />
       </div>
+
+      <AdvancedTable
+        columns={columns}
+        rows={cats}
+        getKey={(c) => c.id}
+        searchable
+        searchPlaceholder="Search name, slug or description…"
+        initialSort={{ key: "sortOrder", dir: "asc" }}
+        csvName="categories"
+        printTitle="Categories"
+        loading={cats === null}
+        emptyMessage={
+          <EmptyState
+            icon={Tags}
+            title={list.length === 0 ? "No categories yet" : "No categories match this filter"}
+            hint="Categories group your products and power storefront navigation."
+            action={
+              <Button
+                size="sm"
+                className="rounded-full"
+                onClick={() => {
+                  setEditing(null);
+                  setOpen(true);
+                }}
+              >
+                <Plus className="h-3.5 w-3.5" /> New category
+              </Button>
+            }
+          />
+        }
+      />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

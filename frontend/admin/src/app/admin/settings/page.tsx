@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Settings2 } from "lucide-react";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
 import { PaymentGatewayCard } from "@/components/stellora/payment-gateway-card";
 
 interface Setting {
@@ -261,13 +263,11 @@ export default function AdminSettingsPage() {
     <div className="space-y-8">
       {/* Payment gateways live outside the generic settings form — they have
           their own dedicated (masked) API and save button. */}
-      <div>
-        <h1 className="font-serif text-3xl font-medium">Business Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          These values are shown to customers. Leave fields empty until the real details are
-          confirmed — nothing is invented for you.
-        </p>
-      </div>
+      <PageHeader
+        icon={Settings2}
+        title="Business Settings"
+        subtitle="These values are shown to customers. Leave fields empty until the real details are confirmed — nothing is invented for you."
+      />
 
       <PaymentGatewayCard />
 

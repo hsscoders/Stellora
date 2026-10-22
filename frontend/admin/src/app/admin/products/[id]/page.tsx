@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { apiAdminProduct, apiAdminCategories } from "@/lib/server-api";
 import { ProductForm } from "@/components/stellora/admin-product-form";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,10 @@ export default async function EditProductPage({
 
   return (
     <div className="space-y-6">
-      <h1 className="font-serif text-3xl font-medium">Edit Product</h1>
+      <PageHeader
+        title="Edit Product"
+        subtitle={`Editing “${product.name}” — changes go live as soon as you save.`}
+      />
       <ProductForm productId={product.id} initial={initial} />
     </div>
   );

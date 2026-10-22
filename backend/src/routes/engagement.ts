@@ -867,6 +867,87 @@ engagementRouter.get(
       return res.status(200).send(csv);
     }
 
+    if (entity === "coupons") {
+      const coupons = await db.coupon.findMany({ orderBy: { createdAt: "desc" }, take: 5000 });
+      const csv = toCsv(
+        ["code", "discountType", "value", "minSubtotal", "maxDiscount", "active", "startsAt", "endsAt", "usageLimit", "timesUsed"],
+        coupons.map((c) => [
+          c.code, c.discountType, Number(c.value), c.minSubtotal === null ? "" : Number(c.minSubtotal),
+          c.maxDiscount === null ? "" : Number(c.maxDiscount), c.isActive ? "yes" : "no",
+          c.startsAt ? new Date(c.startsAt).toISOString() : "", c.endsAt ? new Date(c.endsAt).toISOString() : "",
+          c.usageLimit ?? "", c.timesUsed,
+        ])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=stellora-coupons.csv");
+      return res.status(200).send(csv);
+    }
+
+    if (entity === "inventory") {
+      const variants = await db.productVariant.findMany({
+        orderBy: [{ stock: "asc" }],
+        take: 10000,
+        include: { product: { select: { name: true, slug: true, status: true } } },
+      });
+      const csv = toCsv(
+        ["product", "variant", "sku", "price", "stock", "lowStockThreshold", "stockValue", "active", "productStatus"],
+        variants.map((v) => [
+          v.product?.name ?? "", v.name ?? "", v.sku ?? "", Number(v.price), v.stock,
+          v.lowStockThreshold, Math.round(Number(v.price) * v.stock * 100) / 100, v.isActive ? "yes" : "no", v.product?.status ?? "",
+        ])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=stellora-inventory.csv");
+      return res.status(200).send(csv);
+    }
+
+    if (entity === "newsletter") {
+      const subs = await db.newsletterSubscriber.findMany({ orderBy: { createdAt: "desc" }, take: 10000 });
+      const csv = toCsv(
+        ["email", "source", "subscribedAt", "unsubscribedAt"],
+        subs.map((s) => [s.email, s.source, new Date(s.createdAt).toISOString(), s.unsubscribedAt ? new Date(s.unsubscribedAt).toISOString() : ""])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=stellora-newsletter.csv");
+      return res.status(200).send(csv);
+    }
+
+    if (entity === "reviews") {
+      const reviews = await db.review.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 10000,
+        include: { user: { select: { email: true } }, product: { select: { name: true } } },
+      });
+      const csv = toCsv(
+        ["product", "author", "email", "rating", "title", "body", "status", "verifiedPurchase", "createdAt"],
+        reviews.map((r) => [
+          r.product?.name ?? "", r.authorName, r.user?.email ?? "", r.rating, r.title, r.body, r.status, r.isVerifiedPurchase ? "yes" : "no", new Date(r.createdAt).toISOString(),
+        ])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=stellora-reviews.csv");
+      return res.status(200).send(csv);
+    }
+
+    if (entity === "audit-logs") {
+      const logs = await db.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 10000 });
+      const csv = toCsv(
+        ["when", "actor", "action", "entityType", "entityId", "ip"],
+        logs.map((l) => [new Date(l.createdAt).toISOString(), l.actorEmail ?? "", l.action, l.entityType, l.entityId ?? "", l.ip ?? ""])
+      );
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=stellora-audit-logs.csv");
+      return res.status(200).send(csv);
+    }
+
+    if (entity === "newsletter-subscribers") {
+      const subs = await db.newsletterSubscriber.findMany({ orderBy: { createdAt: "desc" }, take: 10000 });
+      const csv = toCsv(["email", "subscribedAt"], subs.map((s) => [s.email, new Date(s.createdAt).toISOString()]));
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=stellora-subscribers.csv");
+      return res.status(200).send(csv);
+    }
+
     throw new HttpError("NOT_FOUND", "Unknown export entity.", 404);
   })
 );

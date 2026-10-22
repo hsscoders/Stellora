@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus, Pencil, Archive, Search, Download, X, Loader2,
-  CheckCircle2, FileEdit, ArchiveRestore, ChevronDown, Upload,
+  CheckCircle2, FileEdit, ArchiveRestore, ChevronDown, Upload, Copy, Package, CircleDot, TriangleAlert, PackageX,
 } from "lucide-react";
 import { toast } from "@/components/ui/notify";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCard } from "@/components/stellora/advanced/stat-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -155,6 +157,56 @@ export default function AdminProductsPage() {
     }
   }
 
+  async function duplicateProduct(id: string) {
+    try {
+      const detail = await fetch(`/api/admin/products/${id}`).then((r) => r.json());
+      if (!detail.ok) throw new Error(detail.error?.message ?? "Could not load product");
+      const d = detail.data;
+      const suffix = Date.now().toString(36).slice(-4);
+      const body = {
+        name: `${d.name} (Copy)`,
+        slug: `${d.slug}-copy-${suffix}`.slice(0, 140),
+        categoryId: d.categoryId,
+        shortDescription: d.shortDescription || `${d.name} (Copy)`,
+        description: d.description ?? "",
+        materials: d.materials ?? "",
+        careInstructions: d.careInstructions ?? "",
+        status: "DRAFT",
+        isFeatured: false,
+        isNewArrival: false,
+        isBestSeller: false,
+        isTrending: false,
+        images: (d.images ?? []).slice(0, 8).map((im: { url: string; alt?: string | null; sortOrder?: number }) => ({
+          url: im.url,
+          alt: im.alt ?? undefined,
+          sortOrder: im.sortOrder ?? 0,
+        })),
+        variants: (d.variants ?? []).slice(0, 20).map((v: { name: string; sku: string; price: number; compareAtPrice: number | null; stock: number; lowStockThreshold: number; isActive: boolean }) => ({
+          name: v.name,
+          sku: `${v.sku}-C${suffix}`.slice(0, 40),
+          price: v.price,
+          compareAtPrice: v.compareAtPrice,
+          stock: v.stock,
+          lowStockThreshold: v.lowStockThreshold,
+          isActive: v.isActive,
+        })),
+      };
+      const created = await fetch("/api/admin/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+      if (created.ok) {
+        toast.success("Duplicated as DRAFT — review and activate when ready");
+        load();
+      } else {
+        toast.error(created.error?.message ?? "Duplicate failed");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Duplicate failed");
+    }
+  }
+
   async function importCsv(file: File) {
     if (importBusy) return;
     setImportBusy(true);
@@ -188,40 +240,64 @@ export default function AdminProductsPage() {
     return "";
   };
 
+  const stats = useMemo(() => {
+    const list = products ?? [];
+    const stockOf = (p: AdminProduct) => p.variants.reduce((n, v) => n + (v.isActive ? v.stock : 0), 0);
+    const thresholdOf = (p: AdminProduct) => Math.max(...p.variants.filter((v) => v.isActive).map((v) => v.lowStockThreshold), 0);
+    return {
+      total: list.length,
+      active: list.filter((p) => p.status === "ACTIVE").length,
+      low: list.filter((p) => stockOf(p) > 0 && thresholdOf(p) > 0 && stockOf(p) <= thresholdOf(p)).length,
+      out: list.filter((p) => stockOf(p) === 0).length,
+    };
+  }, [products]);
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-3xl font-medium">Products</h1>
-        <div className="flex items-center gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void importCsv(f);
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-full"
-            disabled={importBusy}
-            onClick={() => fileRef.current?.click()}
-          >
-            {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            Import CSV
-          </Button>
-          <a href="/api/admin/export/products" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
-            <Download className="h-4 w-4" /> Export CSV
-          </a>
-          <Button asChild className="rounded-full bg-primary hover:bg-primary/90">
-            <Link href="/admin/products/new">
-              <Plus className="h-4 w-4" /> New product
-            </Link>
-          </Button>
-        </div>
+      <PageHeader
+        icon={Package}
+        title="Products"
+        subtitle="Catalog of every product and variant — search, filter, bulk-edit, import and duplicate."
+        actions={
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void importCsv(f);
+              }}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              disabled={importBusy}
+              onClick={() => fileRef.current?.click()}
+            >
+              {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              Import CSV
+            </Button>
+            <a href="/api/admin/export/products" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
+              <Download className="h-4 w-4" /> Export CSV
+            </a>
+            <Button asChild className="rounded-full bg-primary hover:bg-primary/90">
+              <Link href="/admin/products/new">
+                <Plus className="h-4 w-4" /> New product
+              </Link>
+            </Button>
+          </>
+        }
+      />
+
+      {/* Catalog health stat cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Products in view" value={stats.total} icon={Package} />
+        <StatCard label="Active" value={stats.active} icon={CircleDot} accent="text-emerald-600" />
+        <StatCard label="Low stock" value={stats.low} icon={TriangleAlert} accent="text-amber-600" />
+        <StatCard label="Out of stock" value={stats.out} icon={PackageX} accent="text-rose-500" />
       </div>
 
       {importResult && (
@@ -401,6 +477,15 @@ export default function AdminProductsPage() {
                             <Link href={`/admin/products/${p.id}`}>
                               <Pencil className="h-4 w-4" />
                             </Link>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Duplicate ${p.name}`}
+                            title="Duplicate as draft"
+                            onClick={() => void duplicateProduct(p.id)}
+                          >
+                            <Copy className="h-4 w-4 text-muted-foreground" />
                           </Button>
                           <AlertDialog>
                             <AlertDialogTrigger asChild>

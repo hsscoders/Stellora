@@ -1,21 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, Plus, ShieldAlert, ShieldCheck, Users } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { AdvancedTable, type Column } from "@/components/stellora/advanced/data-table";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCard } from "@/components/stellora/advanced/stat-card";
 import { formatDate } from "@/lib/utils";
 
 interface AdminUser {
@@ -77,70 +72,119 @@ export default function AdminUsersPage() {
     }
   }
 
-  if (!rows) return <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>;
+  const stats = useMemo(() => {
+    const list = rows ?? [];
+    return {
+      total: list.length,
+      admins: list.filter((u) => u.role === "ADMIN").length,
+      staff: list.filter((u) => u.role !== "ADMIN").length,
+      active: list.filter((u) => u.isActive).length,
+    };
+  }, [rows]);
+
+  const columns: Column<AdminUser>[] = useMemo(
+    () => [
+      {
+        key: "name",
+        header: "Name",
+        sortValue: (u) => u.name,
+        searchValue: (u) => `${u.name} ${u.email}`,
+        cell: (u) => <span className="block max-w-56 truncate font-medium">{u.name}</span>,
+      },
+      {
+        key: "email",
+        header: "Email",
+        sortValue: (u) => u.email,
+        searchValue: (u) => u.email,
+        hideBelow: "sm",
+        cell: (u) => <span className="block max-w-64 truncate text-sm text-muted-foreground">{u.email}</span>,
+      },
+      {
+        key: "role",
+        header: "Role",
+        sortValue: (u) => u.role,
+        searchValue: (u) => u.role,
+        cell: (u) => (
+          <Badge variant="secondary" className="gap-1">
+            {u.role === "ADMIN" ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
+            {u.role}
+          </Badge>
+        ),
+      },
+      {
+        key: "joined",
+        header: "Joined",
+        sortValue: (u) => new Date(u.createdAt).getTime(),
+        hideBelow: "md",
+        cell: (u) => <span className="whitespace-nowrap text-sm text-muted-foreground">{formatDate(u.createdAt)}</span>,
+      },
+      {
+        key: "status",
+        header: "Status",
+        sortValue: (u) => (u.isActive ? 1 : 0),
+        searchValue: (u) => (u.isActive ? "active" : "deactivated"),
+        cell: (u) => (
+          <Badge
+            variant="secondary"
+            className={
+              u.isActive
+                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                : "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300"
+            }
+          >
+            {u.isActive ? "Active" : "Deactivated"}
+          </Badge>
+        ),
+      },
+      {
+        key: "actions",
+        header: "Actions",
+        align: "right",
+        cell: (u) =>
+          u.email !== currentEmail ? (
+            <Button variant="outline" size="sm" onClick={() => setActive(u.id, !u.isActive)}>
+              {u.isActive ? "Deactivate" : "Activate"}
+            </Button>
+          ) : (
+            <span className="text-xs text-muted-foreground">You</span>
+          ),
+      },
+    ],
+    [currentEmail]
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-serif text-3xl font-medium">Admin Users</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            People with panel access. Least privilege applies: only promote people who need it.
-          </p>
-        </div>
-        <Button className="rounded-full bg-primary hover:bg-primary/90" onClick={() => setOpen(true)}>
-          <Plus className="h-4 w-4" /> New admin
-        </Button>
+      <PageHeader
+        icon={Users}
+        title="Admin Users"
+        subtitle="People with panel access. Least privilege applies: only promote people who need it."
+        actions={
+          <Button className="rounded-full bg-primary hover:bg-primary/90" onClick={() => setOpen(true)}>
+            <Plus className="h-4 w-4" /> New admin
+          </Button>
+        }
+      />
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Admin accounts" value={stats.total} icon={Users} />
+        <StatCard label="Panel admins" value={stats.admins} icon={ShieldCheck} accent="text-emerald-600" />
+        <StatCard label="Storefront only" value={stats.staff} icon={ShieldAlert} accent="text-amber-600" />
+        <StatCard label="Active" value={stats.active} icon={Activity} accent="text-sky-600" />
       </div>
 
-      <div className="rounded-lg border border-border/70 bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Joined</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((u) => (
-              <TableRow key={u.id}>
-                <TableCell className="font-medium">{u.name}</TableCell>
-                <TableCell className="text-sm">{u.email}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary" className="gap-1">
-                    {u.role === "ADMIN" ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
-                    {u.role}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-sm">{formatDate(u.createdAt)}</TableCell>
-                <TableCell>
-                  <Badge
-                    variant="secondary"
-                    className={
-                      u.isActive
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                        : "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300"
-                    }
-                  >
-                    {u.isActive ? "Active" : "Deactivated"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  {u.email !== currentEmail && (
-                    <Button variant="outline" size="sm" onClick={() => setActive(u.id, !u.isActive)}>
-                      {u.isActive ? "Deactivate" : "Activate"}
-                    </Button>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <AdvancedTable
+        columns={columns}
+        rows={rows}
+        getKey={(u) => u.id}
+        searchable
+        searchPlaceholder="Search name, email or role…"
+        initialSort={{ key: "name", dir: "asc" }}
+        csvName="admin-users"
+        printTitle="Admin users"
+        emptyMessage="No admin users yet."
+      />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

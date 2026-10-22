@@ -91,6 +91,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
+import { ColumnChart } from "@/components/stellora/advanced/charts";
 
 /* =============================== API shapes =============================== */
 
@@ -181,6 +182,7 @@ interface TodayStats {
   cashSales: number;
   nonCashSales: number;
   itemsSold: number;
+  hourly?: { hour: number; revenue: number; orders: number }[];
 }
 
 interface PosOrderItem {
@@ -2932,6 +2934,26 @@ export default function AdminPosPage() {
             <SheetDescription>Last 8 bills — reprint a receipt or copy its number.</SheetDescription>
           </SheetHeader>
           <div className="px-4 pb-6">
+            {/* Day pulse — revenue by hour (IST business day) */}
+            {today?.hourly && today.hourly.some((h) => h.revenue > 0) && (
+              <div className="mb-4 rounded-lg border border-border p-3">
+                <p className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                  <span>Day pulse · revenue by hour</span>
+                  <span className="tnum text-[10px] font-semibold text-primary">{formatINR(today.revenue)}</span>
+                </p>
+                <ColumnChart
+                  data={today.hourly.filter((h) => h.hour >= 7 && h.hour <= 23).map((h) => ({ label: `${h.hour > 12 ? h.hour - 12 : h.hour || 12}${h.hour >= 12 ? "p" : "a"}`, value: h.revenue }))}
+                  height={72}
+                  format="inr"
+                  accent="hsl(var(--primary))"
+                />
+                <p className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground tnum">
+                  <span>Cash {formatINR(today.cashSales)}</span>
+                  <span>Other {formatINR(today.nonCashSales)}</span>
+                  <span>POS bills {today.posOrders}</span>
+                </p>
+              </div>
+            )}
             {recentBusy ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (

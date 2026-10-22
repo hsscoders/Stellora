@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { SectionCard } from "@/components/stellora/advanced/widgets";
 import { Sparkles, X, Search, Globe, MapPin, Share2, ShieldCheck, Settings2 } from "lucide-react";
 
 /* ---------- Types (mirror backend SeoConfig) ---------- */
@@ -250,24 +251,14 @@ export default function AdminSeoPage() {
 
   return (
     <form onSubmit={save} className="space-y-8">
-      <div>
-        <h1 className="font-serif text-3xl font-medium">SEO &amp; Rankings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Full control of how the website appears on Google — titles, descriptions, city
-          keywords, business details and search-engine verification. Changes go live
-          immediately after saving.
-        </p>
-      </div>
+      <PageHeader
+        icon={Search}
+        title="SEO & Rankings"
+        subtitle="Full control of how the website appears on Google — titles, descriptions, city keywords, business details and search-engine verification. Changes go live immediately after saving."
+      />
 
       {/* ---------- Google preview ---------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 font-serif text-xl">
-            <Search className="h-5 w-5 text-primary" aria-hidden />
-            Google search preview
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      <SectionCard title="Google search preview" icon={Search}>
           <div className="mx-auto max-w-2xl rounded-xl bg-white p-4 shadow-sm dark:bg-muted/40">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary">
@@ -290,18 +281,10 @@ export default function AdminSeoPage() {
               Description: {descLen}/165 chars {descLen > 165 ? "— may get cut" : ""}
             </span>
           </div>
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* ---------- General meta ---------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 font-serif text-xl">
-            <Globe className="h-5 w-5 text-primary" aria-hidden />
-            Site title &amp; description
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+      <SectionCard title="Site title & description" icon={Globe} bodyClassName="grid gap-4 sm:grid-cols-2">
           <Field id="siteName" label="Site name" hint="Used across tags and structured data">
             <Input id="siteName" value={seo.siteName} onChange={(e) => set("siteName", e.target.value)} maxLength={80} />
           </Field>
@@ -340,18 +323,10 @@ export default function AdminSeoPage() {
               Builds phrases like “best jewellery shop in Kichha”, “artificial jewellery Haldwani” for every city you list below.
             </p>
           </div>
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* ---------- Local business ---------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 font-serif text-xl">
-            <MapPin className="h-5 w-5 text-primary" aria-hidden />
-            Local business (Google Business style)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+      <SectionCard title="Local business (Google Business style)" icon={MapPin} bodyClassName="grid gap-4 sm:grid-cols-2">
           <Field id="businessName" label="Business name">
             <Input id="businessName" value={seo.businessName} onChange={(e) => set("businessName", e.target.value)} maxLength={120} />
           </Field>
@@ -388,18 +363,10 @@ export default function AdminSeoPage() {
           <Field id="citiesServed" label="Cities / areas served" wide hint="These power “near <city>” ranking signals and the keyword generator">
             <ChipList values={seo.citiesServed} onChange={(v) => set("citiesServed", v)} placeholder="e.g. Rudarpur — press Enter" ariaLabel="Add city" />
           </Field>
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* ---------- Social sharing ---------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 font-serif text-xl">
-            <Share2 className="h-5 w-5 text-primary" aria-hidden />
-            Social sharing (WhatsApp / Facebook / Instagram previews)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+      <SectionCard title="Social sharing (WhatsApp / Facebook / Instagram previews)" icon={Share2} bodyClassName="grid gap-4 sm:grid-cols-2">
           <Field id="ogTitle" label="Share title" wide>
             <Input id="ogTitle" value={seo.ogTitle} onChange={(e) => set("ogTitle", e.target.value)} maxLength={200} />
           </Field>
@@ -412,18 +379,10 @@ export default function AdminSeoPage() {
           <Field id="twitterHandle" label="X / Twitter handle" hint="Optional, with @">
             <Input id="twitterHandle" value={seo.twitterHandle} onChange={(e) => set("twitterHandle", e.target.value)} maxLength={40} placeholder="@yourstore" />
           </Field>
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* ---------- Verification & analytics ---------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 font-serif text-xl">
-            <ShieldCheck className="h-5 w-5 text-primary" aria-hidden />
-            Search console &amp; analytics
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+      <SectionCard title="Search console & analytics" icon={ShieldCheck} bodyClassName="grid gap-4 sm:grid-cols-2">
           <Field
             id="googleSiteVerification"
             label="Google Search Console verification"
@@ -438,18 +397,10 @@ export default function AdminSeoPage() {
           <Field id="gaMeasurementId" label="Google Analytics 4 ID" wide hint='Starts with "G-" — tracks visitors and the searches that bring them'>
             <Input id="gaMeasurementId" value={seo.gaMeasurementId} onChange={(e) => set("gaMeasurementId", e.target.value)} maxLength={40} placeholder="G-XXXXXXXXXX" />
           </Field>
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       {/* ---------- Technical ---------- */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 font-serif text-xl">
-            <Settings2 className="h-5 w-5 text-primary" aria-hidden />
-            Technical SEO
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
+      <SectionCard title="Technical SEO" icon={Settings2} bodyClassName="space-y-5">
           <Field
             id="canonicalBaseUrl"
             label="Canonical site URL"
@@ -482,8 +433,7 @@ export default function AdminSeoPage() {
               <Switch id="schemaEnabled" checked={seo.schemaEnabled} onCheckedChange={(v) => set("schemaEnabled", v)} />
             </div>
           </div>
-        </CardContent>
-      </Card>
+      </SectionCard>
 
       <div className="sticky bottom-20 z-10 flex justify-end lg:bottom-6">
         <Button type="submit" disabled={busy} size="lg" className="min-h-12 shadow-lg">

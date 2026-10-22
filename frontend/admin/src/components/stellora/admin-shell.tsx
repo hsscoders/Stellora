@@ -38,12 +38,14 @@ import {
   AlertTriangle,
   Barcode,
   TrendingUp,
+  Command,
   type LucideIcon,
 } from "lucide-react";
 import { formatINR } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ThemeToggle } from "@/components/stellora/theme-toggle";
 import { RealtimeProvider, useRtBus, LiveRefresher } from "@/components/stellora/realtime";
+import { CommandPalette } from "@/components/stellora/advanced/command-palette";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; isNew?: boolean };
 type NavSection = { section: string; items: NavItem[] };
@@ -932,6 +934,16 @@ export function AdminShell({
           <div className="hidden min-w-0 flex-1 lg:flex lg:max-w-md">
             <GlobalSearch />
           </div>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }))}
+            aria-label="Open command palette"
+            title="Command palette — Ctrl+K"
+            className="hidden h-9 shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-[11px] font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground md:inline-flex lg:hidden xl:inline-flex"
+          >
+            <Command className="h-3.5 w-3.5" aria-hidden />
+            K
+          </button>
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <button
               type="button"
@@ -970,6 +982,8 @@ export function AdminShell({
           {children}
         </main>
       </div>
+
+      <CommandPalette />
 
       {/* ---------------- Mobile slide drawer ---------------- */}
       {drawerOpen && (

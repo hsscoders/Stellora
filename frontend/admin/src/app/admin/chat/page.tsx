@@ -14,6 +14,7 @@ import { cn, formatDateTime } from "@/lib/utils";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
 import { useRealtime, useRealtimeEvent } from "@/components/stellora/realtime";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
 
 /**
  * Stellora Live Chat — the shop owner's realtime customer conversations.
@@ -280,17 +281,19 @@ export default function AdminChatPage() {
     <div className="flex h-[calc(100dvh-11rem)] min-h-[520px] flex-col lg:h-[calc(100dvh-9rem)]">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
-        <div>
-          <h1 className="font-serif text-2xl font-medium tracking-tight">Live Chat</h1>
-          <p className="text-sm text-muted-foreground">
-            Real-time customer conversations — powered by Socket.IO.
-            {totalUnread > 0 && (
-              <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
-                {totalUnread} unread
-              </span>
-            )}
-          </p>
-        </div>
+        <PageHeader
+          title="Live Chat"
+          subtitle={
+            <span>
+              Real-time customer conversations — powered by Socket.IO.
+              {totalUnread > 0 && (
+                <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+                  {totalUnread} unread
+                </span>
+              )}
+            </span>
+          }
+        />
         <div className="flex rounded-lg border border-border bg-card p-0.5">
           {(["OPEN", "CLOSED"] as StatusFilter[]).map((f) => (
             <button

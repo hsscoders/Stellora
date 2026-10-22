@@ -1,18 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Search, Download } from "lucide-react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { ShoppingCart, Clock3, CheckCircle2, IndianRupee, Download, XCircle } from "lucide-react";
+import { AdvancedTable, type Column } from "@/components/stellora/advanced/data-table";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCard } from "@/components/stellora/advanced/stat-card";
+import { ChipRow, DateRangeChips, inPreset, type DatePreset } from "@/components/stellora/advanced/widgets";
 import { formatINR, formatDate } from "@/lib/utils";
 
 interface OrderRow {
@@ -39,45 +35,47 @@ const STATUS_STYLE: Record<string, string> = {
 const ORDER_STATUSES = ["ALL", "PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
 const PAYMENT_STATUSES = ["ALL", "PENDING", "PAID", "REFUNDED", "FAILED"] as const;
 const SOURCES = ["ALL", "ONLINE", "POS"] as const;
+const DATE_PRESETS = ["ALL", "TODAY", "7D", "30D", "90D"] as const;
 
-type ChipProps<T extends string> = { value: T; options: readonly T[]; onChange: (v: T) => void; label: string };
-
-function ChipRow<T extends string>({ value, options, onChange, label }: ChipProps<T>) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={label}>
-      {options.map((s) => (
-        <button
-          key={s}
-          onClick={() => onChange(s)}
-          aria-pressed={value === s}
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-            value === s ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
-          }`}
-        >
-          {s === "ALL" ? "All" : s}
-        </button>
-      ))}
-    </div>
-  );
+function presetStart(preset: DatePreset): Date | null {
+  const now = new Date();
+  switch (preset) {
+    case "TODAY":
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    case "7D":
+      return new Date(now.getTime() - 7 * 86400000);
+    case "30D":
+      return new Date(now.getTime() - 30 * 86400000);
+    case "90D":
+      return new Date(now.getTime() - 90 * 86400000);
+    default:
+      return null;
+  }
 }
 
 export default function AdminOrdersPage() {
+  const router = useRouter();
   const [orders, setOrders] = useState<OrderRow[] | null>(null);
-  const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<(typeof ORDER_STATUSES)[number]>("ALL");
   const [payFilter, setPayFilter] = useState<(typeof PAYMENT_STATUSES)[number]>("ALL");
   const [sourceFilter, setSourceFilter] = useState<(typeof SOURCES)[number]>("ALL");
+  const [dateFilter, setDateFilter] = useState<DatePreset>("ALL");
 
   // Deep-link support (e.g. notifications → /admin/orders?status=PENDING)
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
-      const s = new URLSearchParams(window.location.search).get("status");
+      const sp = new URLSearchParams(window.location.search);
+      const s = sp.get("status");
       if (s && (ORDER_STATUSES as readonly string[]).includes(s)) {
         setStatusFilter(s as (typeof ORDER_STATUSES)[number]);
       }
-      const pay = new URLSearchParams(window.location.search).get("payment");
+      const pay = sp.get("payment");
       if (pay && (PAYMENT_STATUSES as readonly string[]).includes(pay)) {
         setPayFilter(pay as (typeof PAYMENT_STATUSES)[number]);
+      }
+      const src = sp.get("source");
+      if (src && (SOURCES as readonly string[]).includes(src)) {
+        setSourceFilter(src as (typeof SOURCES)[number]);
       }
     });
     return () => cancelAnimationFrame(raf);
@@ -97,120 +95,150 @@ export default function AdminOrdersPage() {
           (statusFilter === "ALL" || o.status === statusFilter) &&
           (payFilter === "ALL" || (o.paymentStatus ?? "").toUpperCase() === payFilter) &&
           (sourceFilter === "ALL" || (o.source ?? "ONLINE") === sourceFilter) &&
-          (!q ||
-            o.orderNumber.toLowerCase().includes(q.toLowerCase()) ||
-            (o.user?.email ?? "").toLowerCase().includes(q.toLowerCase()) ||
-            (o.user?.name ?? "walk-in").toLowerCase().includes(q.toLowerCase()))
-      ),
-    [orders, statusFilter, payFilter, sourceFilter, q]
+          inPreset(o.createdAt, dateFilter)
+      ) ?? [],
+    [orders, statusFilter, payFilter, sourceFilter, dateFilter]
   );
 
-  const summary = useMemo(() => {
-    if (!filtered) return null;
-    const revenue = filtered
-      .filter((o) => o.status !== "CANCELLED")
-      .reduce((n, o) => n + Number(o.grandTotal ?? 0), 0);
-    return { count: filtered.length, revenue };
+  const stats = useMemo(() => {
+    const revenue = filtered.filter((o) => o.status !== "CANCELLED").reduce((n, o) => n + Number(o.grandTotal ?? 0), 0);
+    const pending = filtered.filter((o) => ["PENDING", "CONFIRMED", "PROCESSING"].includes(o.status)).length;
+    const delivered = filtered.filter((o) => o.status === "DELIVERED").length;
+    const cancelled = filtered.filter((o) => o.status === "CANCELLED").length;
+    return { count: filtered.length, revenue, pending, delivered, cancelled };
   }, [filtered]);
+
+  const columns: Column<OrderRow>[] = useMemo(
+    () => [
+      {
+        key: "orderNumber",
+        header: "Order",
+        sortValue: (o) => o.orderNumber,
+        searchValue: (o) => `${o.orderNumber}`,
+        cell: (o) => (
+          <span className="min-w-0">
+            <Link href={`/admin/orders/${o.id}`} className="block truncate font-medium hover:text-primary" onClick={(e) => e.stopPropagation()}>
+              {o.orderNumber}
+            </Link>
+            <span className="block text-xs text-muted-foreground">{formatDate(o.createdAt)}</span>
+          </span>
+        ),
+      },
+      {
+        key: "customer",
+        header: "Customer",
+        sortValue: (o) => o.user?.name ?? "walk-in",
+        searchValue: (o) => `${o.user?.name ?? "walk-in"} ${o.user?.email ?? ""}`,
+        hideBelow: "md",
+        cell: (o) => (
+          <span className="block max-w-48 truncate text-sm">
+            {o.user?.name ?? "Walk-in customer"}
+            <span className="block truncate text-xs text-muted-foreground">{o.user?.email ?? "—"}</span>
+          </span>
+        ),
+      },
+      {
+        key: "source",
+        header: "Channel",
+        sortValue: (o) => o.source ?? "ONLINE",
+        hideBelow: "lg",
+        cell: (o) => (
+          <Badge variant="outline" className="text-[11px]">
+            {(o.source ?? "ONLINE") === "POS" ? "In-store" : "Online"}
+          </Badge>
+        ),
+      },
+      {
+        key: "status",
+        header: "Status",
+        sortValue: (o) => o.status,
+        searchValue: (o) => o.status,
+        cell: (o) => (
+          <Badge className={`text-[11px] ${STATUS_STYLE[o.status] ?? ""}`}>{o.status}</Badge>
+        ),
+      },
+      {
+        key: "paymentStatus",
+        header: "Payment",
+        sortValue: (o) => o.paymentStatus ?? "",
+        hideBelow: "sm",
+        cell: (o) => (
+          <Badge variant="secondary" className="text-[11px]">
+            {(o.paymentStatus ?? "PENDING").toUpperCase()}
+          </Badge>
+        ),
+      },
+      {
+        key: "grandTotal",
+        header: "Total",
+        align: "right",
+        sortValue: (o) => Number(o.grandTotal ?? 0),
+        cell: (o) => <span className="font-medium tnum">{formatINR(o.grandTotal)}</span>,
+      },
+    ],
+    []
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-3xl font-medium">Orders</h1>
-        <a href="/api/admin/export/orders" className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary">
-          <Download className="h-4 w-4" /> Export CSV
-        </a>
+      <PageHeader
+        icon={ShoppingCart}
+        title="Orders"
+        subtitle="Every online and in-store order, searchable, filterable and exportable."
+        actions={
+          <a
+            href="/api/admin/export/orders"
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm transition hover:border-primary hover:text-primary"
+          >
+            <Download className="h-4 w-4" /> Export CSV
+          </a>
+        }
+      />
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+        <StatCard label="Orders in view" value={stats.count} icon={ShoppingCart} />
+        <StatCard label="Revenue (excl. cancelled)" value={formatINR(stats.revenue)} icon={IndianRupee} />
+        <StatCard label="Awaiting action" value={stats.pending} icon={Clock3} accent="text-amber-600" />
+        <StatCard label="Delivered" value={stats.delivered} icon={CheckCircle2} accent="text-emerald-600" />
+        <StatCard label="Cancelled" value={stats.cancelled} icon={XCircle} accent="text-rose-500" invertDelta />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative max-w-xs min-w-52 flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search order no. or customer…" className="pl-9" />
-        </div>
         <ChipRow label="Order status" value={statusFilter} options={ORDER_STATUSES} onChange={setStatusFilter} />
       </div>
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Payment</span>
-          <ChipRow label="Payment status" value={payFilter} options={PAYMENT_STATUSES} onChange={setPayFilter} />
+          <ChipRow label="Payment status" value={payFilter} options={PAYMENT_STATUSES} onChange={setPayFilter} size="sm" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Channel</span>
-          <ChipRow label="Sales channel" value={sourceFilter} options={SOURCES} onChange={setSourceFilter} />
+          <ChipRow label="Sales channel" value={sourceFilter} options={SOURCES} onChange={setSourceFilter} size="sm" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Period</span>
+          <DateRangeChips value={dateFilter} onChange={setDateFilter} />
         </div>
       </div>
 
-      {orders === null ? (
-        <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>
-      ) : (
-        <>
-          {summary && (
-            <div className="flex flex-wrap gap-2 text-sm">
-              <span className="rounded-full border border-border bg-card px-3 py-1 tnum">
-                {summary.count} order{summary.count === 1 ? "" : "s"}
-              </span>
-              <span className="rounded-full border border-border bg-card px-3 py-1 tnum">
-                Revenue (excl. cancelled): <span className="font-semibold">{formatINR(summary.revenue)}</span>
-              </span>
-            </div>
-          )}
-
-          <div className="rounded-lg border border-border/70 bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Order</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Channel</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered?.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell>
-                      <Link href={`/admin/orders/${o.id}`} className="font-medium hover:text-primary">
-                        {o.orderNumber}
-                      </Link>
-                      <p className="text-xs text-muted-foreground">{formatDate(o.createdAt)}</p>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {o.user?.name ?? "Walk-in customer"}
-                      <p className="text-xs text-muted-foreground">{o.user?.email ?? "—"}</p>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {(o.source ?? "ONLINE") === "POS" ? "In-store" : "Online"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={`text-xs ${STATUS_STYLE[o.status] ?? ""}`}>{o.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="text-xs">
-                        {(o.paymentStatus ?? "PENDING").toUpperCase()}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium tnum">
-                      {formatINR(o.grandTotal)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {filtered?.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                      No orders match.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </>
-      )}
+      <AdvancedTable
+        columns={columns}
+        rows={orders}
+        getKey={(o) => o.id}
+        searchable
+        searchPlaceholder="Search order no. or customer…"
+        initialSort={{ key: "orderNumber", dir: "desc" }}
+        selectable
+        csvName="orders"
+        printTitle="Orders"
+        loading={orders === null}
+        onRowClick={(o) => {
+          router.push(`/admin/orders/${o.id}`);
+        }}
+        emptyMessage="No orders match the current filters."
+      />
     </div>
   );
 }

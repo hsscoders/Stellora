@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Boxes,
   Download,
   History,
-  Search,
+  PackageX,
+  PackageSearch,
   Sparkles,
+  Wallet,
 } from "lucide-react";
 import { toast } from "@/components/ui/notify";
 import { Button } from "@/components/ui/button";
@@ -16,22 +19,20 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatDateTime } from "@/lib/utils";
+import { AdvancedTable, type Column } from "@/components/stellora/advanced/data-table";
+import { PageHeader } from "@/components/stellora/advanced/page-header";
+import { StatCard } from "@/components/stellora/advanced/stat-card";
+import { ChipRow, EmptyState } from "@/components/stellora/advanced/widgets";
+import { formatDateTime, formatINR } from "@/lib/utils";
 
 interface VariantRow {
   id: string;
   sku: string;
   name: string;
+  price: number;
   stock: number;
   lowStockThreshold: number;
+  category: string | null;
   product: { name: string; slug: string };
 }
 
@@ -45,6 +46,8 @@ interface Movement {
 }
 
 type StockChip = "ALL" | "LOW" | "OUT";
+const STOCK_CHIPS = ["ALL", "LOW", "OUT"] as const;
+const UNCATEGORISED = "Uncategorised";
 
 function stockStatus(r: VariantRow): "OUT" | "LOW" | "OK" {
   if (r.stock === 0) return "OUT";
@@ -68,8 +71,8 @@ function csvField(value: string | number): string {
 
 export default function AdminInventoryPage() {
   const [rows, setRows] = useState<VariantRow[] | null>(null);
-  const [q, setQ] = useState("");
   const [chip, setChip] = useState<StockChip>("ALL");
+  const [catFilter, setCatFilter] = useState<string>("ALL");
   const [adjusting, setAdjusting] = useState<VariantRow | null>(null);
   const [deltaVal, setDeltaVal] = useState("");
   const [historyOf, setHistoryOf] = useState<VariantRow | null>(null);
@@ -87,8 +90,10 @@ export default function AdminInventoryPage() {
                 id: v.id,
                 sku: v.sku,
                 name: v.name,
+                price: Number(v.price ?? 0),
                 stock: v.stock,
                 lowStockThreshold: v.lowStockThreshold,
+                category: p.category?.name ?? null,
                 product: { name: p.name, slug: p.slug },
               });
             }
@@ -144,7 +149,7 @@ export default function AdminInventoryPage() {
   }
 
   function exportCsv() {
-    const data = filtered ?? [];
+    const data = filtered;
     if (data.length === 0) {
       toast.error("Nothing to export — adjust the filters first");
       return;
@@ -179,29 +184,166 @@ export default function AdminInventoryPage() {
     toast.success(`Exported ${data.length} row${data.length === 1 ? "" : "s"} to CSV`);
   }
 
-  const filtered = rows?.filter((r) => {
-    const status = stockStatus(r);
-    if (chip === "LOW" && status !== "LOW") return false;
-    if (chip === "OUT" && status !== "OUT") return false;
-    return (
-      !q ||
-      r.sku.toLowerCase().includes(q.toLowerCase()) ||
-      r.product.name.toLowerCase().includes(q.toLowerCase())
-    );
-  });
+  const list = useMemo(() => rows ?? [], [rows]);
 
-  const lowCount = rows?.filter((r) => stockStatus(r) === "LOW").length ?? 0;
-  const outCount = rows?.filter((r) => stockStatus(r) === "OUT").length ?? 0;
+  const filtered = useMemo(
+    () =>
+      list.filter((r) => {
+        const status = stockStatus(r);
+        if (chip === "LOW" && status !== "LOW") return false;
+        if (chip === "OUT" && status !== "OUT") return false;
+        if (catFilter === UNCATEGORISED) {
+          if (r.category !== null) return false;
+        } else if (catFilter !== "ALL" && r.category !== catFilter) {
+          return false;
+        }
+        return true;
+      }),
+    [list, chip, catFilter]
+  );
 
-  if (!rows) return <p className="py-16 text-center text-sm text-muted-foreground">Loading…</p>;
+  const lowCount = useMemo(() => list.filter((r) => stockStatus(r) === "LOW").length, [list]);
+  const outCount = useMemo(() => list.filter((r) => stockStatus(r) === "OUT").length, [list]);
+  const valuation = useMemo(() => list.reduce((n, r) => n + r.price * r.stock, 0), [list]);
+
+  const categoryOptions = useMemo(() => {
+    const names = Array.from(
+      new Set(list.map((r) => r.category).filter((n): n is string => !!n))
+    ).sort((a, b) => a.localeCompare(b));
+    const opts = ["ALL", ...names];
+    if (list.some((r) => !r.category)) opts.push(UNCATEGORISED);
+    return opts;
+  }, [list]);
+
+  const categoryCounts = useMemo<Partial<Record<string, number>>>(() => {
+    const counts: Record<string, number> = { ALL: list.length };
+    let uncategorised = 0;
+    for (const r of list) {
+      if (r.category) counts[r.category] = (counts[r.category] ?? 0) + 1;
+      else uncategorised += 1;
+    }
+    if (uncategorised > 0) counts[UNCATEGORISED] = uncategorised;
+    return counts;
+  }, [list]);
+
+  const stockCounts = useMemo<Partial<Record<StockChip, number>>>(
+    () => ({ ALL: list.length, LOW: lowCount, OUT: outCount }),
+    [list, lowCount, outCount]
+  );
+
+  const columns: Column<VariantRow>[] = useMemo(
+    () => [
+      {
+        key: "product",
+        header: "Product",
+        sortValue: (v) => v.product.name,
+        searchValue: (v) => `${v.product.name} ${v.name} ${v.sku} ${v.category ?? ""}`,
+        cell: (v) => (
+          <span className="min-w-0">
+            <span className="block max-w-52 truncate font-medium">{v.product.name}</span>
+            <span className="block truncate text-xs text-muted-foreground">{v.category ?? "Uncategorised"}</span>
+          </span>
+        ),
+      },
+      {
+        key: "variant",
+        header: "Variant",
+        sortValue: (v) => v.name,
+        searchValue: (v) => v.name,
+        hideBelow: "md",
+        cell: (v) => <span className="text-sm">{v.name}</span>,
+      },
+      {
+        key: "sku",
+        header: "SKU",
+        sortValue: (v) => v.sku,
+        searchValue: (v) => v.sku,
+        hideBelow: "sm",
+        cell: (v) => <span className="text-xs text-muted-foreground">{v.sku}</span>,
+      },
+      {
+        key: "price",
+        header: "Price",
+        align: "right",
+        sortValue: (v) => v.price,
+        hideBelow: "lg",
+        cell: (v) => <span className="tnum text-sm">{formatINR(v.price)}</span>,
+      },
+      {
+        key: "stock",
+        header: "Stock",
+        align: "right",
+        sortValue: (v) => v.stock,
+        cell: (v) => {
+          const status = stockStatus(v);
+          const suggestion = suggestedRestock(v);
+          return (
+            <span className="block">
+              <span className={`tnum text-sm font-semibold ${v.stock === 0 ? "text-destructive" : status === "LOW" ? "text-amber-600" : ""}`}>
+                {v.stock}
+              </span>
+              {status === "OUT" && (
+                <Badge variant="secondary" className="ml-2 bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
+                  Out
+                </Badge>
+              )}
+              {status === "LOW" && (
+                <Badge variant="secondary" className="ml-2 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                  Low
+                </Badge>
+              )}
+              {status !== "OK" && suggestion > 0 && (
+                <button
+                  type="button"
+                  onClick={() => openAdjust(v)}
+                  className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
+                >
+                  Restock +{suggestion} (suggested)
+                </button>
+              )}
+            </span>
+          );
+        },
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        align: "right",
+        cell: (v) => (
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => openAdjust(v)}>
+              Adjust
+            </Button>
+            <Button variant="ghost" size="sm" aria-label="Movement history" onClick={() => openHistory(v)}>
+              <History className="h-4 w-4" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-3xl font-medium">Inventory</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Stock on hand per variant. Every adjustment is recorded in stock movement history.
-        </p>
+      <PageHeader
+        icon={Boxes}
+        title="Inventory"
+        subtitle="Stock on hand per variant. Every adjustment is recorded in stock movement history."
+        actions={
+          <Button variant="outline" onClick={exportCsv} className="rounded-full">
+            <Download className="h-4 w-4" /> Export CSV
+          </Button>
+        }
+      />
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <StatCard label="Variants tracked" value={list.length} icon={Boxes} />
+        <StatCard label="Low stock" value={lowCount} icon={AlertTriangle} accent="text-amber-600" />
+        <StatCard label="Out of stock" value={outCount} icon={PackageX} accent="text-rose-500" />
+        <StatCard label="Stock valuation" value={formatINR(valuation)} icon={Wallet} />
       </div>
 
       {(lowCount > 0 || outCount > 0) && (
@@ -220,105 +362,44 @@ export default function AdminInventoryPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search SKU or product…"
-            className="pl-9"
-          />
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stock</span>
+          <ChipRow label="Stock level" value={chip} options={STOCK_CHIPS} onChange={setChip} counts={stockCounts} size="sm" />
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {(
-            [
-              ["ALL", "All"],
-              ["LOW", `Low stock (${lowCount})`],
-              ["OUT", `Out of stock (${outCount})`],
-            ] as [StockChip, string][]
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={chip === value}
-              onClick={() => setChip(value)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                chip === value
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border text-muted-foreground hover:bg-accent"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <Button variant="outline" onClick={exportCsv} className="ml-auto rounded-full">
-          <Download className="h-4 w-4" /> Export CSV
-        </Button>
+        {categoryOptions.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Category</span>
+            <ChipRow
+              label="Product category"
+              value={catFilter}
+              options={categoryOptions}
+              onChange={setCatFilter}
+              counts={categoryCounts}
+              size="sm"
+            />
+          </div>
+        )}
       </div>
 
-      <div className="rounded-lg border border-border/70 bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Product</TableHead>
-              <TableHead>Variant</TableHead>
-              <TableHead>SKU</TableHead>
-              <TableHead>Stock</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered?.map((v) => {
-              const low = stockStatus(v) !== "OK";
-              return (
-                <TableRow key={v.id}>
-                  <TableCell className="max-w-52 truncate text-sm font-medium">{v.product.name}</TableCell>
-                  <TableCell className="text-sm">{v.name}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{v.sku}</TableCell>
-                  <TableCell>
-                    <span className={`tnum text-sm font-semibold ${v.stock === 0 ? "text-destructive" : low ? "text-amber-600" : ""}`}>
-                      {v.stock}
-                    </span>
-                    {low && (
-                      <Badge variant="secondary" className="ml-2 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                        Low
-                      </Badge>
-                    )}
-                    {low && suggestedRestock(v) > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => openAdjust(v)}
-                        className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
-                      >
-                        Restock +{suggestedRestock(v)} (suggested)
-                      </button>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" onClick={() => openAdjust(v)}>
-                        Adjust
-                      </Button>
-                      <Button variant="ghost" size="sm" aria-label="Movement history" onClick={() => openHistory(v)}>
-                        <History className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {filtered?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                  Nothing matches.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <AdvancedTable
+        columns={columns}
+        rows={rows}
+        getKey={(v) => v.id}
+        searchable
+        searchPlaceholder="Search SKU, product or category…"
+        initialSort={{ key: "product", dir: "asc" }}
+        csvName="inventory"
+        printTitle="Inventory"
+        loading={rows === null}
+        emptyMessage={
+          <EmptyState
+            icon={PackageSearch}
+            title={list.length === 0 ? "No variants found" : "Nothing matches the current filters"}
+            hint="Add products with variants in the Products page, then manage their stock here."
+          />
+        }
+      />
 
       {/* Adjust dialog */}
       <Dialog open={!!adjusting} onOpenChange={(v) => !v && setAdjusting(null)}>
