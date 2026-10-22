@@ -458,7 +458,7 @@ model ReturnRequest {
   userId      String       @db.Char(24)
   type        ReturnType
   reason      String       @db.Text
-  details     String       @default("") @db.Text
+  details     String       @db.Text
   status      ReturnStatus @default(REQUESTED)
   adminNote   String?      @db.Text
   createdAt   DateTime     @default(now())

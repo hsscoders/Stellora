@@ -397,7 +397,7 @@ CREATE TABLE `returnrequests` (
     `userId` CHAR(24) NOT NULL,
     `type` ENUM('RETURN', 'EXCHANGE') NOT NULL,
     `reason` TEXT NOT NULL,
-    `details` TEXT NOT NULL DEFAULT '',
+    `details` TEXT NOT NULL,
     `status` ENUM('REQUESTED', 'APPROVED', 'REJECTED', 'COMPLETED') NOT NULL DEFAULT 'REQUESTED',
     `adminNote` TEXT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
