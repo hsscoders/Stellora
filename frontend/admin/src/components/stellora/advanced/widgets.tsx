@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, isValidElement, type ReactNode } from "react";
 import { AlertTriangle, Inbox, RefreshCw, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -30,13 +30,13 @@ export function SectionCard({
   bodyClassName?: string;
 }) {
   const iconEl =
-    icon == null ? null : typeof icon === "function" ? (
+    icon == null ? null : isValidElement(icon) ? (
+      <span className="[&>svg]:h-4 [&>svg]:w-4 [&>svg]:text-muted-foreground">{icon}</span>
+    ) : (
       (() => {
         const IconComp = icon as React.ComponentType<{ className?: string }>;
         return <IconComp className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
       })()
-    ) : (
-      <span className="[&>svg]:h-4 [&>svg]:w-4 [&>svg]:text-muted-foreground">{icon}</span>
     );
   return (
     <section className={cn("flex min-w-0 flex-col rounded-lg border border-border/70 bg-card", className)}>
