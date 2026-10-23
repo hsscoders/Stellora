@@ -1,18 +1,18 @@
 "use client";
 
 /**
- * Stellora Point of Sale — premium register (Stocky / Shopify POS grade).
+ * Stellora Point of Sale — "Aurum" terminal (full redesign).
  *
- * Layout: full-screen kiosk (AdminShell steps aside for /admin/pos).
- *   ┌──────────────────────── register bar: outlet, live day strip, utilities
- *   ├───────────────┬─────────────────────────────────────────────
- *   │  CART (42%)   │  CATALOG (search, category chips, grid, pager)
- *   └───────────────┴─────────────────────────────────────────────
- * Mobile (<lg): bottom tab bar [Browse | Cart(n)] + sticky pay button.
+ * A dark, jewellery-boutique grade register: warm charcoal canvas, champagne
+ * gold accents, Playfair serif display numerals, and a three-zone kiosk layout.
+ *   ┌────┬──────────────────────────────────────────────┬──────────────┐
+ *   │rail│  topbar · categories · catalog grid          │  BILL panel  │
+ *   └────┴──────────────────────────────────────────────┴──────────────┘
+ * Mobile (<lg): Browse / Cart tabs + sticky charge button.
  *
- * Every wire payload below is copied verbatim from the previous POS build
- * (same paths, same field names, same localStorage/sessionStorage formats)
- * so existing held bills, drafts and terminal ids keep working.
+ * Every wire payload (fetch paths, field names, storage keys, sound cues) is
+ * identical to the previous build, so held bills, drafts and terminal ids keep
+ * working across the upgrade.
  */
 
 import Image from "next/image";
@@ -22,16 +22,20 @@ import QRCode from "qrcode";
 import {
   ArrowUpDown,
   Banknote,
+  Camera,
+  ChartColumn,
   Check,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  CircleCheck,
   Copy,
   CreditCard,
   Delete,
   HandCoins,
   History,
   Home,
+  IndianRupee,
   Keyboard,
   Landmark,
   Loader2,
@@ -39,7 +43,6 @@ import {
   LockOpen,
   Maximize2,
   Minus,
-  Package,
   PackageOpen,
   Pause,
   Percent,
@@ -49,8 +52,8 @@ import {
   RotateCcw,
   ScanLine,
   ShoppingBasket,
-  ShoppingCart,
   Smartphone,
+  Sparkles,
   Store,
   Tags,
   Ticket,
@@ -72,26 +75,7 @@ import {
   unlockAudio,
 } from "@/lib/pos-sound";
 import { toast } from "@/components/ui/notify";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
-import { ColumnChart } from "@/components/stellora/advanced/charts";
 
 /* =============================== API shapes =============================== */
 
@@ -259,15 +243,15 @@ interface RecentOrder {
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: typeof Banknote }[] = [
   { value: "CASH", label: "Cash", icon: Banknote },
-  { value: "CARD", label: "Credit Card", icon: CreditCard },
+  { value: "CARD", label: "Card", icon: CreditCard },
   { value: "UPI", label: "UPI", icon: Smartphone },
-  { value: "BANK", label: "Bank Transfer", icon: Landmark },
+  { value: "BANK", label: "Bank", icon: Landmark },
   { value: "WALLET", label: "Wallet", icon: Wallet },
   { value: "CHEQUE", label: "Cheque", icon: ReceiptText },
   { value: "OTHER", label: "Other", icon: CircleAlert },
 ];
 
-const QUICK_NOTES = [10, 20, 50, 100, 200, 500, 2000];
+const QUICK_NOTES = [100, 200, 500, 2000];
 
 const NUMPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "back"] as const;
 
@@ -287,15 +271,6 @@ const SHORTCUT_LIST: { keys: string; label: string }[] = [
    served from the storefront proxy (:3000/admin-console/…) and directly on the
    admin origin (:3001/admin-console/…) — Next only maps /admin-console/api/*. */
 const api = (path: string) => `/admin-console${path}`;
-
-const BRAND = {
-  solid: "bg-primary hover:bg-primary/90 text-white",
-  soft: "bg-accent text-accent-foreground",
-  ring: "focus-visible:ring-primary/30",
-};
-
-const iconBtn =
-  "inline-flex h-10 w-10 items-center justify-center rounded-lg border border-transparent text-muted-foreground transition hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -345,6 +320,45 @@ function receiptFromOrder(o: RecentOrder): ReceiptData {
   };
 }
 
+/* ========================= Aurum design tokens ========================= */
+
+const AURUM = {
+  gold: "#d9a441",
+  goldSoft: "#e8bd68",
+  goldDeep: "#b57e26",
+  ink: "#0e0c09",
+  panel: "#14110d",
+  card: "#1a1610",
+  cardHi: "#201a12",
+  line: "#2b2418",
+  lineHi: "#453a24",
+  text: "#f2ecdf",
+  muted: "#a19681",
+  faint: "#6b6252",
+};
+
+/** Shared classes for the dark inputs across the terminal. */
+const fieldCls =
+  "w-full rounded-xl border border-[#2b2418] bg-[#100e0a] px-3.5 text-[14px] text-[#f2ecdf] placeholder:text-[#6b6252] outline-none transition focus:border-[#d9a441]/55 focus:ring-2 focus:ring-[#d9a441]/15";
+
+/** Ghost icon button used in headers / rails. */
+const ghostIcon =
+  "inline-flex h-10 w-10 items-center justify-center rounded-xl text-[#a19681] transition hover:bg-[#241e14] hover:text-[#f2ecdf] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30";
+
+/** Small pill for labels. */
+function Pill({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border border-[#2b2418] bg-[#171310] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#a19681]",
+        className
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 export default function AdminPosPage() {
   const router = useRouter();
 
@@ -362,7 +376,6 @@ export default function AdminPosPage() {
   const [inStockOnly, setInStockOnly] = useState(false);
   const [outOnly, setOutOnly] = useState(false);
   const [sortMode, setSortMode] = useState<"featured" | "price-asc" | "price-desc" | "stock">("featured");
-  const [dense, setDense] = useState(false);
 
   /* --------------------------------- bill --------------------------------- */
   const [bill, setBill] = useState<BillLine[]>([]);
@@ -434,6 +447,7 @@ export default function AdminPosPage() {
   const [recentBusy, setRecentBusy] = useState(false);
   const [recentErr, setRecentErr] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [dayOpen, setDayOpen] = useState(false);
   const [volOpen, setVolOpen] = useState(false);
 
   /* ----------------- scanner + terminal + sounds + drafts ----------------- */
@@ -533,7 +547,7 @@ export default function AdminPosPage() {
     };
   }, []);
 
-  /* Signed-in cashier name for the receipt's "Seller" line (Stocky parity). */
+  /* Signed-in cashier name for the receipt's "Seller" line. */
   useEffect(() => {
     fetch(`${api("/api/auth/me")}`, { cache: "no-store" })
       .then((r) => r.json())
@@ -555,9 +569,6 @@ export default function AdminPosPage() {
         tid = Math.random().toString(36).slice(2, 6).toUpperCase();
         sessionStorage.setItem("pos_terminal", tid);
       }
-      // sessionStorage reads are effect-only by definition; batched state
-      // updates here restore the per-window bill exactly once on mount.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTerminalId(tid);
       const saved = sessionStorage.getItem(`pos_bill_${tid}`);
       if (saved) {
@@ -651,17 +662,13 @@ export default function AdminPosPage() {
   }, []);
 
   useEffect(() => {
-    // refreshRegister resolves async; the rule can't see through it.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (hydrated && terminalId) void refreshRegister(terminalId);
   }, [hydrated, terminalId, refreshRegister]);
 
   /* ---------------------- live feed — real-time updates ----------------------
      Polls /admin/pos/live every few seconds while the tab is visible. One
      call carries: changed variant stocks (from StockMovement), today's
-     business strip, and the live cash-register state. Stock drops made by
-     the website, another counter, or an inventory adjust land here within
-     seconds — catalog tiles, the open bill and the register chip all follow. */
+     business strip, and the live cash-register state. */
   const lastFeedAtRef = useRef(new Date(Date.now() - 60_000).toISOString());
   const applyLiveFeed = useCallback(async () => {
     if (!terminalId) return;
@@ -793,12 +800,10 @@ export default function AdminPosPage() {
   }, []);
 
   useEffect(() => {
-    // fetchRecent resolves async; the rule can't see through it.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (recentOpen) void fetchRecent();
   }, [recentOpen, fetchRecent]);
 
-  /* Invoice QR for the thermal receipt (Stocky prints one under "INVOICE QR"). */
+  /* Invoice QR for the thermal receipt. */
   useEffect(() => {
     if (!receipt) return; // stale QR is hidden with the dialog itself
     const payload = [
@@ -1289,7 +1294,7 @@ export default function AdminPosPage() {
     }
   }
 
-  /* Payment dialog helpers — Stocky-style checkout */
+  /* Payment dialog helpers */
 
   function openPaymentDialog() {
     if (!registerSession) {
@@ -1434,8 +1439,7 @@ export default function AdminPosPage() {
   }
 
   /* USB barcode scanners are keyboard-wedge devices: they type the code and
-     press Enter. Capture those keystrokes even when no input is focused, so
-     the cashier can keep working without clicking back into a field. */
+     press Enter. Capture those keystrokes even when no input is focused. */
   useEffect(() => {
     let buf = "";
     let last = 0;
@@ -1507,7 +1511,6 @@ export default function AdminPosPage() {
       const action = map[e.key];
       if (!action) return;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
-        // still allow the shortcuts from fields except while typing text
         if (action !== "focusSearch" && (t as HTMLInputElement).type === "text") return;
       }
       e.preventDefault();
@@ -1518,8 +1521,7 @@ export default function AdminPosPage() {
   }, []);
 
   /* Camera scanning via the native BarcodeDetector API (Chrome/Edge).
-     Graceful fallback: browsers without it just show a hint — USB scanners
-     and typed SKUs work everywhere. The stream is fully released on close. */
+     Graceful fallback: browsers without it just show a hint. */
   useEffect(() => {
     if (!camOpen) return;
     let cancelled = false;
@@ -1535,7 +1537,6 @@ export default function AdminPosPage() {
       }
     ).BarcodeDetector;
     if (!BD) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCamSupported(false);
       return;
     }
@@ -1586,7 +1587,7 @@ export default function AdminPosPage() {
     };
   }, [camOpen]);
 
-  /* Numbered pagination window (Stocky-style page chips) — max 7 buttons. */
+  /* Numbered pagination window — max 7 buttons. */
   const pageWindow = useMemo(() => {
     const win: (number | "…")[] = [];
     const push = (n: number | "…") => win.push(n);
@@ -1604,1780 +1605,1391 @@ export default function AdminPosPage() {
 
   /* =============================== render =============================== */
 
+  const railBadge = (n: number) =>
+    n > 0 ? (
+      <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] px-1 text-[9.5px] font-black text-[#221a08] shadow">
+        {n}
+      </span>
+    ) : null;
+
+  const railBtn = (
+    active: boolean,
+    label: string,
+    Icon: typeof ShoppingBasket,
+    onClick: () => void,
+    badge?: React.ReactNode,
+    title?: string
+  ) => (
+    <button
+      key={label}
+      type="button"
+      onClick={() => {
+        playPosSound("click");
+        onClick();
+      }}
+      title={title ?? label}
+      className={cn(
+        "group relative flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/40",
+        active
+          ? "border-[#d9a441]/35 bg-gradient-to-b from-[#d9a441]/18 to-[#d9a441]/5 text-[#e8bd68] shadow-[inset_0_1px_0_rgba(232,189,104,0.15)]"
+          : "border-transparent text-[#7d7362] hover:bg-[#1c1710] hover:text-[#d8cdb9]"
+      )}
+    >
+      <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.2 : 1.9} />
+      <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">{label}</span>
+      {badge}
+    </button>
+  );
+
+  const stockTone = (n: number) =>
+    n <= 0
+      ? { dot: "bg-[#e5484d]", text: "text-[#f27f82]", label: "Out of stock" }
+      : n <= 3
+        ? { dot: "bg-[#f5a623]", text: "text-[#f5b93e]", label: `Only ${n} left` }
+        : { dot: "bg-[#3dd68c]", text: "text-[#5cd69c]", label: `In stock · ${n}` };
+
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background text-[13px] text-foreground">
+    <div
+      className="flex h-dvh overflow-hidden text-[#f2ecdf]"
+      style={{
+        background:
+          "radial-gradient(1100px 460px at 72% -8%, rgba(217,164,65,0.075), transparent 62%), radial-gradient(900px 420px at -10% 110%, rgba(217,164,65,0.05), transparent 55%), #0e0c09",
+      }}
+    >
       {/* print: only the receipt is visible on paper + tiny page-local motion */}
       <style>{`@media print{body *{visibility:hidden}.pos-receipt,.pos-receipt *{visibility:visible}.pos-receipt{position:absolute;inset:0;background:#fff;color:#000}}
-@keyframes posPulse{0%{opacity:.3}100%{opacity:1}}.pos-pulse{animation:posPulse .9s ease-out both}
-@keyframes posPop{0%{transform:scale(.5);opacity:0}70%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}.pos-pop{animation:posPop .35s cubic-bezier(.2,1.4,.4,1) both}`}</style>
+@keyframes posPulse{0%{opacity:.35}100%{opacity:1}}.pos-pulse{animation:posPulse .9s ease-out both}
+@keyframes posPop{0%{transform:scale(.55);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}.pos-pop{animation:posPop .38s cubic-bezier(.2,1.4,.4,1) both}
+@keyframes posSlide{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}.pos-slide{animation:posSlide .3s ease-out both}
+@keyframes posGlow{0%,100%{box-shadow:0 0 0 0 rgba(217,164,65,0)}50%{box-shadow:0 0 34px -6px rgba(217,164,65,.45)}}`}</style>
 
-      {/* ============ TOP REGISTER BAR ============ */}
-      <header className="stellora-scroll flex h-14 shrink-0 items-center gap-2 overflow-x-auto border-b border-border bg-card px-3">
-        {/* brand tile — back to admin */}
+      {/* ══════════════════ LEFT GOLD RAIL ══════════════════ */}
+      <nav className="hidden w-[84px] shrink-0 flex-col items-center gap-1.5 border-r border-[#241e13] bg-[#100d09]/90 py-4 lg:flex">
+        {/* brand — back to admin */}
         <button
           type="button"
           onClick={() => router.push("/admin")}
           title="Back to admin dashboard"
-          aria-label="Back to admin dashboard"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary font-serif text-lg font-bold text-primary-foreground shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          className="mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] font-serif text-xl font-black text-[#241a06] shadow-[0_10px_26px_-10px_rgba(217,164,65,0.55)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/40"
         >
           S
         </button>
+        <span className="mb-1 h-px w-8 bg-[#2b2418]" />
 
-        {/* register status pill — OPEN (count + close) / CLOSED (open with float) */}
-        <button
-          type="button"
-          onClick={() => {
-            playPosSound("click");
-            if (registerSession) {
-              setRegCounted("");
-              setRegClosingNote("");
-              setRegCloseOpen(true);
-            } else {
-              setRegOpenOpen(true);
-            }
-          }}
-          aria-label={
-            registerSession ? "Register is open — count and close" : "Register is closed — open the register"
-          }
-          className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-3 font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
-            registerSession
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300"
-              : "border-rose-500/40 bg-rose-500/10 text-rose-700 hover:bg-rose-500/20 dark:text-rose-300"
-          }`}
-          title={
-            registerSession
-              ? `Register OPEN since ${formatDateTime(registerSession.openedAt)} — click to count and close`
-              : "Register CLOSED — click to open with an opening float"
-          }
-        >
-          <span className="text-[12.5px] font-semibold">Register</span>
-          <span
-            className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white ${
-              registerSession ? "bg-emerald-600" : "bg-rose-600"
-            }`}
-          >
-            <span className={cn("h-1.5 w-1.5 rounded-full", registerSession ? "bg-emerald-200" : "bg-rose-200")} />
-            {registerSession ? "OPEN" : "CLOSED"}
-          </span>
-          {registerSession && registerLive && (
-            <span className="tnum rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-              {formatINR(registerLive.expectedCash)}
-            </span>
-          )}
-        </button>
-
-        {/* outlet / terminal chip */}
-        <span
-          className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-primary/25 bg-accent px-3 text-accent-foreground"
-          title="Selling outlet for this terminal"
-        >
-          <Store className="h-4 w-4" />
-          <span className="leading-tight">
-            <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-primary/70">Outlet</span>
-            <span className="block text-[11px] font-semibold">Stellora Flagship · T-{terminalId}</span>
-          </span>
-        </span>
-
-        {/* TODAY strip — live business pulse (IST day, refreshes with the feed) */}
-        {today && (
-          <span
-            className="hidden h-10 shrink-0 items-center gap-3 rounded-lg border border-border bg-card px-3 md:inline-flex"
-            title="Today's business (IST) — updates live"
-          >
-            <span className="leading-tight">
-              <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Today · Bills</span>
-              <span key={`b-${today.orders}`} className="pos-pulse tnum block text-[11px] font-bold">
-                {today.orders}
-              </span>
-            </span>
-            <span className="h-5 w-px bg-border" />
-            <span className="leading-tight">
-              <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Sales</span>
-              <span key={`r-${today.revenue}`} className="pos-pulse tnum block text-[11px] font-bold text-primary">
-                {formatINR(today.revenue)}
-              </span>
-            </span>
-            <span className="h-5 w-px bg-border" />
-            <span className="leading-tight">
-              <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Items</span>
-              <span key={`i-${today.itemsSold}`} className="pos-pulse tnum block text-[11px] font-bold">
-                {today.itemsSold}
-              </span>
-            </span>
-            {registerSession && registerLive && (
-              <>
-                <span className="h-5 w-px bg-border" />
-                <span className="leading-tight">
-                  <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Expected cash</span>
-                  <span key={`c-${registerLive.expectedCash}`} className="pos-pulse tnum block text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
-                    {formatINR(registerLive.expectedCash)}
-                  </span>
-                </span>
-              </>
-            )}
-          </span>
+        {railBtn(true, "Sell", ShoppingBasket, () => {}, undefined, "Selling screen")}
+        {railBtn(
+          false,
+          "Held",
+          Pause,
+          () => setHeldOpen(true),
+          railBadge(held.length),
+          held.length > 0 ? `${held.length} held bill(s)` : "Held bills"
         )}
-        {!today && (
-          <span className="hidden h-10 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 md:inline-flex">
-            <Skeleton className="h-3 w-40" />
-          </span>
-        )}
+        {railBtn(false, "Sales", History, () => setRecentOpen(true), undefined, "Recent sales")}
+        {railBtn(false, "Day", ChartColumn, () => setDayOpen(true), undefined, "Today's summary")}
+        {railBtn(false, "Keys", Keyboard, () => setShortcutsOpen(true), undefined, "Keyboard shortcuts")}
 
-        <span className="min-w-2 flex-1" />
+        <span className="my-1 h-px w-8 bg-[#2b2418]" />
 
-        {/* customer chip — mobile-first: phone leads */}
-        <button
-          type="button"
-          onClick={openCustPicker}
-          className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-2.5 transition hover:border-primary/40 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          title="Attach customer — by mobile number"
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/15 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
-            {(customerName ?? "W").charAt(0).toUpperCase()}
-          </span>
-          <span className="leading-tight">
-            <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-rose-500 dark:text-rose-400">Customer</span>
-            <span className="block max-w-28 truncate text-[11px] font-semibold">
-              {customerName ?? "walk-in-customer"}
-            </span>
-          </span>
-          {customerPhone && (
-            <span className="tnum rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-bold text-foreground/70">
-              {customerPhone}
-            </span>
-          )}
-        </button>
-
-        {/* currency chip */}
-        <span className="hidden h-10 shrink-0 items-center rounded-lg border border-border bg-muted px-2.5 text-[11px] font-bold text-foreground/80 sm:inline-flex">
-          INR ₹
-        </span>
-
-        {/* utility cluster */}
-        <div className="flex shrink-0 items-center gap-0.5">
+        {/* sound: toggle + inline volume popover */}
+        <div className="relative">
           <button
             type="button"
-            className={iconBtn}
-            title="Shortcuts: F2 search · F4 pay · F7 hold · F8 held · F9 refresh"
-            aria-label="Keyboard shortcuts"
-            onClick={() => setShortcutsOpen(true)}
-          >
-            <Keyboard className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className={iconBtn}
-            title="Recent sales"
-            aria-label="Recent sales"
             onClick={() => {
               playPosSound("click");
-              setRecentOpen(true);
+              setVolOpen((o) => !o);
             }}
+            title="Sounds & volume"
+            className={cn(ghostIcon, "h-12 w-12 flex-col gap-0.5 rounded-2xl")}
           >
-            <History className="h-4 w-4" />
+            {soundOn ? <Volume2 className="h-[18px] w-[18px]" /> : <VolumeX className="h-[18px] w-[18px]" />}
+            <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">{soundOn ? "On" : "Off"}</span>
           </button>
-          <button
-            type="button"
-            className={iconBtn}
-            title="Print barcode labels"
-            aria-label="Print barcode labels"
-            onClick={() => {
-              playPosSound("click");
-              router.push("/admin/barcodes");
-            }}
-          >
-            <Tags className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            className={iconBtn}
-            title="Open another independent cashier window"
-            aria-label="Open another cashier window"
-            onClick={() => window.open(window.location.href, "_blank", "noopener")}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-
-          {/* mute / volume popover — fixed panel escapes the scrolling header */}
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              className={iconBtn}
-              title={soundOn ? "Mute sounds" : "Unmute sounds"}
-              aria-label={soundOn ? "Mute sounds" : "Unmute sounds"}
-              aria-expanded={volOpen}
-              onClick={() => setVolOpen((v) => !v)}
-            >
-              {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-            </button>
-            {volOpen && (
-              <>
+          {volOpen && (
+            <div className="pos-slide absolute bottom-0 left-full z-40 ml-2 w-56 rounded-2xl border border-[#2b2418] bg-[#171310] p-4 shadow-2xl">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#a19681]">Register sounds</span>
                 <button
                   type="button"
-                  aria-hidden
-                  tabIndex={-1}
-                  className="fixed inset-0 z-40 cursor-default"
-                  onClick={() => setVolOpen(false)}
-                />
-                <div className="fixed right-2 top-[60px] z-50 w-60 rounded-xl border border-border bg-card p-3 shadow-xl">
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                    Register sounds
-                  </p>
-                  <label className="mb-3 flex cursor-pointer items-center justify-between text-[12.5px] font-semibold">
-                    Beep on actions
-                    <input
-                      type="checkbox"
-                      checked={soundOn}
-                      onChange={toggleSound}
-                      className="h-4 w-4 accent-primary"
-                      aria-label="Enable sounds"
-                    />
-                  </label>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={volume}
-                    aria-label="Beep volume"
-                    onChange={(e) => changeVolume(Number(e.target.value))}
-                    className="w-full cursor-pointer accent-primary"
+                  onClick={toggleSound}
+                  className={cn(
+                    "relative h-5.5 w-10 rounded-full transition",
+                    soundOn ? "bg-gradient-to-r from-[#d9a441] to-[#b57e26]" : "bg-[#2b2418]"
+                  )}
+                  aria-label="Toggle sounds"
+                >
+                  <span
+                    className={cn(
+                      "absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow transition-all",
+                      soundOn ? "left-[22px]" : "left-0.5"
+                    )}
                   />
-                  <p className="tnum mt-1 text-[11px] text-muted-foreground">Volume — {Math.round(volume * 100)}%</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-2.5 h-8 w-full rounded-lg text-[12px] font-semibold"
-                    onClick={() => testPosSound()}
-                  >
-                    Test sound
-                  </Button>
-                </div>
-              </>
-            )}
+                </button>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(volume * 100)}
+                onChange={(e) => changeVolume(Number(e.target.value) / 100)}
+                className="w-full accent-[#d9a441]"
+                aria-label="Sound volume"
+              />
+              <button
+                type="button"
+                onClick={() => testPosSound()}
+                className="mt-3 w-full rounded-lg border border-[#2b2418] py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+              >
+                Test sound
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button type="button" onClick={toggleFullscreen} title="Fullscreen" className={cn(ghostIcon, "h-12 w-12 rounded-2xl flex-col gap-0.5")}>
+          <Maximize2 className="h-[18px] w-[18px]" />
+          <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">Full</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push("/admin")}
+          title="Exit to admin"
+          className={cn(ghostIcon, "mt-auto h-12 w-12 flex-col gap-0.5 rounded-2xl hover:bg-[#3a1a1a] hover:text-[#f2a0a0]")}
+        >
+          <Home className="h-[18px] w-[18px]" />
+          <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">Exit</span>
+        </button>
+      </nav>
+
+      {/* ══════════════════ MAIN COLUMN ══════════════════ */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* ─────────── top bar: scan, register, day pulse ─────────── */}
+        <header className="flex h-[74px] shrink-0 items-center gap-3 border-b border-[#241e13] bg-[#100d09]/60 px-4 backdrop-blur lg:px-6">
+          {/* scan / search */}
+          <div className="relative min-w-0 flex-1 max-w-2xl">
+            <ScanLine
+              className={cn(
+                "pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 transition-colors",
+                scanFlash === "ok" ? "text-[#3dd68c]" : scanFlash === "err" ? "text-[#e5484d]" : "text-[#6b6252]"
+              )}
+            />
+            <input
+              ref={scanRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && query.trim().length >= 4) {
+                  void handleScan(query.trim());
+                  setQuery("");
+                }
+              }}
+              placeholder="Scan a barcode / SKU, or search products…"
+              aria-label="Scan barcode or search products"
+              className={cn(
+                fieldCls,
+                "h-12 rounded-2xl pl-11 pr-16 text-[14.5px] transition-all focus:shadow-[0_0_0_1px_rgba(217,164,65,0.25),0_10px_30px_-14px_rgba(217,164,65,0.35)]",
+                scanFlash === "ok" && "border-[#3dd68c]/60",
+                scanFlash === "err" && "border-[#e5484d]/60"
+              )}
+            />
+            <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md border border-[#2b2418] bg-[#1a1610] px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-[#6b6252]">
+              F2
+            </kbd>
           </div>
 
-          <button type="button" className={iconBtn} title="Fullscreen" aria-label="Toggle fullscreen" onClick={toggleFullscreen}>
-            <Maximize2 className="h-4 w-4" />
-          </button>
-          <span
-            className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-[12px] font-bold text-primary-foreground"
-            title={sellerName || "Cashier"}
-          >
-            {(sellerName || "S").charAt(0).toUpperCase()}
-          </span>
-        </div>
-      </header>
-
-      {/* register gate — billing stays visible, charging locks until OPEN */}
-      {hydrated && !registerSession && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-amber-800 dark:text-amber-200">
-          <LockKeyhole className="h-4 w-4 shrink-0" />
-          <p className="min-w-0 flex-1 text-[12px] font-semibold">
-            Register is closed — open it with today&apos;s float to start billing.
-          </p>
-          <Button
+          {/* register chip */}
+          <button
             type="button"
-            size="sm"
-            className="h-8 rounded-lg bg-emerald-600 px-3 text-[12px] font-bold text-white hover:bg-emerald-600/90"
-            onClick={() => setRegOpenOpen(true)}
+            onClick={() => {
+              playPosSound("click");
+              if (registerSession) {
+                setRegCounted("");
+                setRegClosingNote("");
+                setRegCloseOpen(true);
+              } else {
+                setRegOpenOpen(true);
+              }
+            }}
+            title={
+              registerSession
+                ? `Register OPEN since ${formatDateTime(registerSession.openedAt)} — click to count and close`
+                : "Register CLOSED — click to open with an opening float"
+            }
+            className={cn(
+              "hidden h-12 shrink-0 items-center gap-2.5 rounded-2xl border px-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30 sm:flex",
+              registerSession
+                ? "border-[#3dd68c]/25 bg-[#3dd68c]/8 hover:bg-[#3dd68c]/15"
+                : "border-[#e5484d]/30 bg-[#e5484d]/8 hover:bg-[#e5484d]/15"
+            )}
           >
-            <LockOpen className="h-3.5 w-3.5" /> Open register
-          </Button>
-        </div>
-      )}
-      {/* ============ BODY — cart (left) / catalog (right) ============ */}
-      <div className="flex min-h-0 flex-1">
-        {/* ---------- LEFT: current bill ---------- */}
-        <section
-          className={cn(
-            "min-w-0 flex-1 flex-col border-border bg-card lg:flex lg:w-[42%] lg:min-w-[380px] lg:max-w-[620px] lg:flex-none lg:border-r",
-            mobileTab === "cart" ? "flex" : "hidden"
+            {registerSession ? (
+              <LockOpen className="h-4.5 w-4.5 text-[#5cd69c]" />
+            ) : (
+              <LockKeyhole className="h-4.5 w-4.5 text-[#f27f82]" />
+            )}
+            <span className="text-left leading-tight">
+              <span className="block text-[9px] font-black uppercase tracking-[0.16em] text-[#8b8170]">
+                Register · T-{terminalId || "—"}
+              </span>
+              <span className={cn("block text-[13px] font-bold", registerSession ? "text-[#5cd69c]" : "text-[#f27f82]")}>
+                {registerSession ? "OPEN" : "CLOSED"}
+                {registerSession && registerLive && (
+                  <span className="tnum ml-2 text-[12px] font-semibold text-[#a19681]">
+                    Drawer {formatINR(registerLive.expectedCash)}
+                  </span>
+                )}
+              </span>
+            </span>
+          </button>
+
+          {/* today pulse */}
+          {today && (
+            <button
+              type="button"
+              onClick={() => setDayOpen(true)}
+              title="Today's business (IST) — click for the full summary"
+              className="hidden h-12 shrink-0 items-center gap-4 rounded-2xl border border-[#2b2418] bg-[#16130e] px-4 transition hover:border-[#d9a441]/30 md:flex"
+            >
+              {[
+                { k: "Bills", v: String(today.orders), gold: false },
+                { k: "Sales", v: formatINR(today.revenue), gold: true },
+                { k: "Items", v: String(today.itemsSold), gold: false },
+              ].map((s, i) => (
+                <span key={s.k} className={cn("flex flex-col items-start leading-tight", i > 0 && "border-l border-[#2b2418] pl-4")}>
+                  <span className="text-[8.5px] font-black uppercase tracking-[0.16em] text-[#6b6252]">{s.k}</span>
+                  <span
+                    key={`${s.k}-${s.v}`}
+                    className={cn("pos-pulse tnum text-[13.5px] font-bold", s.gold && "text-[#e8bd68]")}
+                  >
+                    {s.v}
+                  </span>
+                </span>
+              ))}
+            </button>
           )}
-        >
-          {/* bill header */}
-          <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-2.5">
-            <div className="flex items-center gap-2.5">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-accent-foreground">
-                <ShoppingCart className="h-4 w-4" />
+
+          {/* cashier */}
+          {sellerName && (
+            <div className="hidden h-12 shrink-0 items-center gap-2.5 rounded-2xl border border-[#2b2418] bg-[#16130e] px-3.5 xl:flex" title="Signed-in cashier">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] text-[11px] font-black text-[#241a06]">
+                {sellerName.trim().charAt(0).toUpperCase()}
               </span>
               <span className="leading-tight">
-                <span className="block text-[14px] font-bold">Current Bill</span>
-                <span className="block text-[11px] text-muted-foreground">
-                  {billCount} item{billCount === 1 ? "" : "s"}
-                </span>
+                <span className="block text-[8.5px] font-black uppercase tracking-[0.16em] text-[#6b6252]">Cashier</span>
+                <span className="block max-w-24 truncate text-[12px] font-bold">{sellerName}</span>
               </span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-right leading-tight">
-                <span className="block text-[9px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Total</span>
-                <span className="tnum block text-[15px] font-bold">{formatINR(grandTotal)}</span>
-              </span>
-              <button
-                type="button"
-                aria-label="Clear the bill"
-                title="Clear the bill"
-                disabled={bill.length === 0}
-                onClick={clearBill}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-600 transition hover:bg-rose-500/20 disabled:opacity-40 dark:text-rose-400"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* lines / empty state */}
-          <div className="stellora-scroll min-h-0 flex-1 overflow-y-auto" aria-live="polite">
-            {bill.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
-                  <ShoppingBasket className="h-8 w-8 text-foreground/25" strokeWidth={1.5} />
-                </span>
-                <p className="mt-1 text-[14px] font-bold">Scan or tap a product to begin</p>
-                <p className="max-w-56 text-[12px] text-muted-foreground">
-                  Barcode scanners work anywhere on this screen — or pick items from the catalog.
-                </p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-border/60 px-4">
-                {bill.map((l) => (
-                  <li key={l.variantId} className="py-3">
-                    <div className="flex items-start gap-3">
-                      <span className="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted">
-                        {l.image ? (
-                          <Image src={l.image} alt="" width={44} height={44} className="h-full w-full object-contain" />
-                        ) : (
-                          <Package className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-[13px] font-semibold" title={l.productName}>
-                              {l.productName}
-                            </p>
-                            <p className="truncate text-[11px] text-muted-foreground">
-                              SKU · {l.sku}
-                              {l.variantName ? ` · ${l.variantName}` : ""}
-                            </p>
-                          </div>
-                          <p className="tnum shrink-0 text-[13px] font-bold">{formatINR(l.unitPrice * l.quantity)}</p>
-                        </div>
-
-                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                          <div className="flex items-center rounded-lg border border-border">
-                            <button
-                              type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-l-lg text-muted-foreground transition hover:bg-muted disabled:opacity-30"
-                              disabled={l.quantity <= 1}
-                              aria-label={`Decrease quantity of ${l.productName}`}
-                              onClick={() => changeQty(l.variantId, -1)}
-                            >
-                              <Minus className="h-3 w-3" />
-                            </button>
-                            <span className="tnum w-8 text-center text-[12px] font-bold">{l.quantity}</span>
-                            <button
-                              type="button"
-                              className="flex h-8 w-8 items-center justify-center rounded-r-lg text-muted-foreground transition hover:bg-muted disabled:opacity-30"
-                              disabled={l.quantity >= l.stock}
-                              aria-label={`Increase quantity of ${l.productName}`}
-                              onClick={() => changeQty(l.variantId, 1)}
-                            >
-                              <Plus className="h-3 w-3" />
-                            </button>
-                          </div>
-                          <span className="text-[11px] text-muted-foreground">×</span>
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            inputMode="decimal"
-                            value={l.unitPrice}
-                            aria-label={`Unit price of ${l.productName}`}
-                            onChange={(e) => editLinePrice(l.variantId, Number(e.target.value))}
-                            className="tnum h-8 w-16 rounded-lg border border-transparent bg-muted px-1.5 text-[11.5px] transition hover:border-border focus:border-primary/60 focus:bg-card focus:outline-none"
-                          />
-                          {l.variants && l.variants.length > 1 && (
-                            <select
-                              aria-label={`Switch variant of ${l.productName}`}
-                              value={l.variantId}
-                              onChange={(e) => {
-                                const opt = l.variants?.find((v) => v.id === e.target.value);
-                                if (opt) swapVariant(l.variantId, opt);
-                              }}
-                              className="h-8 max-w-36 rounded-lg border border-border bg-muted px-1.5 text-[11px] font-medium outline-none transition focus:border-primary/60"
-                            >
-                              {l.variants.map((v) => (
-                                <option key={v.id} value={v.id}>
-                                  {v.name} · {formatINR(v.price)}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                          <span className="min-w-2 flex-1" />
-                          <button
-                            type="button"
-                            aria-label={`Add a note to ${l.productName}`}
-                            title="Line note"
-                            onClick={() =>
-                              setNoteEdit(
-                                noteEdit?.variantId === l.variantId
-                                  ? null
-                                  : { variantId: l.variantId, draft: l.note ?? "" }
-                              )
-                            }
-                            className={cn(
-                              "flex h-8 w-8 items-center justify-center rounded-lg transition",
-                              noteEdit?.variantId === l.variantId || l.note
-                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                            )}
-                          >
-                            <ReceiptText className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Remove ${l.productName} from bill`}
-                            title="Remove line"
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400"
-                            onClick={() => {
-                              playPosSound("remove");
-                              setBill(bill.filter((x) => x.variantId !== l.variantId));
-                            }}
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-
-                        {l.note && noteEdit?.variantId !== l.variantId && (
-                          <p className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
-                            <span className="font-bold uppercase tracking-wide">Note</span>
-                            <span className="truncate">{l.note}</span>
-                          </p>
-                        )}
-                        {noteEdit?.variantId === l.variantId && (
-                          <div className="mt-2 flex items-center gap-1.5">
-                            <Input
-                              value={noteEdit.draft}
-                              onChange={(e) => setNoteEdit({ variantId: l.variantId, draft: e.target.value })}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  setLineNote(l.variantId, noteEdit.draft);
-                                  setNoteEdit(null);
-                                }
-                              }}
-                              placeholder="Line note — gift wrap, engraving, size remark…"
-                              aria-label={`Note for ${l.productName}`}
-                              autoFocus
-                              className="h-8 rounded-lg text-[12px]"
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              className={cn("h-8 shrink-0 rounded-lg px-3 text-[11.5px] font-semibold", BRAND.solid)}
-                              onClick={() => {
-                                setLineNote(l.variantId, noteEdit.draft);
-                                setNoteEdit(null);
-                              }}
-                            >
-                              Save
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8 shrink-0 rounded-lg px-3 text-[11.5px] font-semibold"
-                              onClick={() => setNoteEdit(null)}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* adjustments — Tax % / Discount / Shipping, summary, coupon, grand total */}
-          <div className="stellora-scroll max-h-[42vh] shrink-0 space-y-2.5 overflow-y-auto border-t border-border/60 bg-muted/60 px-4 py-3">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="space-y-1">
-                <Label htmlFor="pos-tax" className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Tax %
-                </Label>
-                <div className="relative">
-                  <Input
-                    id="pos-tax"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.5}
-                    inputMode="decimal"
-                    value={taxPercent}
-                    onChange={(e) => setTaxPercent(e.target.value)}
-                    placeholder="0"
-                    className="h-9 rounded-lg border-border bg-card pr-7 text-[12px]"
-                  />
-                  <Percent className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
-                </div>
-              </div>
-              <div className="col-span-2 space-y-1">
-                <Label htmlFor="pos-discount" className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Bill discount
-                </Label>
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => switchDiscountMode(discountMode === "flat" ? "pct" : "flat")}
-                    aria-label={discountMode === "flat" ? "Switch discount to percent" : "Switch discount to flat amount"}
-                    title={discountMode === "flat" ? "Flat ₹ — switch to %" : "Percent — switch to flat ₹"}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-[13px] font-bold text-primary transition hover:border-primary/50"
-                  >
-                    {discountMode === "flat" ? "₹" : "%"}
-                  </button>
-                  <Input
-                    id="pos-discount"
-                    type="number"
-                    min={0}
-                    max={discountMode === "pct" ? 100 : undefined}
-                    step={discountMode === "pct" ? 0.5 : 1}
-                    inputMode="decimal"
-                    value={discount}
-                    onChange={(e) => setDiscount(e.target.value)}
-                    placeholder={discountMode === "pct" ? "0%" : "₹ 0"}
-                    className="h-9 min-w-0 flex-1 rounded-lg border-border bg-card text-[12px]"
-                  />
-                </div>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Quick</span>
-              <button
-                type="button"
-                onClick={() => {
-                  switchDiscountMode("pct");
-                  setDiscount("5");
-                }}
-                className="tnum rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-              >
-                5%
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  switchDiscountMode("pct");
-                  setDiscount("10");
-                }}
-                className="tnum rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-              >
-                10%
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  switchDiscountMode("flat");
-                  setDiscount("100");
-                }}
-                className="tnum rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-              >
-                ₹100
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  switchDiscountMode("flat");
-                  setDiscount("500");
-                }}
-                className="tnum rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-              >
-                ₹500
-              </button>
-            </div>
-            {discountInvalid && (
-              <p className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
-                Discount cannot exceed the subtotal ({formatINR(subtotal)}).
-              </p>
-            )}
-            <div className="space-y-1 text-[12px]">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span className="tnum font-semibold">{formatINR(subtotal)}</span>
-              </div>
-              {appliedDiscount > 0 && (
-                <div className="flex justify-between text-rose-600 dark:text-rose-400">
-                  <span>
-                    Discount
-                    {discountMode === "pct" && billDiscount > 0 ? ` (${discount}%)` : ""}
-                    {appliedCoupon ? ` · ${appliedCoupon.code}` : ""}
-                  </span>
-                  <span className="tnum font-semibold">−{formatINR(appliedDiscount)}</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Tax</span>
-                <span className="tnum font-semibold">{formatINR(taxTotal)}</span>
-              </div>
-              {shippingNum > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Shipping</span>
-                  <span className="tnum font-semibold">{formatINR(shippingNum)}</span>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Input
-                value={couponCode}
-                onChange={(e) => setCouponCode(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void applyCoupon();
-                  }
-                }}
-                placeholder={appliedCoupon ? appliedCoupon.code : "PROMO CODE"}
-                aria-label="Promo code"
-                disabled={bill.length === 0}
-                className="h-9 min-w-0 flex-1 rounded-lg border-border bg-card text-[11px] uppercase tracking-wide placeholder:text-muted-foreground/70"
-              />
-              {appliedCoupon ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-9 shrink-0 rounded-lg border-rose-500/40 px-4 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:text-rose-400"
-                  onClick={removeCoupon}
-                >
-                  <X className="h-3.5 w-3.5" /> Remove
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={couponBusy || bill.length === 0 || !couponCode.trim()}
-                  className={cn("h-9 shrink-0 rounded-lg px-5 text-[12px] font-semibold", BRAND.solid)}
-                  onClick={() => void applyCoupon()}
-                >
-                  {couponBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
-                </Button>
-              )}
-            </div>
-            {appliedCoupon && (
-              <p className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                <Ticket className="h-3.5 w-3.5 shrink-0" />
-                {appliedCoupon.code} saves {formatINR(couponDiscount)}
-              </p>
-            )}
-            <div className="flex items-baseline justify-between border-t border-border pt-2">
-              <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Total Payable</span>
-              <span className="tnum text-[22px] font-extrabold leading-none">{formatINR(grandTotal)}</span>
-            </div>
-          </div>
-
-          {/* actions row — sync chip, home, reset, hold, held bills */}
-          <div className="flex shrink-0 items-center gap-1.5 border-t border-border/60 px-3 py-2">
-            <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 xl:inline-flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Online · synced
-            </span>
-            <button
-              type="button"
-              className={cn(iconBtn, "h-9 w-9")}
-              title="Admin home"
-              aria-label="Admin home"
-              onClick={() => router.push("/admin")}
-            >
-              <Home className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              className={cn(iconBtn, "h-9 w-9")}
-              title="Reset this bill"
-              aria-label="Reset this bill"
-              disabled={bill.length === 0}
-              onClick={() => {
-                if (bill.length === 0) return;
-                playPosSound("remove");
-                resetBill();
-              }}
-            >
-              <RotateCcw className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-semibold text-foreground/80 transition hover:border-primary/40 hover:text-primary disabled:opacity-40"
-              disabled={bill.length === 0}
-              onClick={holdBill}
-              title="Hold bill (F7)"
-            >
-              <Pause className="h-3.5 w-3.5" /> Hold
-            </button>
-            <button
-              type="button"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-semibold text-foreground/80 transition hover:border-primary/40 hover:text-primary"
-              onClick={() => {
-                playPosSound("click");
-                setHeldOpen(true);
-              }}
-              title="Held bills (F8)"
-            >
-              <History className="h-3.5 w-3.5" /> Held
-              <span
-                className={cn(
-                  "tnum inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-[10px] font-bold",
-                  held.length > 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                )}
-              >
-                {held.length}
-              </span>
-            </button>
-          </div>
-
-          {/* sticky bottom — customer selector + huge pay button */}
-          <div className="shrink-0 space-y-2 border-t border-border bg-card px-3 pb-2 pt-2.5">
-            <button
-              type="button"
-              onClick={openCustPicker}
-              className="flex w-full items-center gap-2.5 rounded-xl border border-border px-3 py-2 text-left transition hover:border-primary/40 hover:bg-accent"
-              title="Attach customer — search by mobile number or create instantly"
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-[12px] font-bold text-emerald-700 dark:text-emerald-300">
-                {(customerName ?? "W").charAt(0).toUpperCase()}
-              </span>
-              <span className="min-w-0 flex-1 leading-tight">
-                <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                  Customer{customerPoints !== null && customerPoints > 0 ? " · loyalty" : ""}
-                </span>
-                <span className="block truncate text-[12.5px] font-semibold">{customerName ?? "Walk-in customer"}</span>
-              </span>
-              {customerPhone && (
-                <span className="tnum shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-bold text-foreground/70">
-                  {customerPhone}
-                </span>
-              )}
-              {customerPoints !== null && customerPoints > 0 && (
-                <span className="tnum shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 dark:text-amber-300">
-                  {customerPoints} pts
-                </span>
-              )}
-              <UserRoundPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
-            </button>
-            <Button
-              type="button"
-              disabled={busy || bill.length === 0 || discountInvalid || !registerSession}
-              onClick={openPaymentDialog}
-              title={!registerSession ? "Open the register first" : "Charge the bill (F4)"}
-              className={cn("h-12 w-full rounded-xl text-[15px] font-bold shadow-md shadow-primary/20", BRAND.solid)}
-            >
-              <Check className="h-5 w-5" strokeWidth={3} />
-              Pay {formatINR(grandTotal)} · {billCount} item{billCount === 1 ? "" : "s"}
-            </Button>
-          </div>
-        </section>
-
-        {/* ---------- RIGHT: catalog ---------- */}
-        <section
-          className={cn(
-            "min-w-0 flex-1 flex-col bg-background lg:flex",
-            mobileTab === "browse" ? "flex" : "hidden"
           )}
-        >
-          {/* scan / search bar — one field: typing filters the grid live; a
-              scanner's Enter (or the Scan button) bills the code */}
-          <div
+        </header>
+
+        {/* ─────────── categories + filters ─────────── */}
+        <div className="flex shrink-0 items-center gap-2.5 overflow-x-auto border-b border-[#241e13] px-4 py-3 lg:px-6 stellora-scroll">
+          <button
+            type="button"
+            onClick={() => setCatFilter("")}
             className={cn(
-              "flex shrink-0 items-center gap-2 border-b border-border bg-card px-3 py-2 transition-colors",
-              scanFlash === "err" && "bg-rose-500/10",
-              scanFlash === "ok" && "bg-emerald-500/10"
+              "flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30",
+              !catFilter
+                ? "bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] shadow-[0_8px_20px_-8px_rgba(217,164,65,0.5)]"
+                : "border border-[#2b2418] bg-[#16130e] text-[#a19681] hover:border-[#453a24] hover:text-[#f2ecdf]"
             )}
           >
-            <div className="relative min-w-0 flex-1">
-              <ScanLine className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                ref={scanRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    const v = query;
-                    if (!v.trim()) return;
-                    setQuery("");
-                    void handleScan(v);
-                  }
-                }}
-                placeholder="Scan or search — code, SKU or product name"
-                aria-label="Barcode scanner and product search"
-                autoComplete="off"
-                autoFocus
-                className="h-10 rounded-lg border-border bg-muted pl-9 pr-9 text-[12.5px] focus-visible:border-primary/60 focus-visible:bg-card"
-              />
-              {refreshing && (
-                <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-primary" />
-              )}
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 shrink-0 rounded-lg border-border px-3 text-[12px] font-semibold text-foreground/80 hover:border-primary/40 hover:text-primary"
-              onClick={() => {
-                playPosSound("click");
-                setCamOpen(true);
-              }}
-              title="Scan with the camera"
-            >
-              <ScanLine className="h-4 w-4" /> Scan
-            </Button>
-          </div>
-
-          {/* category chips — horizontal scroll */}
-          <div className="stellora-scroll flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border/60 px-3 py-2">
+            <Sparkles className="h-3.5 w-3.5" /> All
+          </button>
+          {categories.map((c) => (
             <button
+              key={c.id}
               type="button"
-              aria-pressed={catFilter === ""}
-              onClick={() => {
-                setCatFilter("");
-                playPosSound("click");
-              }}
+              onClick={() => setCatFilter(cFilter => (cFilter === c.slug ? "" : c.slug))}
               className={cn(
-                "h-8 shrink-0 rounded-full px-3.5 text-[12px] font-semibold transition",
-                catFilter === ""
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "border border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-primary"
+                "flex h-9 shrink-0 items-center rounded-full px-4 text-[12.5px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30",
+                catFilter === c.slug
+                  ? "bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] shadow-[0_8px_20px_-8px_rgba(217,164,65,0.5)]"
+                  : "border border-[#2b2418] bg-[#16130e] text-[#a19681] hover:border-[#453a24] hover:text-[#f2ecdf]"
               )}
             >
-              All
+              {c.name}
             </button>
-            {categories.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                aria-pressed={catFilter === c.slug}
-                onClick={() => {
-                  setCatFilter(c.slug);
-                  playPosSound("click");
-                }}
-                className={cn(
-                  "h-8 shrink-0 rounded-full px-3.5 text-[12px] font-semibold transition",
-                  catFilter === c.slug
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "border border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-primary"
-                )}
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
-
-          {/* filter + sort row */}
-          <div className="flex shrink-0 items-center gap-1.5 px-3 py-2">
+          ))}
+          <span className="mx-1 hidden h-6 w-px shrink-0 bg-[#2b2418] sm:block" />
+          {/* stock filter + sort */}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <button
               type="button"
-              aria-pressed={inStockOnly}
               onClick={() => {
                 setInStockOnly((v) => !v);
                 setOutOnly(false);
               }}
               className={cn(
-                "h-8 rounded-full px-3 text-[11.5px] font-semibold transition",
+                "hidden h-9 items-center rounded-full border px-3.5 text-[11.5px] font-bold transition sm:flex",
                 inStockOnly
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "border border-border bg-card text-muted-foreground hover:border-emerald-500/40 hover:text-emerald-700 dark:hover:text-emerald-300"
+                  ? "border-[#3dd68c]/40 bg-[#3dd68c]/10 text-[#5cd69c]"
+                  : "border-[#2b2418] bg-[#16130e] text-[#8b8170] hover:text-[#f2ecdf]"
               )}
             >
               In stock
             </button>
             <button
               type="button"
-              aria-pressed={outOnly}
               onClick={() => {
                 setOutOnly((v) => !v);
                 setInStockOnly(false);
               }}
               className={cn(
-                "h-8 rounded-full px-3 text-[11.5px] font-semibold transition",
+                "hidden h-9 items-center rounded-full border px-3.5 text-[11.5px] font-bold transition sm:flex",
                 outOnly
-                  ? "bg-rose-600 text-white shadow-sm"
-                  : "border border-border bg-card text-muted-foreground hover:border-rose-500/40 hover:text-rose-600 dark:hover:text-rose-400"
+                  ? "border-[#e5484d]/40 bg-[#e5484d]/10 text-[#f27f82]"
+                  : "border-[#2b2418] bg-[#16130e] text-[#8b8170] hover:text-[#f2ecdf]"
               )}
             >
               Out
             </button>
-            <span className="min-w-2 flex-1" />
-            <span className="hidden items-center gap-1 rounded-lg border border-border bg-card px-2 py-1 sm:flex" title="Toggle grid density">
-              <button
-                type="button"
-                aria-pressed={!dense}
-                aria-label="Comfortable grid (3 columns)"
-                onClick={() => setDense(false)}
-                className={cn(
-                  "tnum flex h-6 w-6 items-center justify-center rounded-md text-[11px] font-bold transition",
-                  !dense ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                3
-              </button>
-              <button
-                type="button"
-                aria-pressed={dense}
-                aria-label="Dense grid (4 columns)"
-                onClick={() => setDense(true)}
-                className={cn(
-                  "tnum flex h-6 w-6 items-center justify-center rounded-md text-[11px] font-bold transition",
-                  dense ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                4
-              </button>
-            </span>
             <div className="relative">
-              <ArrowUpDown className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6b6252]" />
               <select
                 value={sortMode}
                 onChange={(e) => setSortMode(e.target.value as typeof sortMode)}
                 aria-label="Sort products"
-                className="h-8 max-w-36 rounded-lg border border-border bg-card pl-8 pr-2 text-[11.5px] font-medium text-foreground outline-none transition focus:border-primary/60"
+                className="h-9 appearance-none rounded-full border border-[#2b2418] bg-[#16130e] pl-8 pr-3 text-[11.5px] font-bold text-[#a19681] outline-none transition hover:text-[#f2ecdf] focus:border-[#d9a441]/50"
               >
                 <option value="featured">Featured</option>
-                <option value="price-asc">Price: low to high</option>
-                <option value="price-desc">Price: high to low</option>
-                <option value="stock">Stock: high first</option>
+                <option value="price-asc">Price ↑</option>
+                <option value="price-desc">Price ↓</option>
+                <option value="stock">Stock</option>
               </select>
             </div>
           </div>
+        </div>
 
-          {/* product grid */}
-          <div className="stellora-scroll min-h-0 flex-1 overflow-y-auto p-3">
-            {products === null ? (
-              <div className={cn("grid grid-cols-2 gap-3", dense ? "md:grid-cols-4 2xl:grid-cols-5" : "md:grid-cols-3 2xl:grid-cols-4")}>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} className="rounded-xl border border-border bg-card p-2.5">
-                    <Skeleton className="mb-2 h-24 w-full rounded-lg" />
-                    <Skeleton className="mb-1.5 h-3.5 w-3/4" />
-                    <Skeleton className="h-3 w-1/2" />
+        {/* ─────────── catalog grid ─────────── */}
+        <main
+          className={cn(
+            "stellora-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-28 pt-5 lg:px-6 lg:pb-8",
+            mobileTab !== "browse" && "hidden lg:block"
+          )}
+        >
+          {visibleProducts === null ? (
+            /* skeleton cards */
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div key={i} className="overflow-hidden rounded-2xl border border-[#241e13] bg-[#14110d]">
+                  <div className="aspect-[4/3] animate-pulse bg-[#1c1710]" />
+                  <div className="space-y-2 p-3.5">
+                    <div className="h-3.5 w-3/4 animate-pulse rounded bg-[#1c1710]" />
+                    <div className="h-3 w-1/2 animate-pulse rounded bg-[#1c1710]" />
+                    <div className="h-4 w-1/3 animate-pulse rounded bg-[#1c1710]" />
                   </div>
-                ))}
-              </div>
-            ) : prodFailed ? (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-                <PackageOpen className="h-12 w-12 text-foreground/15" strokeWidth={1.5} />
-                <p className="text-[13px] font-semibold text-muted-foreground">Could not load products</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-9 rounded-lg text-[12px] font-semibold"
-                  onClick={() => void fetchProducts(1, query, catFilter)}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" /> Retry
-                </Button>
-              </div>
-            ) : !visibleProducts || visibleProducts.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-                <PackageOpen className="h-12 w-12 text-foreground/15" strokeWidth={1.5} />
-                <p className="text-[13px] font-semibold text-muted-foreground">No products found</p>
-                <p className="text-[11px] text-muted-foreground">Try a different search term or category.</p>
-              </div>
-            ) : (
-              <div className={cn("grid grid-cols-2 gap-3", dense ? "md:grid-cols-4 2xl:grid-cols-5" : "md:grid-cols-3 2xl:grid-cols-4")}>
-                {visibleProducts.map((p) => {
-                  const active = p.variants.filter((v) => v.isActive);
-                  const stock = active.reduce((s, v) => s + v.stock, 0);
-                  const lowest = active.reduce<ApiVariant | null>(
-                    (m, v) => (!m || Number(v.price) < Number(m.price) ? v : m),
-                    null
-                  );
-                  const price = lowest ? Number(lowest.price) : 0;
-                  const compareAt = lowest?.compareAtPrice != null ? Number(lowest.compareAtPrice) : 0;
-                  const dealPct = compareAt > price ? Math.round(((compareAt - price) / compareAt) * 100) : 0;
-                  const out = stock === 0;
-                  const low = !out && stock <= 3;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      disabled={out}
-                      onClick={() => handleProductClick(p)}
-                      aria-label={out ? `${p.name} — out of stock` : `Add ${p.name} to bill`}
-                      className={cn(
-                        "group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card text-left transition hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-md hover:shadow-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                        out && "cursor-not-allowed opacity-45"
-                      )}
-                    >
-                      <div className="relative flex h-24 items-center justify-center overflow-hidden bg-muted p-2">
-                        <Image
-                          src={p.images[0]?.url ?? "/images/placeholder.svg"}
-                          alt=""
-                          fill
-                          sizes="(max-width: 768px) 45vw, 220px"
-                          className="object-contain transition duration-300 group-hover:scale-105"
-                        />
-                        {dealPct > 0 && (
-                          <span className="tnum absolute left-1.5 top-1.5 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white shadow">
-                            −{dealPct}%
-                          </span>
-                        )}
-                        {out && (
-                          <span className="absolute inset-0 flex items-center justify-center bg-card/60 text-[11px] font-bold uppercase tracking-wide text-rose-600">
-                            Out of stock
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex min-h-0 flex-1 flex-col gap-0.5 p-2.5">
-                        <p className="line-clamp-1 text-[12.5px] font-semibold" title={p.name}>
-                          {p.name}
-                        </p>
-                        <p className="truncate text-[10.5px] text-muted-foreground">
-                          SKU {active[0]?.sku ?? "—"}
-                        </p>
-                        <div className="mt-auto flex items-center justify-between pt-1">
-                          <span className="tnum text-[13.5px] font-extrabold text-primary">
-                            {formatINR(price)}
-                          </span>
-                          {compareAt > price && (
-                            <span className="tnum text-[10.5px] text-muted-foreground line-through">
-                              {formatINR(compareAt)}
-                            </span>
-                          )}
-                          <span
-                            aria-hidden
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-accent-foreground transition group-hover:bg-primary group-hover:text-primary-foreground"
-                          >
-                            <Plus className="h-4 w-4" strokeWidth={2.5} />
-                          </span>
-                        </div>
-                        <div className="mt-1 flex items-center justify-between gap-1">
-                          <span
-                            className={cn(
-                              "tnum inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold",
-                              out
-                                ? "bg-rose-500/15 text-rose-600 dark:text-rose-300"
-                                : low
-                                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                                  : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                            )}
-                          >
-                            {out ? "Out of stock" : low ? `${stock} left` : `In stock · ${stock}`}
-                          </span>
-                          {active.length > 1 && (
-                            <span className="text-[10px] text-muted-foreground">{active.length} variants</span>
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* pagination footer — Page N / M products + numbered chips */}
-          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-card px-3 py-2">
-            <p className="text-center text-[11px] leading-tight text-muted-foreground">
-              <span className="block font-semibold text-foreground">Page {page}</span>
-              <span className="tnum">{total} products</span>
-            </p>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                aria-label="Previous page"
-                disabled={page <= 1}
-                onClick={() => void fetchProducts(page - 1, query, catFilter)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-30"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              {pageWindow.map((pw, i) =>
-                pw === "…" ? (
-                  <span key={`e-${i}`} className="px-1 text-[11px] text-muted-foreground">
-                    …
-                  </span>
-                ) : (
-                  <button
-                    key={pw}
-                    type="button"
-                    aria-current={pw === page ? "page" : undefined}
-                    onClick={() => void fetchProducts(pw, query, catFilter)}
-                    className={cn(
-                      "tnum flex h-9 min-w-9 items-center justify-center rounded-lg px-1.5 text-[12px] font-bold transition",
-                      pw === page
-                        ? "bg-primary text-primary-foreground shadow-sm shadow-primary/30"
-                        : "border border-border text-foreground/80 hover:border-primary/40 hover:text-primary"
-                    )}
-                  >
-                    {pw}
-                  </button>
-                )
-              )}
-              <button
-                type="button"
-                aria-label="Next page"
-                disabled={page >= pages}
-                onClick={() => void fetchProducts(page + 1, query, catFilter)}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-30"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {/* mobile bottom bar — tab switcher + sticky pay on the cart tab */}
-      <nav
-        className="flex shrink-0 items-center gap-2 border-t border-border bg-card px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 lg:hidden"
-        aria-label="POS sections"
-      >
-        <button
-          type="button"
-          aria-pressed={mobileTab === "browse"}
-          onClick={() => {
-            setMobileTab("browse");
-            playPosSound("click");
-          }}
-          className={cn(
-            "flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl text-[13px] font-bold transition",
-            mobileTab === "browse"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "border border-border text-muted-foreground"
-          )}
-        >
-          <ScanLine className="h-4 w-4" /> Browse
-        </button>
-        <button
-          type="button"
-          aria-pressed={mobileTab === "cart"}
-          onClick={() => {
-            setMobileTab("cart");
-            playPosSound("click");
-          }}
-          className={cn(
-            "flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl text-[13px] font-bold transition",
-            mobileTab === "cart"
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "border border-border text-muted-foreground"
-          )}
-        >
-          <ShoppingCart className="h-4 w-4" /> Cart
-          <span
-            className={cn(
-              "tnum inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10.5px] font-bold",
-              billCount > 0
-                ? mobileTab === "cart"
-                  ? "bg-primary-foreground/20"
-                  : "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground"
-            )}
-          >
-            {billCount}
-          </span>
-        </button>
-        {mobileTab === "cart" && (
-          <Button
-            type="button"
-            disabled={busy || bill.length === 0 || discountInvalid || !registerSession}
-            onClick={openPaymentDialog}
-            title={!registerSession ? "Open the register first" : "Charge the bill (F4)"}
-            className={cn("h-11 flex-[1.4] rounded-xl text-[13.5px] font-bold", BRAND.solid)}
-          >
-            <Check className="h-4 w-4" strokeWidth={3} /> Pay {formatINR(grandTotal)}
-          </Button>
-        )}
-      </nav>
-      {/* ---------- variant quick-pick (multi-variant products) ---------- */}
-      <Dialog open={!!variantPicker} onOpenChange={(o) => !o && setVariantPickerId(null)}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{variantPicker?.name}</DialogTitle>
-            <DialogDescription>Tap a variant to add it to the bill.</DialogDescription>
-          </DialogHeader>
-          <div className="stellora-scroll max-h-80 space-y-1.5 overflow-y-auto">
-            {variantPicker?.variants
-              .filter((v) => v.isActive)
-              .map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  disabled={v.stock <= 0}
-                  onClick={() => {
-                    if (variantPicker) addVariant(variantPicker, v);
-                    setVariantPickerId(null);
-                  }}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5 text-left text-sm transition",
-                    v.stock <= 0
-                      ? "cursor-not-allowed opacity-40"
-                      : "hover:border-primary/60 hover:bg-accent"
-                  )}
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold">{v.name}</span>
-                    <span className="block text-[11px] text-muted-foreground">{v.sku}</span>
-                  </span>
-                  <span className="shrink-0 text-right">
-                    <span className="tnum block font-bold text-primary">{formatINR(Number(v.price))}</span>
-                    <span className={cn("tnum block text-[11px]", v.stock <= 0 ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground")}>
-                      {v.stock <= 0 ? "Out of stock" : `${v.stock} in stock`}
-                    </span>
-                  </span>
-                </button>
+                </div>
               ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ---------- camera scanner ---------- */}
-      <Dialog open={camOpen} onOpenChange={setCamOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScanLine className="h-4 w-4" /> Camera scanner
-            </DialogTitle>
-            <DialogDescription>
-              Point the camera at a barcode — matched products are added to the bill automatically.
-            </DialogDescription>
-          </DialogHeader>
-          {camSupported ? (
-            <div className="overflow-hidden rounded-lg border border-foreground/30 bg-black">
-              <video ref={videoRef} playsInline muted className="aspect-video w-full object-cover" />
+            </div>
+          ) : visibleProducts.length === 0 ? (
+            <div className="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
+              <span className="flex h-16 w-16 items-center justify-center rounded-3xl border border-[#2b2418] bg-[#16130e]">
+                <PackageOpen className="h-7 w-7 text-[#6b6252]" />
+              </span>
+              {prodFailed ? (
+                <>
+                  <p className="text-[15px] font-bold">Catalog failed to load</p>
+                  <button
+                    type="button"
+                    onClick={() => void fetchProducts(1, query, catFilter)}
+                    className="mt-1 inline-flex items-center gap-2 rounded-xl border border-[#d9a441]/40 px-4 py-2 text-[12px] font-bold text-[#e8bd68] transition hover:bg-[#d9a441]/10"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Retry
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-[15px] font-bold">No products match</p>
+                  <p className="max-w-60 text-[12.5px] text-[#8b8170]">
+                    Try another search term, category or filter — scanned codes also work.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
-            <p className="rounded-lg border border-dashed border-input p-4 text-sm text-muted-foreground">
-              Camera scanning is not available in this browser (unsupported API or camera permission
-              denied). Use a USB barcode scanner or type the SKU instead.
-            </p>
-          )}
-          <Button variant="outline" className="w-full rounded-lg" onClick={() => setCamOpen(false)}>
-            Close
-          </Button>
-        </DialogContent>
-      </Dialog>
-
-      {/* ---------- held bills drawer (Stocky "Recent drafts") ---------- */}
-      <Sheet open={heldOpen} onOpenChange={setHeldOpen}>
-        <SheetContent side="right" className="stellora-scroll w-full overflow-y-auto sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <History className="h-4 w-4" /> Held bills
-            </SheetTitle>
-            <SheetDescription>
-              Paused customers wait here — restore any bill to continue billing.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="px-4 pb-6">
-            {held.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-input p-4 text-center text-sm text-muted-foreground">
-                No bills on hold. Press F7 to hold the current bill.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                {held.map((h) => {
-                  const hTotal = h.lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
-                  return (
-                    <div key={h.id} className="rounded-lg border border-border px-3 py-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-[13px] font-semibold">
-                            {h.lines.length} item{h.lines.length === 1 ? "" : "s"} ·{" "}
-                            <span className="tnum">{formatINR(hTotal)}</span>
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            Held at {new Date(h.at).toLocaleTimeString()}
-                            {h.customerName ? ` · ${h.customerName}` : ""}
-                          </p>
-                          {h.note && <p className="truncate text-[11px] text-muted-foreground">{h.note}</p>}
-                        </div>
-                        <div className="flex shrink-0 gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            className={cn("h-8 rounded-lg text-xs", BRAND.solid)}
-                            onClick={() => resumeBill(h)}
-                          >
-                            Restore
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8 rounded-lg"
-                            aria-label="Discard held bill"
-                            onClick={() => {
-                              playPosSound("remove");
-                              setHeld(held.filter((x) => x.id !== h.id));
-                            }}
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* ---------- recent sales drawer ---------- */}
-      <Sheet open={recentOpen} onOpenChange={setRecentOpen}>
-        <SheetContent side="right" className="stellora-scroll w-full overflow-y-auto sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <History className="h-4 w-4" /> Recent sales
-            </SheetTitle>
-            <SheetDescription>Last 8 bills — reprint a receipt or copy its number.</SheetDescription>
-          </SheetHeader>
-          <div className="px-4 pb-6">
-            {/* Day pulse — revenue by hour (IST business day) */}
-            {today?.hourly && today.hourly.some((h) => h.revenue > 0) && (
-              <div className="mb-4 rounded-lg border border-border p-3">
-                <p className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                  <span>Day pulse · revenue by hour</span>
-                  <span className="tnum text-[10px] font-semibold text-primary">{formatINR(today.revenue)}</span>
-                </p>
-                <ColumnChart
-                  data={today.hourly.filter((h) => h.hour >= 7 && h.hour <= 23).map((h) => ({ label: `${h.hour > 12 ? h.hour - 12 : h.hour || 12}${h.hour >= 12 ? "p" : "a"}`, value: h.revenue }))}
-                  height={72}
-                  format="inr"
-                  accent="hsl(var(--primary))"
-                />
-                <p className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground tnum">
-                  <span>Cash {formatINR(today.cashSales)}</span>
-                  <span>Other {formatINR(today.nonCashSales)}</span>
-                  <span>POS bills {today.posOrders}</span>
-                </p>
-              </div>
-            )}
-            {recentBusy ? (
-              <div className="space-y-2">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="rounded-lg border border-border p-3">
-                    <Skeleton className="mb-2 h-4 w-2/3" />
-                    <Skeleton className="h-3 w-1/2" />
-                  </div>
-                ))}
-              </div>
-            ) : recentErr ? (
-              <div className="space-y-3 text-center">
-                <p className="rounded-lg border border-dashed border-input p-4 text-sm text-muted-foreground">
-                  Could not load recent sales.
-                </p>
-                <Button variant="outline" size="sm" className="h-9 rounded-lg text-[12px] font-semibold" onClick={() => void fetchRecent()}>
-                  <RotateCcw className="h-3.5 w-3.5" /> Retry
-                </Button>
-              </div>
-            ) : !recentOrders || recentOrders.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-input p-4 text-center text-sm text-muted-foreground">
-                No sales yet today — the first bill will appear here.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                {recentOrders.map((o) => (
-                  <div key={o.id} className="rounded-lg border border-border px-3 py-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="flex items-center gap-1.5 truncate text-[13px] font-bold">
-                          {o.orderNumber}
-                          {o.source === "POS" && (
-                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-primary">
-                              POS
-                            </span>
-                          )}
-                        </p>
-                        <p className="truncate text-[11px] text-muted-foreground">
-                          {formatDateTime(o.createdAt)} · {o.user?.name ?? "Walk-in customer"}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="tnum text-[13px] font-bold">{formatINR(Number(o.grandTotal))}</p>
-                        <p className="text-[10.5px] text-muted-foreground">
-                          {methodLabel(o.payments[0]?.method ?? o.paymentMethod ?? "CASH")}
-                          {o.paymentStatus && o.paymentStatus.toUpperCase() !== "PAID" ? ` · ${o.paymentStatus}` : ""}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex gap-1.5">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 flex-1 rounded-lg text-[11.5px] font-semibold"
-                        onClick={() => {
-                          setReceipt(receiptFromOrder(o));
-                          setReceiptIsReprint(true);
-                          setRecentOpen(false);
-                          playPosSound("click");
-                        }}
-                      >
-                        <Printer className="h-3 w-3" /> Reprint
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 flex-1 rounded-lg text-[11.5px] font-semibold"
-                        onClick={() => {
-                          const clip = navigator.clipboard;
-                          if (clip?.writeText) {
-                            clip
-                              .writeText(o.orderNumber)
-                              .then(() => toast.success("Receipt number copied"))
-                              .catch(() => toast.error("Could not copy the receipt number"));
-                          } else {
-                            toast.error("Clipboard is not available in this browser");
-                          }
-                        }}
-                      >
-                        <Copy className="h-3 w-3" /> Copy no.
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
-
-      {/* ---------- customer quick-picker — mobile-first + counter quick-add ---------- */}
-      <Dialog open={custOpen} onOpenChange={setCustOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <UserRound className="h-4 w-4" /> Attach customer
-            </DialogTitle>
-            <DialogDescription>
-              Search by mobile number — registered customers earn loyalty points.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="relative">
-            <UserRoundPlus className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={custQuery}
-              onChange={(e) => setCustQuery(e.target.value)}
-              placeholder="Name, mobile or email…"
-              className="rounded-lg pl-9"
-              autoFocus
-            />
-          </div>
-          <div className="stellora-scroll max-h-64 space-y-1.5 overflow-y-auto">
-            {custHits === null ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
-            ) : custHits.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-input p-4 text-center text-sm text-muted-foreground">
-                No customer found. Add a new customer instantly with the button below.
-              </p>
-            ) : (
-              custHits.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => {
-                    setCustomerEmail(c.email ?? "");
-                    setCustomerPhone(c.phone ?? "");
-                    setCustomerName(c.name);
-                    setCustomerPoints(Number(c.points ?? 0));
-                    setCustOpen(false);
-                    playPosSound("click");
-                    toast.success(`${c.name} attached — ${c.points} points`);
-                  }}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5 text-left text-sm transition hover:border-primary/60 hover:bg-accent"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate font-semibold">{c.name}</span>
-                    <span className="tnum block truncate text-[11px] text-muted-foreground">
-                      {c.phone ? `+91 ${c.phone}` : c.email || "—"}
-                      {c.phone && c.email ? ` · ${c.email}` : ""}
-                    </span>
-                  </span>
-                  <span className="tnum shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">
-                    {c.points} pts
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-          <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
-            <p className="text-[11px] leading-tight text-muted-foreground">
-              New customer? Just a name and mobile number — done in 10 seconds.
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              className={cn("h-9 shrink-0 rounded-lg px-4 text-[12px] font-semibold", BRAND.solid)}
-              onClick={() => {
-                setCustOpen(false);
-                setCustCreateOpen(true);
-              }}
-            >
-              <UserRoundPlus className="h-3.5 w-3.5" /> New customer
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ---------- quick customer create — name + mobile ---------- */}
-      <Dialog open={custCreateOpen} onOpenChange={setCustCreateOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <UserRoundPlus className="h-4 w-4" /> New customer
-            </DialogTitle>
-            <DialogDescription>
-              The account is created instantly — the customer can log in with this mobile number.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="cust-new-name">Name</Label>
-              <Input
-                id="cust-new-name"
-                value={custNewName}
-                onChange={(e) => setCustNewName(e.target.value)}
-                placeholder="Customer's name"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cust-new-phone">
-                Mobile number <span className="text-destructive">*</span>
-              </Label>
-              <div className="relative">
-                <span className="text-muted-foreground pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold">
-                  +91
-                </span>
-                <Input
-                  id="cust-new-phone"
-                  value={custNewPhone}
-                  onChange={(e) => setCustNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                  inputMode="numeric"
-                  placeholder="98765 43210"
-                  className="tnum pl-12"
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cust-new-email">
-                Email <span className="text-muted-foreground font-normal">(optional)</span>
-              </Label>
-              <Input
-                id="cust-new-email"
-                value={custNewEmail}
-                onChange={(e) => setCustNewEmail(e.target.value)}
-                type="email"
-                placeholder="you@example.com"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="h-10 flex-1 rounded-xl" onClick={() => setCustCreateOpen(false)}>
-                Cancel
-              </Button>
-              <Button className={cn("h-10 flex-1 rounded-xl", BRAND.solid)} disabled={custNewBusy} onClick={() => void quickCreateCustomer()}>
-                {custNewBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add customer"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ===== Payment checkout — amount-due band, method tiles, cash numpad,
-             split tenders, notes, loyalty ===== */}
-      <Dialog
-        open={payOpen}
-        onOpenChange={(o) => {
-          if (!o && !busy) setPayOpen(false);
-        }}
-      >
-        <DialogContent className="max-h-[94dvh] gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-2xl">
-          <DialogHeader className="flex-row items-center justify-between space-y-0 border-b border-primary/30 bg-primary px-5 py-4 text-left text-primary-foreground">
-            <DialogTitle className="flex items-center gap-2.5 text-[16px] font-bold">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/15">
-                <Wallet className="h-5 w-5" />
-              </span>
-              Take payment
-            </DialogTitle>
-            <div className="text-right leading-tight">
-              <p className="text-[9px] font-bold uppercase tracking-[0.16em] opacity-80">Amount due</p>
-              <p className="tnum text-[20px] font-extrabold">{formatINR(grandTotal)}</p>
-            </div>
-            <DialogDescription className="sr-only">
-              Take cash, card and UPI in any combination — change is calculated automatically.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="stellora-scroll max-h-[68dvh] space-y-3.5 overflow-y-auto p-5">
-            {/* status chips */}
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl border border-border bg-muted/60 px-2 py-2">
-                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Paying</p>
-                <p className="tnum text-[14px] font-extrabold text-emerald-700 dark:text-emerald-400">
-                  {formatINR(Math.min(tenderSum, grandTotal))}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border bg-muted/60 px-2 py-2">
-                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Balance</p>
-                <p className={cn("tnum text-[14px] font-extrabold", balanceDue > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>
-                  {formatINR(balanceDue)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border bg-muted/60 px-2 py-2">
-                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Change</p>
-                <p className="tnum text-[14px] font-extrabold text-sky-600 dark:text-sky-400">
-                  {formatINR(changeForCustomer)}
-                </p>
-              </div>
-            </div>
-
-            {/* primary tender — method tiles + amount + cash numpad */}
-            <div className="rounded-xl border border-border bg-card p-3.5 shadow-sm">
-              <div className="mb-2.5 flex items-center justify-between">
-                <p className="flex items-center gap-2 text-[13px] font-bold">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
-                    1
-                  </span>
-                  {tenders.length > 1 ? "Payment 1" : "Payment"}
-                </p>
-                {tenders.length > 1 && (
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+              {visibleProducts.map((p) => {
+                const stock = stockOf(p);
+                const tone = stockTone(stock);
+                const price = minPriceOf(p);
+                const compare = p.variants.find((v) => v.isActive && Number(v.compareAtPrice) > Number(v.price))?.compareAtPrice;
+                const offPct =
+                  compare && Number(compare) > price && price > 0
+                    ? Math.round(((Number(compare) - price) / Number(compare)) * 100)
+                    : 0;
+                return (
                   <button
+                    key={p.id}
                     type="button"
-                    aria-label="Remove payment 1"
-                    className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-500/10 hover:text-rose-600"
-                    onClick={() => removeTender(0)}
+                    onClick={() => handleProductClick(p)}
+                    className="group relative flex flex-col overflow-hidden rounded-2xl border border-[#241e13] bg-[#15120d] text-left transition-all duration-200 hover:-translate-y-1 hover:border-[#d9a441]/45 hover:shadow-[0_22px_44px_-22px_rgba(217,164,65,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/40"
                   >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* method tiles */}
-              <div className="mb-2.5 grid grid-cols-4 gap-1.5">
-                {PAYMENT_METHODS.map(({ value, label, icon: Icon }) => {
-                  const on = tenders[0]?.method === value;
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={on}
-                      onClick={() => {
-                        updateTender(0, { method: value });
-                        setPaymentMethod(value);
-                        playPosSound("click");
-                      }}
-                      className={cn(
-                        "relative flex flex-col items-center gap-1 rounded-xl border px-1 py-2 text-[10.5px] font-semibold transition",
-                        on
-                          ? "border-primary bg-accent text-primary shadow-sm"
-                          : "border-border text-muted-foreground hover:border-primary/40 hover:bg-muted"
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "flex h-8 w-8 items-center justify-center rounded-lg",
-                          on ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                      </span>
-                      {label}
-                      {on && (
-                        <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white">
-                          <Check className="h-2.5 w-2.5" strokeWidth={4} />
+                    <span className="relative block aspect-[4/3] overflow-hidden bg-[#0b0a08]">
+                      {p.images[0]?.url ? (
+                        <Image
+                          src={p.images[0].url}
+                          alt={p.images[0].alt ?? p.name}
+                          fill
+                          sizes="(max-width:640px) 45vw, (max-width:1280px) 30vw, 22vw"
+                          className="object-cover transition duration-500 group-hover:scale-[1.06]"
+                        />
+                      ) : (
+                        <span className="flex h-full items-center justify-center">
+                          <ShoppingBasket className="h-8 w-8 text-[#2b2418]" />
                         </span>
                       )}
-                    </button>
-                  );
-                })}
-              </div>
+                      <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b0a08]/70 via-transparent to-transparent" />
+                      {offPct > 0 && (
+                        <span className="absolute left-3 top-3 rounded-lg bg-[#e5484d] px-2 py-0.5 text-[10px] font-black tracking-wide text-white shadow">
+                          −{offPct}%
+                        </span>
+                      )}
+                      {stock <= 0 && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-[#0b0a08]/72 backdrop-blur-[2px]">
+                          <span className="rounded-lg border border-[#e5484d]/40 bg-[#e5484d]/15 px-3 py-1 text-[10.5px] font-black uppercase tracking-[0.14em] text-[#f27f82]">
+                            Out of stock
+                          </span>
+                        </span>
+                      )}
+                      <span className="absolute bottom-3 right-3 flex h-9 w-9 translate-y-1.5 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] opacity-90 shadow-[0_10px_24px_-8px_rgba(217,164,65,0.6)] transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100 max-lg:translate-y-0 max-lg:opacity-100">
+                        <Plus className="h-4.5 w-4.5" strokeWidth={2.6} />
+                      </span>
+                    </span>
+                    <span className="flex flex-1 flex-col gap-1 p-3.5">
+                      <span className="truncate text-[13.5px] font-bold leading-snug text-[#f2ecdf]">{p.name}</span>
+                      <span className="truncate font-mono text-[9.5px] uppercase tracking-[0.1em] text-[#6b6252]">
+                        {p.variants.find((v) => v.isActive)?.sku ?? p.category?.name ?? ""}
+                      </span>
+                      <span className="mt-auto flex items-end justify-between pt-1.5">
+                        <span className="leading-none">
+                          <span className="tnum text-[15.5px] font-black text-[#e8bd68]">
+                            ₹{price.toLocaleString("en-IN")}
+                          </span>
+                          {compare && Number(compare) > price && (
+                            <span className="tnum ml-1.5 text-[10.5px] font-semibold text-[#6b6252] line-through">
+                              ₹{Number(compare).toLocaleString("en-IN")}
+                            </span>
+                          )}
+                        </span>
+                        <span className={cn("flex items-center gap-1.5 text-[10px] font-bold", tone.text)}>
+                          <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot)} />
+                          {stock > 0 ? `${tone.label.split("· ")[1] ?? tone.label}` : "Out"}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
-              {/* amount + quick tender chips */}
-              <div className="space-y-2">
-                <Label htmlFor="tender-amount-0" className="text-[11px] font-semibold text-muted-foreground">
-                  Amount tendered
-                </Label>
-                <Input
-                  id="tender-amount-0"
-                  type="number"
-                  min={0}
-                  step={1}
-                  inputMode="decimal"
-                  value={tenders[0]?.amount || ""}
-                  onChange={(e) => setTenderFromInput(0, e.target.value)}
-                  placeholder="0"
-                  aria-label="Amount tendered"
-                  className="tnum h-11 rounded-lg text-[18px] font-bold"
-                />
-                <div className="flex flex-wrap gap-1.5">
+          {/* pagination */}
+          {visibleProducts !== null && visibleProducts.length > 0 && (
+            <div className="mt-6 flex items-center justify-between">
+              <p className="text-[11.5px] font-semibold text-[#6b6252]">
+                Page <span className="text-[#a19681]">{page}</span> of {pages} · {total} products
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={page <= 1}
+                  onClick={() => void fetchProducts(page - 1, query, catFilter)}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#2b2418] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68] disabled:opacity-30"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                {pageWindow.map((n, i) =>
+                  n === "…" ? (
+                    <span key={`gap-${i}`} className="px-1 text-[11px] text-[#6b6252]">
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => void fetchProducts(n, query, catFilter)}
+                      className={cn(
+                        "tnum flex h-9 min-w-9 items-center justify-center rounded-xl px-2 text-[12px] font-bold transition",
+                        n === page
+                          ? "bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] shadow"
+                          : "border border-[#2b2418] text-[#a19681] hover:border-[#453a24] hover:text-[#f2ecdf]"
+                      )}
+                    >
+                      {n}
+                    </button>
+                  )
+                )}
+                <button
+                  type="button"
+                  disabled={page >= pages}
+                  onClick={() => void fetchProducts(page + 1, query, catFilter)}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#2b2418] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68] disabled:opacity-30"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* ─────────── mobile bottom tabs ─────────── */}
+        <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-[#241e13] bg-[#100d09]/95 px-4 py-3 backdrop-blur lg:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileTab("browse")}
+            className={cn(
+              "flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[12px] font-bold transition",
+              mobileTab === "browse" ? "bg-[#d9a441]/15 text-[#e8bd68]" : "text-[#8b8170]"
+            )}
+          >
+            <ShoppingBasket className="h-4.5 w-4.5" /> Browse
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileTab("cart")}
+            className={cn(
+              "relative flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[12px] font-bold transition",
+              mobileTab === "cart" ? "bg-[#d9a441]/15 text-[#e8bd68]" : "text-[#8b8170]"
+            )}
+          >
+            <ReceiptText className="h-4.5 w-4.5" /> Bill
+            {billCount > 0 && (
+              <span className="tnum absolute right-3 top-1 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] px-1 text-[9.5px] font-black text-[#241a06]">
+                {billCount}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* ══════════════════ BILL PANEL ══════════════════ */}
+      <aside
+        className={cn(
+          "stellora-scroll z-20 flex w-full shrink-0 flex-col border-l border-[#241e13] bg-[#12100c] pb-[76px] lg:w-[400px] lg:pb-0 xl:w-[432px]",
+          mobileTab !== "cart" && "hidden lg:flex"
+        )}
+      >
+        {/* panel header */}
+        <div className="flex h-[74px] shrink-0 items-center justify-between gap-2 border-b border-[#241e13] px-5">
+          <div className="flex items-baseline gap-2.5">
+            <h2 className="font-serif text-[19px] font-bold tracking-tight text-[#f2ecdf]">Current Bill</h2>
+            <Pill className="border-[#d9a441]/25 bg-[#d9a441]/8 text-[#e8bd68]">T-{terminalId || "—"}</Pill>
+          </div>
+          <div className="flex items-center gap-1">
+            {bill.length > 0 && (
+              <button type="button" onClick={clearBill} title="Clear the bill" className={ghostIcon}>
+                <Trash2 className="h-4.5 w-4.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                playPosSound("click");
+                setMobileTab("browse");
+              }}
+              title="Back to catalog"
+              className={cn(ghostIcon, "lg:hidden")}
+            >
+              <X className="h-4.5 w-4.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* customer strip */}
+        <div className="shrink-0 px-5 pt-4">
+          <div className="flex items-center gap-3 rounded-2xl border border-[#241e13] bg-[#17130d] p-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d9a441]/30 bg-[#d9a441]/10 text-[15px] font-black text-[#e8bd68]">
+              {customerName ? customerName.trim().charAt(0).toUpperCase() : <UserRound className="h-4.5 w-4.5 text-[#8b8170]" />}
+            </span>
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="truncate text-[13.5px] font-bold">{customerName ?? "Walk-in customer"}</p>
+              <p className="truncate text-[11px] text-[#8b8170]">
+                {customerPhone || customerEmail || "Tap to attach for loyalty points"}
+                {customerPoints !== null && customerPoints > 0 && (
+                  <span className="tnum ml-2 rounded-md bg-[#d9a441]/12 px-1.5 py-0.5 text-[10px] font-bold text-[#e8bd68]">
+                    ★ {customerPoints.toLocaleString("en-IN")} pts
+                  </span>
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openCustPicker}
+              title="Attach a customer"
+              className={ghostIcon}
+            >
+              <UserRound className="h-4.5 w-4.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustCreateOpen(true)}
+              title="New customer"
+              className={ghostIcon}
+            >
+              <UserRoundPlus className="h-4.5 w-4.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* lines */}
+        <div className="stellora-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {bill.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 pb-16 text-center">
+              <span className="pos-pop flex h-20 w-20 items-center justify-center rounded-[28px] border border-dashed border-[#3a3122] bg-[#17130d]">
+                <HandCoins className="h-8 w-8 text-[#4a4132]" />
+              </span>
+              <p className="mt-1 font-serif text-[16px] font-bold text-[#d8cdb9]">The counter is clear</p>
+              <p className="max-w-56 text-[12px] leading-relaxed text-[#8b8170]">
+                Tap a product, scan a barcode, or resume a held bill to start billing.
+              </p>
+            </div>
+          ) : (
+            <ul className="space-y-2.5">
+              {bill.map((l) => (
+                <li
+                  key={l.variantId}
+                  className="pos-slide rounded-2xl border border-[#262017] bg-[#17130d] p-3 transition hover:border-[#3a3122]"
+                >
+                  <div className="flex gap-3">
+                    {/* thumb */}
+                    <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-[#241e13] bg-[#0b0a08]">
+                      {l.image ? (
+                        <Image src={l.image} alt={l.productName} fill sizes="56px" className="object-cover" />
+                      ) : (
+                        <span className="flex h-full items-center justify-center">
+                          <ShoppingBasket className="h-5 w-5 text-[#2b2418]" />
+                        </span>
+                      )}
+                    </span>
+                    {/* name + meta */}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-bold leading-snug">{l.productName}</p>
+                      <p className="truncate text-[10.5px] text-[#8b8170]">
+                        {l.variantName} · <span className="font-mono uppercase">{l.sku}</span>
+                      </p>
+                      {/* qty stepper + unit price */}
+                      <div className="mt-2 flex items-center gap-2.5">
+                        <span className="flex items-center rounded-lg border border-[#2b2418] bg-[#100e0a]">
+                          <button
+                            type="button"
+                            onClick={() => changeQty(l.variantId, -1)}
+                            disabled={l.quantity <= 1}
+                            className="flex h-7.5 w-7 items-center justify-center text-[#a19681] transition hover:text-[#f2ecdf] disabled:opacity-30"
+                            aria-label="Decrease quantity"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="tnum w-6 text-center text-[12.5px] font-black">{l.quantity}</span>
+                          <button
+                            type="button"
+                            onClick={() => changeQty(l.variantId, 1)}
+                            disabled={l.quantity >= l.stock}
+                            className="flex h-7.5 w-7 items-center justify-center text-[#a19681] transition hover:text-[#e8bd68] disabled:opacity-30"
+                            aria-label="Increase quantity"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </span>
+                        <span className="flex items-center gap-1 text-[11px] text-[#8b8170]">
+                          @
+                          <input
+                            value={l.unitPrice}
+                            onChange={(e) => editLinePrice(l.variantId, Number(e.target.value))}
+                            inputMode="decimal"
+                            aria-label={`Unit price for ${l.productName}`}
+                            className="tnum w-16 rounded-md border border-transparent bg-[#100e0a] px-1.5 py-1 text-right text-[11.5px] font-bold text-[#d8cdb9] outline-none transition hover:border-[#2b2418] focus:border-[#d9a441]/50"
+                          />
+                        </span>
+                        {l.stock <= 3 && (
+                          <span className="rounded-md bg-[#f5a623]/12 px-1.5 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#f5b93e]">
+                            {l.stock} left
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* total + remove */}
+                    <div className="flex shrink-0 flex-col items-end justify-between">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playPosSound("remove");
+                          setBill(bill.filter((x) => x.variantId !== l.variantId));
+                        }}
+                        title="Remove line"
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-[#6b6252] transition hover:bg-[#3a1a1a] hover:text-[#f27f82]"
+                        aria-label={`Remove ${l.productName}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                      <span className="tnum text-[14.5px] font-black text-[#e8bd68]">
+                        ₹{(l.unitPrice * l.quantity).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* note chip / editor */}
+                  {noteEdit?.variantId === l.variantId ? (
+                    <div className="mt-2.5 flex gap-2">
+                      <input
+                        value={noteEdit.draft}
+                        autoFocus
+                        onChange={(e) => setNoteEdit({ variantId: l.variantId, draft: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            setLineNote(l.variantId, noteEdit.draft);
+                            setNoteEdit(null);
+                          }
+                          if (e.key === "Escape") setNoteEdit(null);
+                        }}
+                        placeholder="Note for this line — engraving, gift wrap…"
+                        className={cn(fieldCls, "h-9 flex-1 rounded-lg text-[12px]")}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLineNote(l.variantId, noteEdit.draft);
+                          setNoteEdit(null);
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06]"
+                        aria-label="Save note"
+                      >
+                        <Check className="h-4 w-4" strokeWidth={2.6} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setNoteEdit({ variantId: l.variantId, draft: l.note ?? "" })}
+                        className={cn(
+                          "rounded-md border px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition",
+                          l.note
+                            ? "border-[#d9a441]/35 bg-[#d9a441]/10 text-[#e8bd68]"
+                            : "border-[#2b2418] text-[#6b6252] hover:border-[#453a24] hover:text-[#a19681]"
+                        )}
+                      >
+                        {l.note ? `✎ ${l.note.slice(0, 26)}` : "+ Note"}
+                      </button>
+                      {l.variants && l.variants.length > 1 && (
+                        <span className="stellora-scroll flex max-w-full items-center gap-1 overflow-x-auto">
+                          {l.variants.map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => swapVariant(l.variantId, opt)}
+                              disabled={opt.id === l.variantId || opt.stock <= 0}
+                              title={`${opt.name} · ₹${opt.price.toLocaleString("en-IN")} · ${opt.stock} in stock`}
+                              className={cn(
+                                "shrink-0 rounded-md border px-2 py-1 text-[10px] font-bold transition",
+                                opt.id === l.variantId
+                                  ? "border-[#d9a441]/50 bg-[#d9a441]/15 text-[#e8bd68]"
+                                  : opt.stock <= 0
+                                    ? "border-[#2b2418] text-[#4a4132] line-through"
+                                    : "border-[#2b2418] text-[#8b8170] hover:border-[#453a24] hover:text-[#f2ecdf]"
+                              )}
+                            >
+                              {opt.name}
+                            </button>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* adjustments + totals */}
+        <div className="shrink-0 border-t border-[#241e13] bg-[#14110c] px-5 py-4">
+          {/* discount / tax / shipping / coupon — compact row controls */}
+          <details className="group/adj">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-[10.5px] font-black uppercase tracking-[0.16em] text-[#8b8170] transition hover:text-[#d8cdb9]">
+              <span className="flex items-center gap-1.5">
+                <Tags className="h-3.5 w-3.5" /> Adjustments
+                {(appliedDiscount > 0 || taxNum > 0 || shippingNum > 0) && (
+                  <span className="rounded-md bg-[#d9a441]/15 px-1.5 py-0.5 text-[9px] font-black text-[#e8bd68]">
+                    {[
+                      appliedDiscount > 0 ? "DISC" : "",
+                      taxNum > 0 ? "TAX" : "",
+                      shippingNum > 0 ? "SHIP" : "",
+                    ]
+                      .filter(Boolean)
+                      .join("+")}
+                  </span>
+                )}
+              </span>
+              <ChevronRight className="h-4 w-4 transition-transform group-open/adj:rotate-90" />
+            </summary>
+            <div className="mt-3 space-y-2.5">
+              {/* discount */}
+              <div className="flex items-center gap-2">
+                <div className="flex overflow-hidden rounded-xl border border-[#2b2418]">
                   <button
                     type="button"
-                    onClick={() => setTenderExact(0)}
-                    className="tnum rounded-lg border border-primary/30 bg-accent px-2.5 py-1 text-[11px] font-bold text-primary transition"
+                    onClick={() => switchDiscountMode("flat")}
+                    className={cn(
+                      "px-2.5 py-2 text-[11px] font-black transition",
+                      discountMode === "flat" ? "bg-[#d9a441]/20 text-[#e8bd68]" : "bg-[#100e0a] text-[#6b6252] hover:text-[#a19681]"
+                    )}
                   >
-                    Exact {formatINR(grandTotal)}
+                    ₹
                   </button>
-                  {QUICK_NOTES.map((noteAmt) => (
+                  <button
+                    type="button"
+                    onClick={() => switchDiscountMode("pct")}
+                    className={cn(
+                      "px-2.5 py-2 text-[11px] font-black transition",
+                      discountMode === "pct" ? "bg-[#d9a441]/20 text-[#e8bd68]" : "bg-[#100e0a] text-[#6b6252] hover:text-[#a19681]"
+                    )}
+                  >
+                    %
+                  </button>
+                </div>
+                <input
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value.replace(/[^\d.]/g, ""))}
+                  placeholder="Discount"
+                  inputMode="decimal"
+                  aria-label="Bill discount"
+                  className={cn(fieldCls, "tnum h-10 flex-1 rounded-xl text-right font-bold", discountInvalid && "border-[#e5484d]/60")}
+                />
+                <div className="flex gap-1">
+                  {(discountMode === "pct" ? [5, 10] : [100, 500]).map((q) => (
                     <button
-                      key={noteAmt}
+                      key={q}
                       type="button"
-                      onClick={() => updateTender(0, { amount: r2((Number(tenders[0]?.amount) || 0) + noteAmt) })}
-                      className="tnum rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
+                      onClick={() => setDiscount(String(q))}
+                      className="tnum h-10 rounded-xl border border-[#2b2418] px-2.5 text-[11px] font-bold text-[#8b8170] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
                     >
-                      +{noteAmt}
+                      {discountMode === "pct" ? `${q}%` : `₹${q}`}
                     </button>
                   ))}
                 </div>
-
-                {/* cash numpad — only for the cash tender */}
-                {tenders[0]?.method === "CASH" && (
-                  <div className="grid grid-cols-3 gap-1.5 pt-1">
-                    {NUMPAD_KEYS.map((k) => (
-                      <button
-                        key={k}
-                        type="button"
-                        aria-label={k === "back" ? "Delete last digit" : `Type ${k}`}
-                        onClick={() => numpadPress(k)}
-                        className="tnum flex h-11 items-center justify-center rounded-lg border border-border bg-muted/60 text-[16px] font-bold text-foreground transition hover:border-primary/40 hover:bg-accent active:scale-[0.97]"
-                      >
-                        {k === "back" ? <Delete className="h-4 w-4" /> : k}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
+              {/* tax + shipping */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <label className="relative block">
+                  <Percent className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6b6252]" />
+                  <input
+                    value={taxPercent}
+                    onChange={(e) => setTaxPercent(e.target.value.replace(/[^\d.]/g, ""))}
+                    placeholder="Tax %"
+                    inputMode="decimal"
+                    aria-label="Tax percent"
+                    className={cn(fieldCls, "tnum h-10 pl-8 text-right font-bold")}
+                  />
+                </label>
+                <label className="relative block">
+                  <IndianRupee className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6b6252]" />
+                  <input
+                    value={shippingFee}
+                    onChange={(e) => setShippingFee(e.target.value.replace(/[^\d.]/g, ""))}
+                    placeholder="Shipping ₹"
+                    inputMode="decimal"
+                    aria-label="Shipping fee"
+                    className={cn(fieldCls, "tnum h-10 pl-8 text-right font-bold")}
+                  />
+                </label>
+              </div>
+              {/* coupon */}
+              {appliedCoupon ? (
+                <div className="flex items-center justify-between rounded-xl border border-[#3dd68c]/30 bg-[#3dd68c]/8 px-3.5 py-2.5">
+                  <span className="flex items-center gap-2 text-[12px] font-bold text-[#5cd69c]">
+                    <Ticket className="h-4 w-4" /> {appliedCoupon.code} · −{formatINR(appliedCoupon.discount)}
+                  </span>
+                  <button type="button" onClick={removeCoupon} className="text-[#8b8170] transition hover:text-[#f27f82]" aria-label="Remove coupon">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={couponCode}
+                    onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => e.key === "Enter" && void applyCoupon()}
+                    placeholder="Promo code"
+                    aria-label="Promo code"
+                    className={cn(fieldCls, "h-10 flex-1 font-bold uppercase tracking-wide")}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void applyCoupon()}
+                    disabled={couponBusy || bill.length === 0}
+                    className="h-10 rounded-xl border border-[#d9a441]/35 px-4 text-[11.5px] font-black uppercase tracking-wide text-[#e8bd68] transition hover:bg-[#d9a441]/10 disabled:opacity-40"
+                  >
+                    {couponBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
+                  </button>
+                </div>
+              )}
+              {/* bill note */}
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Bill note (optional)"
+                aria-label="Bill note"
+                className={cn(fieldCls, "h-10 text-[12.5px]")}
+              />
             </div>
+          </details>
 
-            {/* additional split tenders — compact rows */}
-            {tenders.slice(1).map((t, i) => {
-              const idx = i + 1;
+          {/* totals */}
+          <dl className="mt-3.5 space-y-1.5 border-t border-dashed border-[#2b2418] pt-3.5 text-[12.5px]">
+            <div className="flex justify-between">
+              <dt className="text-[#8b8170]">Subtotal · {billCount} item{billCount === 1 ? "" : "s"}</dt>
+              <dd className="tnum font-bold text-[#d8cdb9]">{formatINR(subtotal)}</dd>
+            </div>
+            {appliedDiscount > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-[#8b8170]">Discount{appliedCoupon ? ` · ${appliedCoupon.code}` : ""}</dt>
+                <dd className="tnum font-bold text-[#5cd69c]">−{formatINR(appliedDiscount)}</dd>
+              </div>
+            )}
+            {taxTotal > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-[#8b8170]">Tax · {taxNum}%</dt>
+                <dd className="tnum font-bold text-[#d8cdb9]">{formatINR(taxTotal)}</dd>
+              </div>
+            )}
+            {shippingNum > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-[#8b8170]">Shipping</dt>
+                <dd className="tnum font-bold text-[#d8cdb9]">{formatINR(shippingNum)}</dd>
+              </div>
+            )}
+            <div className="flex items-end justify-between pt-1.5">
+              <dt className="text-[10.5px] font-black uppercase tracking-[0.18em] text-[#a19681]">Total payable</dt>
+              <dd key={grandTotal} className="pos-pulse tnum font-serif text-[26px] font-black leading-none text-[#e8bd68]">
+                ₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </dd>
+            </div>
+          </dl>
+
+          {/* actions */}
+          <div className="mt-4 flex gap-2.5">
+            <button
+              type="button"
+              onClick={holdBill}
+              disabled={bill.length === 0}
+              title="Hold this bill (F7)"
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#2b2418] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68] disabled:opacity-30"
+            >
+              <Pause className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={openPaymentDialog}
+              disabled={bill.length === 0 || discountInvalid || grandTotal <= 0}
+              title="Charge the bill (F4)"
+              className="group relative flex h-14 flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[15.5px] font-black tracking-wide text-[#241a06] shadow-[0_16px_36px_-14px_rgba(217,164,65,0.55)] transition-all hover:brightness-105 active:scale-[0.99] disabled:from-[#2b2418] disabled:via-[#2b2418] disabled:to-[#2b2418] disabled:text-[#6b6252] disabled:shadow-none"
+            >
+              <Banknote className="h-5 w-5" strokeWidth={2.4} />
+              Charge ₹{grandTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+              <span className="rounded-lg bg-[#241a06]/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider">
+                {billCount} item{billCount === 1 ? "" : "s"} · F4
+              </span>
+            </button>
+          </div>
+          <p className="mt-2.5 flex items-center justify-center gap-1.5 text-[10px] font-semibold text-[#6b6252]">
+            <span className={cn("h-1.5 w-1.5 rounded-full", registerSession ? "bg-[#3dd68c]" : "bg-[#e5484d]")} />
+            {registerSession ? `Register open · drawer ${formatINR(registerLive?.expectedCash ?? 0)}` : "Register closed — open it to accept payments"}
+          </p>
+        </div>
+      </aside>
+
+      {/* ══════════════════ DIALOGS ══════════════════ */}
+
+      {/* variant picker */}
+      <AurumModal
+        open={!!variantPicker}
+        onClose={() => setVariantPickerId(null)}
+        title={variantPicker?.name ?? ""}
+        subtitle="Pick the variant to bill"
+        wide
+      >
+        <div className="space-y-2">
+          {variantPicker?.variants
+            .filter((v) => v.isActive)
+            .map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => {
+                  addVariant(variantPicker, v);
+                  setVariantPickerId(null);
+                }}
+                disabled={v.stock <= 0}
+                className={cn(
+                  "flex w-full items-center gap-3.5 rounded-2xl border p-3 text-left transition",
+                  v.stock <= 0
+                    ? "border-[#241e13] opacity-45"
+                    : "border-[#2b2418] bg-[#16130e] hover:border-[#d9a441]/50 hover:bg-[#1c1710]"
+                )}
+              >
+                <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-[#241e13] bg-[#0b0a08]">
+                  {variantPicker.images[0]?.url ? (
+                    <Image src={variantPicker.images[0].url} alt={variantPicker.name} fill sizes="56px" className="object-cover" />
+                  ) : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13.5px] font-bold">{v.name}</span>
+                  <span className="block font-mono text-[10px] uppercase text-[#6b6252]">{v.sku}</span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className="tnum block text-[14.5px] font-black text-[#e8bd68]">₹{Number(v.price).toLocaleString("en-IN")}</span>
+                  <span className={cn("block text-[10px] font-bold", v.stock <= 0 ? "text-[#f27f82]" : "text-[#5cd69c]")}>
+                    {v.stock <= 0 ? "Out of stock" : `${v.stock} in stock`}
+                  </span>
+                </span>
+              </button>
+            ))}
+        </div>
+      </AurumModal>
+
+      {/* camera scanner */}
+      <AurumModal open={camOpen} onClose={() => setCamOpen(false)} title="Scan a barcode" subtitle="Hold the code inside the frame">
+        <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-[#2b2418] bg-[#0b0a08]">
+          <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />
+          {/* gold corner frame */}
+          <span className="pointer-events-none absolute inset-10">
+            {["left-0 top-0 border-l-2 border-t-2 rounded-tl-xl", "right-0 top-0 border-r-2 border-t-2 rounded-tr-xl", "bottom-0 left-0 border-b-2 border-l-2 rounded-bl-xl", "bottom-0 right-0 border-b-2 border-r-2 rounded-br-xl"].map(
+              (c) => (
+                <span key={c} className={cn("absolute h-10 w-10 border-[#d9a441]", c)} />
+              )
+            )}
+          </span>
+          {!camSupported && (
+            <span className="absolute inset-0 flex items-center justify-center bg-[#0b0a08]/85 p-6 text-center">
+              <span className="text-[12.5px] leading-relaxed text-[#a19681]">
+                This browser doesn't support camera scanning. USB barcode scanners and typed SKUs work everywhere — just
+                type the code in the search bar and press Enter.
+              </span>
+            </span>
+          )}
+        </div>
+      </AurumModal>
+
+      {/* held bills drawer */}
+      <AurumSheet open={heldOpen} onClose={() => setHeldOpen(false)} title="Held bills" subtitle={`${held.length} parked at this terminal`}>
+        {held.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-[#2b2418] p-6 text-center text-[12.5px] text-[#8b8170]">
+            Nothing on hold. Hold a bill with the pause button or F7 when a customer steps away.
+          </p>
+        ) : (
+          <ul className="space-y-2.5">
+            {held.map((h) => {
+              const hTotal = r2(h.lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0));
               return (
-                <div key={idx} className="rounded-xl border border-border bg-card p-3 shadow-sm">
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="flex items-center gap-2 text-[12.5px] font-bold">
-                      <span className="flex h-5.5 w-5.5 items-center justify-center rounded-full bg-primary text-[10.5px] font-bold text-primary-foreground">
-                        {idx + 1}
-                      </span>
-                      Payment {idx + 1}
-                    </p>
+                <li key={h.id} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold">
+                        {h.customerName ?? "Walk-in customer"} · {h.lines.length} line{h.lines.length === 1 ? "" : "s"}
+                      </p>
+                      <p className="text-[10.5px] text-[#6b6252]">
+                        Held {formatDateTime(new Date(h.at).toISOString())}
+                      </p>
+                    </div>
+                    <span className="tnum shrink-0 text-[14px] font-black text-[#e8bd68]">₹{hTotal.toLocaleString("en-IN")}</span>
+                  </div>
+                  <div className="mt-2.5 flex gap-2">
                     <button
                       type="button"
-                      aria-label={`Remove payment ${idx + 1}`}
-                      className="rounded-md p-1 text-muted-foreground transition hover:bg-rose-500/10 hover:text-rose-600"
-                      onClick={() => removeTender(idx)}
+                      onClick={() => resumeBill(h)}
+                      className="h-9 flex-1 rounded-xl bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[11.5px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105"
                     >
-                      <X className="h-4 w-4" />
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHeld(held.filter((x) => x.id !== h.id))}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#2b2418] text-[#8b8170] transition hover:border-[#e5484d]/40 hover:text-[#f27f82]"
+                      aria-label="Discard held bill"
+                    >
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="flex gap-2">
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </AurumSheet>
+
+      {/* recent sales drawer */}
+      <AurumSheet open={recentOpen} onClose={() => setRecentOpen(false)} title="Recent sales" subtitle="Last 8 bills across the store">
+        {recentBusy ? (
+          <p className="py-8 text-center text-[12.5px] text-[#8b8170]">Loading…</p>
+        ) : recentErr ? (
+          <p className="rounded-2xl border border-dashed border-[#e5484d]/30 p-6 text-center text-[12.5px] text-[#f27f82]">
+            Could not load recent sales — try again in a moment.
+          </p>
+        ) : !recentOrders || recentOrders.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-[#2b2418] p-6 text-center text-[12.5px] text-[#8b8170]">
+            No sales yet today. Charged bills appear here instantly.
+          </p>
+        ) : (
+          <ul className="space-y-2.5">
+            {recentOrders.map((o) => {
+              const pm = o.payments?.[0]?.method ?? o.paymentMethod;
+              return (
+                <li key={o.id} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="tnum truncate text-[13px] font-bold text-[#e8bd68]">{o.orderNumber}</p>
+                      <p className="truncate text-[10.5px] text-[#6b6252]">
+                        {formatDateTime(o.createdAt)}
+                        {o.user ? ` · ${o.user.name}` : " · Walk-in"}
+                        {o.source ? ` · ${o.source === "POS" ? "counter" : "web"}` : ""}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="tnum text-[14px] font-black">₹{Number(o.grandTotal).toLocaleString("en-IN")}</p>
+                      {pm && <Pill className="mt-0.5">{methodLabel(pm)}</Pill>}
+                    </div>
+                  </div>
+                  <p className="mt-1.5 truncate text-[11px] text-[#8b8170]">
+                    {o.items.map((i) => `${i.productName} ×${i.quantity}`).join(", ")}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReceipt(receiptFromOrder(o));
+                      setReceiptIsReprint(true);
+                    }}
+                    className="mt-2.5 inline-flex h-9 items-center gap-2 rounded-xl border border-[#2b2418] px-3.5 text-[11px] font-black uppercase tracking-wide text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                  >
+                    <Printer className="h-3.5 w-3.5" /> Reprint receipt
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </AurumSheet>
+
+      {/* day summary drawer */}
+      <AurumSheet open={dayOpen} onClose={() => setDayOpen(false)} title="Today at the counter" subtitle="IST business day — live">
+        {!today ? (
+          <p className="py-8 text-center text-[12.5px] text-[#8b8170]">Loading…</p>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                { k: "Bills", v: String(today.orders), gold: false },
+                { k: "Revenue", v: formatINR(today.revenue), gold: true },
+                { k: "Cash sales", v: formatINR(today.cashSales), gold: false },
+                { k: "Digital", v: formatINR(today.nonCashSales), gold: false },
+                { k: "Items sold", v: String(today.itemsSold), gold: false },
+                { k: "Counter bills", v: String(today.posOrders), gold: false },
+              ].map((s) => (
+                <div key={s.k} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3.5">
+                  <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#6b6252]">{s.k}</p>
+                  <p className={cn("tnum mt-1 text-[17px] font-black", s.gold && "text-[#e8bd68]")}>{s.v}</p>
+                </div>
+              ))}
+            </div>
+            {today.hourly && today.hourly.some((h) => h.revenue > 0) && (
+              <div className="rounded-2xl border border-[#262017] bg-[#16130e] p-4">
+                <p className="mb-3 text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Hourly revenue</p>
+                <div className="flex h-28 items-end gap-1.5">
+                  {today.hourly
+                    .filter((h) => h.hour >= 7 && h.hour <= 23)
+                    .map((h) => {
+                      const max = Math.max(...today.hourly!.filter((x) => x.hour >= 7 && x.hour <= 23).map((x) => x.revenue), 1);
+                      return (
+                        <div key={h.hour} className="group flex flex-1 flex-col items-center gap-1" title={`${h.hour}:00 — ${formatINR(h.revenue)} · ${h.orders} bills`}>
+                          <span
+                            className={cn(
+                              "w-full rounded-t-md transition-all",
+                              h.revenue > 0 ? "bg-gradient-to-t from-[#8a6420] to-[#e8bd68]" : "bg-[#241e13]"
+                            )}
+                            style={{ height: `${Math.max((h.revenue / max) * 100, h.revenue > 0 ? 8 : 3)}%` }}
+                          />
+                          <span className="text-[8.5px] font-bold text-[#6b6252]">{h.hour > 12 ? h.hour - 12 : h.hour || 12}{h.hour >= 12 ? "p" : "a"}</span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+            <div className="rounded-2xl border border-[#262017] bg-[#16130e] p-4">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Cash drawer</p>
+              {registerSession ? (
+                <div className="space-y-1.5 text-[12.5px]">
+                  <p className="flex justify-between"><span className="text-[#8b8170]">Expected in drawer</span><span className="tnum font-black text-[#5cd69c]">{formatINR(registerLive?.expectedCash ?? 0)}</span></p>
+                  <p className="flex justify-between"><span className="text-[#8b8170]">Cash in (sales)</span><span className="tnum font-bold">{formatINR(registerLive?.cashIn ?? 0)}</span></p>
+                  <p className="flex justify-between"><span className="text-[#8b8170]">Change given</span><span className="tnum font-bold">−{formatINR(registerLive?.change ?? 0)}</span></p>
+                  <p className="flex justify-between"><span className="text-[#8b8170]">Digital collected</span><span className="tnum font-bold">{formatINR(registerLive?.nonCash ?? 0)}</span></p>
+                  <p className="pt-1.5 text-[10.5px] text-[#6b6252]">Opened by {registerSession.openedByName ?? "—"} at {formatDateTime(registerSession.openedAt)}</p>
+                </div>
+              ) : (
+                <p className="text-[12px] text-[#8b8170]">Register is closed. Open it from the register chip to start the day.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </AurumSheet>
+
+      {/* customer picker */}
+      <AurumModal open={custOpen} onClose={() => setCustOpen(false)} title="Attach customer" subtitle="Search by name, mobile or email">
+        <input
+          value={custQuery}
+          onChange={(e) => setCustQuery(e.target.value)}
+          placeholder="Search customers…"
+          autoFocus
+          aria-label="Search customers"
+          className={cn(fieldCls, "h-11 rounded-xl")}
+        />
+        <div className="stellora-scroll mt-3 max-h-72 space-y-1.5 overflow-y-auto">
+          {custHits === null ? (
+            <p className="py-6 text-center text-[12.5px] text-[#8b8170]">Loading…</p>
+          ) : custHits.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-[#2b2418] p-5 text-center text-[12.5px] text-[#8b8170]">
+              No match. Add a new customer instantly below.
+            </p>
+          ) : (
+            custHits.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => {
+                  setCustomerEmail(c.email ?? "");
+                  setCustomerPhone(c.phone ?? "");
+                  setCustomerName(c.name);
+                  setCustomerPoints(Number(c.points ?? 0));
+                  setCustOpen(false);
+                  playPosSound("success");
+                  toast.success(`${c.name} attached to the bill`);
+                }}
+                className="flex w-full items-center gap-3 rounded-xl border border-[#262017] bg-[#16130e] p-3 text-left transition hover:border-[#d9a441]/45"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#d9a441]/30 bg-[#d9a441]/10 text-[12.5px] font-black text-[#e8bd68]">
+                  {c.name.trim().charAt(0).toUpperCase()}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-bold">{c.name}</span>
+                  <span className="block truncate text-[11px] text-[#8b8170]">{c.phone ?? c.email ?? "—"}</span>
+                </span>
+                {Number(c.points) > 0 && (
+                  <span className="tnum shrink-0 rounded-md bg-[#d9a441]/12 px-2 py-0.5 text-[10.5px] font-bold text-[#e8bd68]">
+                    ★ {Number(c.points).toLocaleString("en-IN")}
+                  </span>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setCustCreateOpen(true);
+          }}
+          className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d9a441]/35 text-[12px] font-black uppercase tracking-wide text-[#e8bd68] transition hover:bg-[#d9a441]/10"
+        >
+          <UserRoundPlus className="h-4 w-4" /> New customer
+        </button>
+      </AurumModal>
+
+      {/* customer quick-create */}
+      <AurumModal
+        open={custCreateOpen}
+        onClose={() => setCustCreateOpen(false)}
+        title="New customer"
+        subtitle="Name and mobile — the account is created instantly"
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Name</span>
+            <input
+              value={custNewName}
+              onChange={(e) => setCustNewName(e.target.value)}
+              placeholder="e.g. Meera Kapoor"
+              autoFocus
+              aria-label="Customer name"
+              className={cn(fieldCls, "h-11 rounded-xl")}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Mobile (10 digits)</span>
+            <input
+              value={custNewPhone}
+              onChange={(e) => setCustNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              placeholder="98xxxxxx01"
+              inputMode="numeric"
+              aria-label="Customer mobile"
+              className={cn(fieldCls, "tnum h-11 rounded-xl")}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Email (optional)</span>
+            <input
+              value={custNewEmail}
+              onChange={(e) => setCustNewEmail(e.target.value)}
+              placeholder="meera@example.com"
+              type="email"
+              aria-label="Customer email"
+              className={cn(fieldCls, "h-11 rounded-xl")}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void quickCreateCustomer()}
+            disabled={custNewBusy}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[13px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105 disabled:opacity-50"
+          >
+            {custNewBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <UserRoundPlus className="h-4.5 w-4.5" />}
+            Create & attach
+          </button>
+        </div>
+      </AurumModal>
+
+      {/* ────────── PAYMENT CHECKOUT — the showpiece ────────── */}
+      <AurumModal open={payOpen} onClose={() => !busy && setPayOpen(false)} title="Take payment" subtitle={paymentDate} wide>
+        {/* amount due band */}
+        <div className="mb-4 flex items-end justify-between rounded-2xl border border-[#d9a441]/25 bg-gradient-to-br from-[#d9a441]/12 via-[#d9a441]/5 to-transparent p-4">
+          <div>
+            <p className="text-[9.5px] font-black uppercase tracking-[0.18em] text-[#a19681]">Amount due</p>
+            <p className="tnum font-serif text-[34px] font-black leading-none text-[#e8bd68]">
+              ₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          </div>
+          <div className="text-right">
+            {balanceDue > 0 ? (
+              <p className="tnum text-[13px] font-black text-[#f5b93e]">Balance {formatINR(balanceDue)}</p>
+            ) : changeForCustomer > 0 ? (
+              <p className="tnum text-[13px] font-black text-[#5cd69c]">Change {formatINR(changeForCustomer)}</p>
+            ) : (
+              <p className="flex items-center gap-1.5 text-[13px] font-black text-[#5cd69c]">
+                <CircleCheck className="h-4 w-4" /> Fully tendered
+              </p>
+            )}
+            <p className="tnum mt-0.5 text-[10.5px] font-semibold text-[#6b6252]">Tendered {formatINR(tenderSum)}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-[1fr_240px]">
+          {/* tenders */}
+          <div>
+            <div className="space-y-2.5">
+              {tenders.map((t, idx) => (
+                <div key={idx} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#d9a441]/12 text-[#e8bd68]">
+                      {(() => {
+                        const M = PAYMENT_METHODS.find((m) => m.value === t.method)?.icon ?? Banknote;
+                        return <M className="h-4 w-4" />;
+                      })()}
+                    </span>
                     <select
                       value={t.method}
                       onChange={(e) => updateTender(idx, { method: e.target.value as PaymentMethod })}
-                      aria-label={`Method for payment ${idx + 1}`}
-                      className="h-9 w-32 shrink-0 rounded-lg border border-border bg-card px-2 text-[12px] font-medium outline-none focus:border-primary/60"
+                      aria-label={`Payment method ${idx + 1}`}
+                      className="h-10 flex-1 appearance-none rounded-xl border border-[#2b2418] bg-[#100e0a] px-3 text-[12.5px] font-bold text-[#f2ecdf] outline-none transition focus:border-[#d9a441]/55"
                     >
                       {PAYMENT_METHODS.map((m) => (
                         <option key={m.value} value={m.value}>
@@ -3385,573 +2997,481 @@ export default function AdminPosPage() {
                         </option>
                       ))}
                     </select>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      inputMode="decimal"
+                    <input
                       value={t.amount || ""}
-                      onChange={(e) => setTenderFromInput(idx, e.target.value)}
+                      onChange={(e) => setTenderFromInput(idx, e.target.value.replace(/[^\d.]/g, ""))}
                       placeholder="0"
-                      aria-label={`Amount for payment ${idx + 1}`}
-                      className="tnum h-9 min-w-0 flex-1 rounded-lg text-[13px] font-bold"
+                      inputMode="decimal"
+                      aria-label={`Amount for method ${idx + 1}`}
+                      className="tnum h-10 w-24 rounded-xl border border-[#2b2418] bg-[#100e0a] px-3 text-right text-[13.5px] font-black text-[#e8bd68] outline-none transition focus:border-[#d9a441]/55"
                     />
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* change hero */}
-            {changeForCustomer > 0 && (
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-center">
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
-                  Change due — return to the customer
-                </p>
-                <p className="tnum text-[24px] font-extrabold leading-tight text-emerald-700 dark:text-emerald-300">
-                  {formatINR(changeForCustomer)}
-                </p>
-              </div>
-            )}
-            {balanceDue > 0 && changeForCustomer === 0 && (
-              <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-center text-[12px] font-semibold text-amber-700 dark:text-amber-300">
-                {formatINR(balanceDue)} still due — add a split payment or increase the amount.
-              </p>
-            )}
-
-            {/* add split payment — Stocky's dashed splitter */}
-            <button
-              type="button"
-              disabled={tenders.length >= 4}
-              onClick={addTender}
-              className="w-full rounded-xl border-2 border-dashed border-primary/40 py-2.5 text-[12.5px] font-bold text-primary transition hover:bg-accent disabled:opacity-40"
-            >
-              + Add split payment{tenders.length >= 4 ? " (max 4)" : ""}
-            </button>
-
-            {/* customer + loyalty */}
-            <div className="flex items-center gap-2.5 rounded-xl border border-border bg-muted/60 px-3 py-2.5">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-[12px] font-bold text-emerald-700 dark:text-emerald-300">
-                {(customerName ?? "W").charAt(0).toUpperCase()}
-              </span>
-              <div className="min-w-0 flex-1 leading-tight">
-                <p className="truncate text-[12.5px] font-semibold">{customerName ?? "Walk-in customer"}</p>
-                <p className="truncate text-[10.5px] text-muted-foreground">
-                  {customerPoints !== null
-                    ? `${customerPoints} loyalty points on this account — this sale earns more`
-                    : "Attach a customer by mobile number to earn loyalty points"}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 shrink-0 rounded-lg text-[11.5px] font-semibold"
-                onClick={openCustPicker}
-              >
-                Change
-              </Button>
-            </div>
-
-            {/* meta rows */}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="pay-date" className="text-[11px] font-semibold text-muted-foreground">
-                  Payment date
-                </Label>
-                <Input
-                  id="pay-date"
-                  type="date"
-                  value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                  className="tnum h-9 rounded-lg"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="pay-notes" className="text-[11px] font-semibold text-muted-foreground">
-                  Payment notes
-                </Label>
-                <Input
-                  id="pay-notes"
-                  value={payNote}
-                  onChange={(e) => setPayNote(e.target.value)}
-                  placeholder="Add payment note"
-                  className="h-9 rounded-lg"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="sale-notes" className="text-[11px] font-semibold text-muted-foreground">
-                  Sale notes
-                </Label>
-                <Input
-                  id="sale-notes"
-                  value={saleNote}
-                  onChange={(e) => setSaleNote(e.target.value)}
-                  placeholder="Add sale note"
-                  className="h-9 rounded-lg"
-                />
-              </div>
-              <label className="flex cursor-pointer items-center gap-2 self-end rounded-lg border border-border px-3 py-2.5 text-[12px] font-semibold text-foreground/80 transition hover:bg-muted">
-                <input
-                  type="checkbox"
-                  checked={emailReceipt}
-                  onChange={(e) => setEmailReceipt(e.target.checked)}
-                  className="h-4 w-4 accent-primary"
-                />
-                Send email receipt
-                {customerEmail.trim() ? (
-                  <span className="ml-auto max-w-24 truncate text-[10px] font-medium text-emerald-600">
-                    {customerEmail.trim()}
-                  </span>
-                ) : (
-                  <span className="ml-auto text-[10px] font-medium text-muted-foreground">needs email</span>
-                )}
-              </label>
-            </div>
-
-            <p className="tnum text-right text-[11px] text-muted-foreground">
-              Tendered {formatINR(tenderSum)} / {formatINR(grandTotal)}
-            </p>
-          </div>
-
-          {/* footer */}
-          <div className="flex gap-2.5 border-t border-border bg-muted p-4">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 flex-1 rounded-xl border-input bg-card text-[13px] font-bold text-foreground/80 hover:bg-muted"
-              disabled={busy}
-              onClick={() => setPayOpen(false)}
-            >
-              <X className="h-4 w-4" /> Cancel
-            </Button>
-            <Button
-              className="h-11 flex-[2] rounded-xl bg-emerald-600 text-[13.5px] font-bold text-white shadow-md shadow-emerald-600/20 hover:bg-emerald-600/90"
-              disabled={busy || balanceDue > 0}
-              onClick={() => void charge(tenders)}
-            >
-              {busy ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Completing…
-                </>
-              ) : balanceDue > 0 ? (
-                `Balance ${formatINR(balanceDue)} left`
-              ) : (
-                <>
-                  <Check className="h-4 w-4" strokeWidth={3} /> Complete payment
-                </>
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ===== register: open ===== */}
-      <Dialog open={regOpenOpen} onOpenChange={setRegOpenOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <LockOpen className="h-4 w-4 text-emerald-600" /> Open register
-            </DialogTitle>
-            <DialogDescription>
-              Terminal T-{terminalId} — count the opening float in the cash drawer.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="reg-opening">Opening balance (₹)</Label>
-              <Input
-                id="reg-opening"
-                type="number"
-                min={0}
-                step={1}
-                inputMode="decimal"
-                value={regOpeningBalance}
-                onChange={(e) => setRegOpeningBalance(e.target.value)}
-                placeholder="0"
-                autoFocus
-                className="tnum rounded-lg"
-              />
-              <div className="flex flex-wrap gap-1.5">
-                {[0, 500, 1000, 2000].map((amt) => (
-                  <button
-                    key={amt}
-                    type="button"
-                    onClick={() => setRegOpeningBalance(String(amt))}
-                    className="tnum rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-                  >
-                    {amt === 0 ? "No float" : `₹${amt}`}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="reg-opening-note">Notes (optional)</Label>
-              <Input
-                id="reg-opening-note"
-                value={regOpeningNote}
-                onChange={(e) => setRegOpeningNote(e.target.value)}
-                placeholder="e.g. morning shift, ₹500 float"
-                className="rounded-lg"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="h-10 flex-1 rounded-xl" onClick={() => setRegOpenOpen(false)}>
-                Cancel
-              </Button>
-              <Button
-                className="h-10 flex-1 rounded-xl bg-emerald-600 text-white hover:bg-emerald-600/90"
-                disabled={regBusy}
-                onClick={() => void openRegister()}
-              >
-                {regBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Open register"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ===== register: close (count + variance) ===== */}
-      <Dialog open={regCloseOpen} onOpenChange={setRegCloseOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <LockKeyhole className="h-4 w-4 text-amber-600" /> Close register
-            </DialogTitle>
-            <DialogDescription>
-              Count the cash in the drawer — the difference is your variance.
-            </DialogDescription>
-          </DialogHeader>
-          {registerSession && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="rounded-xl border border-border bg-muted/60 p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Opening float</p>
-                  <p className="tnum font-bold">{formatINR(registerSession.openingBalance)}</p>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    {formatDateTime(registerSession.openedAt)} · {registerSession.openedByName ?? "—"}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border bg-muted/60 p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Expected in drawer</p>
-                  <p className="tnum font-bold text-emerald-600 dark:text-emerald-400">
-                    {formatINR(registerLive?.expectedCash ?? registerSession.openingBalance)}
-                  </p>
-                  {registerLive && (
-                    <p className="tnum mt-0.5 text-[10px] text-muted-foreground">
-                      cash +{formatINR(registerLive.cashIn)} · change −{formatINR(registerLive.change)}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="reg-counted">Counted cash (₹)</Label>
-                  <button
-                    type="button"
-                    onClick={() => setRegCounted(String(registerLive?.expectedCash ?? ""))}
-                    className="rounded-md px-1.5 py-0.5 text-[11px] font-bold text-primary transition hover:bg-accent"
-                  >
-                    Use expected
-                  </button>
-                </div>
-                <Input
-                  id="reg-counted"
-                  type="number"
-                  min={0}
-                  step={1}
-                  inputMode="decimal"
-                  value={regCounted}
-                  onChange={(e) => setRegCounted(e.target.value)}
-                  placeholder="0"
-                  autoFocus
-                  className="tnum rounded-lg"
-                />
-                {regCounted !== "" && registerLive && (
-                  <p
-                    className={cn(
-                      "tnum text-xs font-semibold",
-                      Number(regCounted) - (registerLive.expectedCash ?? 0) === 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : Number(regCounted) > (registerLive.expectedCash ?? 0)
-                          ? "text-sky-600 dark:text-sky-400"
-                          : "text-rose-600 dark:text-rose-400"
+                    <button
+                      type="button"
+                      onClick={() => setTenderExact(idx)}
+                      title="Fill the full balance"
+                      className="h-10 shrink-0 rounded-xl border border-[#2b2418] px-2.5 text-[10px] font-black uppercase tracking-wide text-[#8b8170] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                    >
+                      Exact
+                    </button>
+                    {tenders.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeTender(idx)}
+                        className="flex h-10 w-9 shrink-0 items-center justify-center rounded-xl text-[#6b6252] transition hover:bg-[#3a1a1a] hover:text-[#f27f82]"
+                        aria-label="Remove tender"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     )}
-                  >
-                    Variance: {Number(regCounted) - (registerLive.expectedCash ?? 0) > 0 ? "+" : ""}
-                    {formatINR(Number(regCounted) - (registerLive.expectedCash ?? 0))}
-                    {Number(regCounted) - (registerLive.expectedCash ?? 0) === 0 ? " — balanced" : ""}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="reg-close-note">Notes (optional)</Label>
-                <Input
-                  id="reg-close-note"
-                  value={regClosingNote}
-                  onChange={(e) => setRegClosingNote(e.target.value)}
-                  placeholder="e.g. end of shift"
-                  className="rounded-lg"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" className="h-10 flex-1 rounded-xl" onClick={() => setRegCloseOpen(false)}>
-                  Cancel
-                </Button>
-                <Button className="h-10 flex-1 rounded-xl" disabled={regBusy} onClick={() => void closeRegister()}>
-                  {regBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Close register"}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ===== thermal receipt / sale complete — Stocky style: centered header,
-             reference, seller, Paid/Due, Paid-By table, thank-you, INVOICE QR ===== */}
-      <Dialog open={!!receipt} onOpenChange={(o) => !o && setReceipt(null)}>
-        <DialogContent className="sm:max-w-sm">
-          {receipt && !receiptIsReprint && (
-            <div className="pos-pop mb-1 flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
-                <Check className="h-5 w-5" strokeWidth={3} />
-              </span>
-              <div className="min-w-0 flex-1 leading-tight">
-                <p className="text-[14.5px] font-bold text-emerald-800 dark:text-emerald-200">Sale complete</p>
-                <p className="truncate text-[11.5px] text-emerald-700/90 dark:text-emerald-300/80">
-                  Order {receipt.order.orderNumber} · {methodLabel(receipt.method)}
-                  {receipt.pointsEarned > 0 ? ` · +${receipt.pointsEarned} points` : ""}
-                </p>
-              </div>
-              <div className="shrink-0 text-right leading-tight">
-                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-emerald-700/80 dark:text-emerald-300/70">
-                  {receipt.changeDue > 0 ? "Give change" : "Paid"}
-                </p>
-                <p className="tnum text-[17px] font-extrabold text-emerald-700 dark:text-emerald-300">
-                  {receipt.changeDue > 0 ? formatINR(receipt.changeDue) : formatINR(receipt.paidAmount)}
-                </p>
-              </div>
-            </div>
-          )}
-          {receipt && receiptIsReprint && (
-            <div className="mb-1 flex items-center gap-2.5 rounded-xl border border-border bg-muted/60 px-4 py-2.5">
-              <Printer className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <p className="text-[12.5px] font-semibold text-muted-foreground">
-                Receipt preview — reprinting {receipt.order.orderNumber}
-              </p>
-            </div>
-          )}
-          <DialogHeader className={cn(receipt && "mt-2 space-y-1")}>
-            <DialogTitle className={cn("flex items-center gap-2", receipt && "px-0")}>
-              <ReceiptText className="h-4 w-4 text-emerald-600" /> {receiptIsReprint ? "Reprint receipt" : "Receipt"}
-            </DialogTitle>
-            <DialogDescription>
-              {receipt
-                ? receiptIsReprint
-                  ? "The original bill — print it again any time."
-                  : `Order ${receipt.order.orderNumber} has been billed and marked paid.`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
-
-          {receipt && (
-            <div className="pos-receipt stellora-scroll max-h-[48vh] overflow-y-auto rounded-xl border border-border bg-white p-5 font-mono text-[11px] leading-relaxed text-black">
-              {/* header */}
-              <div className="text-center">
-                <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary font-serif text-xl font-bold text-white">
-                  S
-                </span>
-                <p className="mt-1.5 text-[14px] font-bold">Stellora</p>
-                <p className="text-[10px]">Reference: {receipt.order.orderNumber}</p>
-                <p className="text-[10px]">Date : {formatDateTime(receipt.order.createdAt)}</p>
-                {sellerName && <p className="text-[10px]">Seller : {sellerName}</p>}
-                <p className="text-[10px]">Customer : {customerName ?? "Walk-In-Customer"}</p>
-                {customerPhone && <p className="text-[10px]">Mobile : +91 {customerPhone}</p>}
-                <p className="text-[10px]">Outlet : Stellora Flagship</p>
-              </div>
-
-              <div className="my-2.5 border-t border-dashed border-slate-400" />
-
-              {/* items — "1.00 Pc X 429.00" like Stocky */}
-              <div className="space-y-1.5">
-                {receipt.order.items.map((it, idx) => (
-                  <div key={`${it.sku}-${idx}`}>
-                    <p className="leading-tight">
-                      {it.productName}
-                      {it.variantName ? ` — ${it.variantName}` : ""}
-                    </p>
-                    <div className="flex justify-between">
-                      <span>
-                        {Number(it.quantity).toFixed(2)} Pc X {Number(it.unitPrice).toFixed(2)}
-                      </span>
-                      <span>{Number(it.lineTotal).toFixed(2)}</span>
-                    </div>
                   </div>
-                ))}
-              </div>
-
-              <div className="my-2.5 border-t border-dashed border-slate-400" />
-
-              {/* totals */}
-              <div className="space-y-0.5">
-                <div className="flex justify-between border-b border-dotted border-slate-400 pb-0.5 font-bold">
-                  <span>Subtotal</span>
-                  <span>INR {Number(receipt.order.subtotal).toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Order Tax</span>
-                  <span>
-                    INR {taxAmountOf(receipt.order).toFixed(2)}
-                    <span className="block text-right text-[9px]">({receipt.taxPercent.toFixed(2)} %)</span>
-                  </span>
-                </div>
-                <div className="flex justify-between font-bold">
-                  <span>Discount</span>
-                  <span>INR {Number(receipt.order.discountTotal).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-bold">
-                  <span>Shipping</span>
-                  <span>INR {Number(receipt.order.shippingFee).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between border-b border-dotted border-slate-400 pb-0.5 font-bold">
-                  <span>Total</span>
-                  <span>INR {Number(receipt.order.grandTotal).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-bold">
-                  <span>Paid</span>
-                  <span>INR {receipt.paidAmount.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-bold">
-                  <span>Due</span>
-                  <span>INR {Number(receipt.changeDue).toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* paid-by table */}
-              <div className="mt-2.5">
-                <div className="flex justify-between border-b border-dashed border-slate-400 pb-0.5 font-bold">
-                  <span className="w-1/2">Paid By:</span>
-                  <span className="w-1/4 text-right">Amount:</span>
-                  <span className="w-1/4 text-right">Change:</span>
-                </div>
-                {receipt.order.payments.map((p, i) => (
-                  <div key={i} className="flex justify-between">
-                    <span className="w-1/2">{i === 0 ? methodLabel(receipt.method) : methodLabel(p.method)}</span>
-                    <span className="tnum w-1/4 text-right">{Number(p.amount).toFixed(2)}</span>
-                    <span className="tnum w-1/4 text-right">{i === 0 ? receipt.changeDue.toFixed(2) : "0.00"}</span>
-                  </div>
-                ))}
-              </div>
-
-              {receipt.pointsEarned > 0 && (
-                <p className="mt-2.5 text-center font-bold text-emerald-700">
-                  +{receipt.pointsEarned} Stellora points earned
-                </p>
-              )}
-
-              <div className="my-2.5 border-t border-dashed border-slate-400" />
-
-              <p className="text-center font-bold">
-                Thank You For Shopping With Us .
-                <br />
-                Please Come Again
-              </p>
-
-              {qrDataUrl && (
-                <div className="mt-2.5 text-center">
-                  <p className="text-[9px] font-bold tracking-widest">INVOICE QR</p>
-                  <img src={qrDataUrl} alt="Invoice QR" className="mx-auto mt-1 h-24 w-24" />
-                </div>
-              )}
-
-              {receiptFooter && (
-                <p className="mt-2 whitespace-pre-line text-center text-[9px] leading-relaxed text-slate-500">
-                  {receiptFooter}
-                </p>
-              )}
+              ))}
             </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button variant="outline" className="h-10 flex-1 rounded-xl" onClick={() => window.print()}>
-              <Printer className="h-4 w-4" /> Print
-            </Button>
-            {receipt && customerPhone.trim().length === 10 && (
-              <Button
-                variant="outline"
-                className="h-10 flex-1 rounded-xl border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
-                title="Send the bill to the customer's WhatsApp"
-                onClick={() => {
-                  const lines = receipt.order.items
-                    .map(
-                      (it, i) =>
-                        `${i + 1}. ${it.productName}${it.variantName ? ` (${it.variantName})` : ""} — ${Number(it.lineTotal).toFixed(2)}`
-                    )
-                    .join("\n");
-                  const msg = [
-                    "*Stellora — Bill*",
-                    `Ref: ${receipt.order.orderNumber}`,
-                    `Date: ${formatDateTime(receipt.order.createdAt)}`,
-                    "",
-                    lines,
-                    "",
-                    `Subtotal: INR ${Number(receipt.order.subtotal).toFixed(2)}`,
-                    Number(receipt.order.discountTotal) > 0 ? `Discount: INR ${Number(receipt.order.discountTotal).toFixed(2)}` : "",
-                    Number(receipt.order.shippingFee) > 0 ? `Shipping: INR ${Number(receipt.order.shippingFee).toFixed(2)}` : "",
-                    `*Total: INR ${Number(receipt.order.grandTotal).toFixed(2)}*`,
-                    `Paid via ${methodLabel(receipt.method)}`,
-                    receipt.pointsEarned > 0 ? `+${receipt.pointsEarned} Stellora points` : "",
-                    "",
-                    "Thank you for shopping with Stellora!",
-                  ]
-                    .filter(Boolean)
-                    .join("\n");
-                  window.open(`https://wa.me/91${customerPhone.trim()}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
-                }}
+            {tenders.length < 4 && (
+              <button
+                type="button"
+                onClick={addTender}
+                className="mt-2.5 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#2b2418] text-[11px] font-black uppercase tracking-[0.14em] text-[#8b8170] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
               >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.9-4.45 9.9-9.91A9.85 9.85 0 0 0 12.04 2Zm5.8 14.03c-.24.68-1.4 1.3-1.93 1.35-.53.05-1.03.24-3.47-.72-2.95-1.16-4.79-4.22-4.94-4.42-.14-.2-1.17-1.56-1.17-2.98 0-1.42.74-2.11 1-2.4.27-.29.58-.37.77-.37.19 0 .39 0 .56.01.19.01.43-.07.67.51.24.58.82 2 .89 2.15.07.15.12.32.02.51-.1.19-.19.32-.39.53-.19.22-.29.32-.44.53-.15.19-.31.41-.13.72.19.31.83 1.36 1.77 2.21 1.21 1.08 2.23 1.41 2.55 1.57.31.15.5.13.68-.08.19-.22.8-.93 1.01-1.25.22-.31.43-.26.72-.15.29.1 1.85.87 2.17 1.03.31.15.53.24.6.36.07.15.07.77-.17 1.44Z" />
-                </svg>
-                WhatsApp
-              </Button>
+                <Plus className="h-4 w-4" /> Split payment
+              </button>
             )}
-            <Button
-              className={cn("h-10 flex-1 rounded-xl", BRAND.solid)}
-              onClick={() => {
-                setReceipt(null);
-                playPosSound("click");
-                scanRef.current?.focus();
-                setMobileTab("browse");
-              }}
-            >
-              <Plus className="h-4 w-4" /> New sale
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* ---------- shortcuts help ---------- */}
-      <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Keyboard className="h-4 w-4" /> Keyboard shortcuts
-            </DialogTitle>
-            <DialogDescription>
-              Built for the counter — every core action is one key away.
-            </DialogDescription>
-          </DialogHeader>
-          <ul className="divide-y divide-border/60">
-            {SHORTCUT_LIST.map((s) => (
-              <li key={s.keys} className="flex items-center justify-between gap-3 py-2">
-                <span className="text-[12.5px] text-foreground/90">{s.label}</span>
-                <kbd className="tnum shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-bold text-foreground/80">
-                  {s.keys}
-                </kbd>
-              </li>
-            ))}
-          </ul>
-        </DialogContent>
-      </Dialog>
+            {/* options */}
+            <label className="mt-3.5 flex cursor-pointer items-center gap-2.5 rounded-xl border border-[#262017] bg-[#16130e] px-3.5 py-3">
+              <input
+                type="checkbox"
+                checked={emailReceipt}
+                onChange={(e) => setEmailReceipt(e.target.checked)}
+                className="h-4 w-4 accent-[#d9a441]"
+              />
+              <span className="text-[12px] font-bold">Email the receipt</span>
+              <span className="truncate text-[11px] text-[#6b6252]">{customerEmail || "(attach a customer with an email first)"}</span>
+            </label>
+            <input
+              value={payNote}
+              onChange={(e) => setPayNote(e.target.value)}
+              placeholder="Payment note (optional)"
+              aria-label="Payment note"
+              className={cn(fieldCls, "mt-2.5 h-10 rounded-xl text-[12.5px]")}
+            />
+          </div>
+
+          {/* numpad + quick cash */}
+          <div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {NUMPAD_KEYS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => numpadPress(k)}
+                  className={cn(
+                    "flex h-11 items-center justify-center rounded-xl border text-[15px] font-black transition active:scale-95",
+                    k === "back"
+                      ? "border-[#2b2418] text-[#a19681] hover:border-[#e5484d]/40 hover:text-[#f27f82]"
+                      : "border-[#2b2418] bg-[#16130e] text-[#f2ecdf] hover:border-[#d9a441]/45 hover:bg-[#1c1710]"
+                  )}
+                >
+                  {k === "back" ? <Delete className="h-4.5 w-4.5" /> : k}
+                </button>
+              ))}
+            </div>
+            <p className="mb-1.5 mt-3.5 text-[9.5px] font-black uppercase tracking-[0.16em] text-[#6b6252]">Quick cash</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {QUICK_NOTES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => {
+                    setCashBuf(String(n));
+                    updateTender(0, { amount: n });
+                  }}
+                  className="tnum h-9 rounded-xl border border-[#2b2418] bg-[#16130e] text-[12px] font-black text-[#d8cdb9] transition hover:border-[#d9a441]/45 hover:text-[#e8bd68]"
+                >
+                  ₹{n.toLocaleString("en-IN")}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* footer */}
+        <div className="mt-5 flex gap-2.5 border-t border-dashed border-[#2b2418] pt-4">
+          <button
+            type="button"
+            onClick={() => !busy && setPayOpen(false)}
+            className="h-13 shrink-0 rounded-2xl border border-[#2b2418] px-5 text-[12px] font-black uppercase tracking-wide text-[#8b8170] transition hover:text-[#f2ecdf]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void charge(tenders)}
+            disabled={busy || balanceDue > 0 || tenderSum <= 0}
+            className="flex h-13 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[14.5px] font-black uppercase tracking-wide text-[#241a06] shadow-[0_16px_36px_-14px_rgba(217,164,65,0.55)] transition hover:brightness-105 active:scale-[0.99] disabled:from-[#2b2418] disabled:via-[#2b2418] disabled:to-[#2b2418] disabled:text-[#6b6252] disabled:shadow-none"
+          >
+            {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <CircleCheck className="h-5 w-5" strokeWidth={2.4} />}
+            {busy ? "Billing…" : `Complete sale · ${formatINR(grandTotal)}`}
+          </button>
+        </div>
+      </AurumModal>
+
+      {/* register: open */}
+      <AurumModal open={regOpenOpen} onClose={() => setRegOpenOpen(false)} title="Open the register" subtitle={`Terminal T-${terminalId || "—"} · count the opening float`}>
+        <div className="space-y-3.5">
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Opening cash in drawer</span>
+            <input
+              value={regOpeningBalance}
+              onChange={(e) => setRegOpeningBalance(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="0"
+              inputMode="decimal"
+              autoFocus
+              aria-label="Opening balance"
+              className={cn(fieldCls, "tnum h-14 rounded-2xl text-right text-[24px] font-black text-[#e8bd68]")}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Note (optional)</span>
+            <input
+              value={regOpeningNote}
+              onChange={(e) => setRegOpeningNote(e.target.value)}
+              placeholder="e.g. Morning shift — Meera"
+              aria-label="Opening note"
+              className={cn(fieldCls, "h-11 rounded-xl text-[12.5px]")}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void openRegister()}
+            disabled={regBusy}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[13px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105 disabled:opacity-50"
+          >
+            {regBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <LockOpen className="h-4.5 w-4.5" />}
+            Open register
+          </button>
+        </div>
+      </AurumModal>
+
+      {/* register: close */}
+      <AurumModal
+        open={regCloseOpen}
+        onClose={() => setRegCloseOpen(false)}
+        title="Count & close"
+        subtitle={`Expected in drawer: ${formatINR(registerLive?.expectedCash ?? 0)}`}
+      >
+        <div className="space-y-3.5">
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Counted cash</span>
+            <input
+              value={regCounted}
+              onChange={(e) => setRegCounted(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="0"
+              inputMode="decimal"
+              autoFocus
+              aria-label="Counted balance"
+              className={cn(fieldCls, "tnum h-14 rounded-2xl text-right text-[24px] font-black text-[#e8bd68]")}
+            />
+          </label>
+          {regCounted !== "" && registerLive && (
+            <p
+              className={cn(
+                "flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-[12.5px] font-bold",
+                Math.abs(Number(regCounted) - (registerLive.expectedCash ?? 0)) < 0.01
+                  ? "border-[#3dd68c]/30 bg-[#3dd68c]/8 text-[#5cd69c]"
+                  : "border-[#f5a623]/30 bg-[#f5a623]/8 text-[#f5b93e]"
+              )}
+            >
+              Variance {formatINR(Number(regCounted) - (registerLive.expectedCash ?? 0))}
+            </p>
+          )}
+          <label className="block">
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Closing note (optional)</span>
+            <input
+              value={regClosingNote}
+              onChange={(e) => setRegClosingNote(e.target.value)}
+              placeholder="e.g. Evening close"
+              aria-label="Closing note"
+              className={cn(fieldCls, "h-11 rounded-xl text-[12.5px]")}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void closeRegister()}
+            disabled={regBusy}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#e5484d]/40 bg-[#e5484d]/10 text-[13px] font-black uppercase tracking-wide text-[#f27f82] transition hover:bg-[#e5484d]/20 disabled:opacity-50"
+          >
+            {regBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <LockKeyhole className="h-4.5 w-4.5" />}
+            Close register
+          </button>
+        </div>
+      </AurumModal>
+
+      {/* thermal receipt */}
+      <AurumModal
+        open={!!receipt}
+        onClose={() => setReceipt(null)}
+        title={receiptIsReprint ? "Receipt reprint" : "Sale complete"}
+        subtitle={receipt ? receipt.order.orderNumber : ""}
+        wide
+      >
+        {receipt && (
+          <div className="flex flex-col items-center gap-4">
+            {!receiptIsReprint && (
+              <span className="pos-pop flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] text-[#241a06]">
+                <Check className="h-7 w-7" strokeWidth={3} />
+              </span>
+            )}
+            <ReceiptCard
+              receipt={receipt}
+              footer={receiptFooter}
+              seller={sellerName}
+              qr={qrDataUrl}
+              reprint={receiptIsReprint}
+            />
+            <div className="flex w-full gap-2.5">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-[#2b2418] text-[12px] font-black uppercase tracking-wide text-[#d8cdb9] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+              >
+                <Printer className="h-4 w-4" /> Print
+              </button>
+              {receipt.order && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(receipt.order.orderNumber).then(() => toast.success("Order number copied"));
+                  }}
+                  className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#2b2418] text-[#a19681] transition hover:text-[#f2ecdf]"
+                  title="Copy order number"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setReceipt(null);
+                  playPosSound("click");
+                }}
+                className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[12px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105"
+              >
+                <ShoppingBasket className="h-4 w-4" /> New sale
+              </button>
+            </div>
+          </div>
+        )}
+      </AurumModal>
+
+      {/* shortcuts */}
+      <AurumSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" subtitle="Speed keys for the counter">
+        <ul className="space-y-1.5">
+          {SHORTCUT_LIST.map((s) => (
+            <li key={s.keys} className="flex items-center justify-between rounded-xl border border-[#262017] bg-[#16130e] px-3.5 py-2.5">
+              <span className="text-[12.5px] text-[#d8cdb9]">{s.label}</span>
+              <kbd className="shrink-0 rounded-md border border-[#2b2418] bg-[#100e0a] px-2 py-1 text-[10px] font-black uppercase tracking-wider text-[#e8bd68]">
+                {s.keys}
+              </kbd>
+            </li>
+          ))}
+        </ul>
+      </AurumSheet>
+    </div>
+  );
+}
+
+/* ══════════════════════ Aurum primitives ══════════════════════ */
+
+function AurumModal({
+  open,
+  onClose,
+  title,
+  subtitle,
+  wide,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-[#070604]/80 backdrop-blur-[3px]" onClick={onClose} aria-hidden="true" />
+      <div
+        className={cn(
+          "pos-slide relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-3xl border border-[#2b2418] bg-[#14110c] shadow-[0_50px_110px_-30px_rgba(0,0,0,0.85)]",
+          wide ? "max-w-3xl" : "max-w-md"
+        )}
+      >
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[#241e13] px-6 py-4.5">
+          <div>
+            <h3 className="font-serif text-[18px] font-bold leading-tight text-[#f2ecdf]">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-[11px] font-semibold text-[#8b8170]">{subtitle}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className={ghostIcon}
+            aria-label="Close dialog"
+          >
+            <X className="h-4.5 w-4.5" />
+          </button>
+        </header>
+        <div className="stellora-scroll min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function AurumSheet({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-[#070604]/70 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
+      <div className="pos-slide absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-[#2b2418] bg-[#14110c] shadow-[-40px_0_90px_-40px_rgba(0,0,0,0.8)]">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[#241e13] px-5 py-4.5">
+          <div>
+            <h3 className="font-serif text-[18px] font-bold leading-tight text-[#f2ecdf]">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-[11px] font-semibold text-[#8b8170]">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} className={ghostIcon} aria-label="Close drawer">
+            <X className="h-4.5 w-4.5" />
+          </button>
+        </header>
+        <div className="stellora-scroll min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════ Thermal receipt (white, printable) ══════════════════════ */
+
+function ReceiptCard({
+  receipt,
+  footer,
+  seller,
+  qr,
+  reprint,
+}: {
+  receipt: ReceiptData;
+  footer: string;
+  seller: string;
+  qr: string;
+  reprint: boolean;
+}) {
+  const o = receipt.order;
+  const taxAmt = taxAmountOf(o);
+  const items = o.items ?? [];
+  return (
+    <div className="pos-receipt w-full max-w-[340px] rounded-2xl bg-white px-6 py-7 font-mono text-[11.5px] leading-relaxed text-black shadow-[0_30px_60px_-30px_rgba(0,0,0,0.7)]">
+      <div className="text-center">
+        <p className="font-serif text-[22px] font-black tracking-wide">STELLORA</p>
+        <p className="mt-0.5 text-[9px] uppercase tracking-[0.3em]">Fine Jewellery & Lifestyle</p>
+        <p className="mt-2 text-[10px] uppercase tracking-widest text-neutral-500">
+          {reprint ? "— Reprint —" : "Counter Sale"}
+        </p>
+      </div>
+      <div className="my-3 border-t border-dashed border-neutral-300" />
+      <div className="space-y-0.5 text-[10.5px]">
+        <p className="flex justify-between"><span>Bill</span><span className="font-bold">{o.orderNumber}</span></p>
+        <p className="flex justify-between"><span>Date</span><span>{formatDateTime(o.createdAt)}</span></p>
+        {seller && <p className="flex justify-between"><span>Served by</span><span>{seller}</span></p>}
+      </div>
+      <div className="my-3 border-t border-dashed border-neutral-300" />
+      <table className="w-full text-[10.5px]">
+        <thead>
+          <tr className="text-left text-[9px] uppercase tracking-wider text-neutral-500">
+            <th className="pb-1">Item</th>
+            <th className="pb-1 text-center">Qty</th>
+            <th className="pb-1 text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((it, i) => (
+            <tr key={i} className="align-top">
+              <td className="py-1 pr-2">
+                {it.productName}
+                <span className="block text-[9px] text-neutral-500">
+                  {it.variantName} · {it.sku}
+                </span>
+              </td>
+              <td className="py-1 text-center">{it.quantity}</td>
+              <td className="py-1 text-right">₹{Number(it.lineTotal).toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="my-3 border-t border-dashed border-neutral-300" />
+      <div className="space-y-0.5 text-[10.5px]">
+        <p className="flex justify-between"><span>Subtotal</span><span>₹{Number(o.subtotal).toFixed(2)}</span></p>
+        {Number(o.discountTotal) > 0 && (
+          <p className="flex justify-between"><span>Discount</span><span>−₹{Number(o.discountTotal).toFixed(2)}</span></p>
+        )}
+        {taxAmt > 0 && (
+          <p className="flex justify-between">
+            <span>Tax{receipt.taxPercent ? ` @ ${receipt.taxPercent}%` : ""}</span>
+            <span>₹{taxAmt.toFixed(2)}</span>
+          </p>
+        )}
+        {Number(o.shippingFee) > 0 && (
+          <p className="flex justify-between"><span>Shipping</span><span>₹{Number(o.shippingFee).toFixed(2)}</span></p>
+        )}
+        <p className="mt-1.5 flex justify-between border-t border-neutral-300 pt-1.5 text-[13px] font-black">
+          <span>TOTAL</span>
+          <span>₹{Number(o.grandTotal).toFixed(2)}</span>
+        </p>
+        <p className="flex justify-between"><span>Paid ({methodLabel(receipt.method)})</span><span>₹{receipt.paidAmount.toFixed(2)}</span></p>
+        {receipt.changeDue > 0 && (
+          <p className="flex justify-between font-bold"><span>Change due</span><span>₹{receipt.changeDue.toFixed(2)}</span></p>
+        )}
+        {receipt.pointsEarned > 0 && (
+          <p className="flex justify-between text-[10px]"><span>Loyalty points earned</span><span>★ {receipt.pointsEarned}</span></p>
+        )}
+      </div>
+      {qr && (
+        <div className="mt-3 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={qr} alt="Invoice QR" className="mx-auto h-24 w-24" />
+          <p className="mt-1 text-[8px] uppercase tracking-[0.28em] text-neutral-500">Invoice QR</p>
+        </div>
+      )}
+      <div className="mt-3 border-t border-dashed border-neutral-300 pt-2 text-center">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em]">Thank you · Visit again</p>
+        {footer && <p className="mt-1 whitespace-pre-line text-[9px] leading-snug text-neutral-600">{footer}</p>}
+      </div>
     </div>
   );
 }
