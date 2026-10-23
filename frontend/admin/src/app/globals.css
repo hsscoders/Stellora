@@ -413,10 +413,13 @@
 
 /* ---------- Admin shell (Stellora-29): mobile-first polish ---------- */
 
-/* Subtle page transition on every route change (reduced-motion safe) */
+/* Subtle page transition on every route change (reduced-motion safe).
+   Opacity-only on purpose: a transform here (even identity from the fill)
+   would make <main> the containing block for position:fixed children and
+   break pages that anchor fixed bars/dialogs to the viewport (e.g. POS). */
 @keyframes admin-page-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .admin-page-in {
   animation: admin-page-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;

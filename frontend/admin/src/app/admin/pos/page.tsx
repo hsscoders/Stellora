@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * Stellora Point of Sale — "Aurum" terminal (full redesign).
+ * Stellora Point of Sale — register page (admin-shell themed).
  *
- * A dark, jewellery-boutique grade register: warm charcoal canvas, champagne
- * gold accents, Playfair serif display numerals, and a three-zone kiosk layout.
- *   ┌────┬──────────────────────────────────────────────┬──────────────┐
- *   │rail│  topbar · categories · catalog grid          │  BILL panel  │
- *   └────┴──────────────────────────────────────────────┴──────────────┘
- * Mobile (<lg): Browse / Cart tabs + sticky charge button.
+ * Renders INSIDE the standard admin shell — same sidebar, same glass topbar
+ * with the hamburger toggle as every other console page — so the terminal
+ * always matches the active light/dark Stellora theme via design tokens.
+ * Layout: toolbar card (scan · register · day pulse · actions) → category
+ * strip → catalog grid + BILL panel column.
+ * Mobile (<lg): Browse / Bill tabs above the admin bottom nav.
  *
  * Every wire payload (fetch paths, field names, storage keys, sound cues) is
  * identical to the previous build, so held bills, drafts and terminal ids keep
@@ -16,7 +16,6 @@
  */
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import {
@@ -34,7 +33,6 @@ import {
   Delete,
   HandCoins,
   History,
-  Home,
   IndianRupee,
   Keyboard,
   Landmark,
@@ -320,37 +318,22 @@ function receiptFromOrder(o: RecentOrder): ReceiptData {
   };
 }
 
-/* ========================= Aurum design tokens ========================= */
+/* ========================= shared field styles ========================= */
 
-const AURUM = {
-  gold: "#d9a441",
-  goldSoft: "#e8bd68",
-  goldDeep: "#b57e26",
-  ink: "#0e0c09",
-  panel: "#14110d",
-  card: "#1a1610",
-  cardHi: "#201a12",
-  line: "#2b2418",
-  lineHi: "#453a24",
-  text: "#f2ecdf",
-  muted: "#a19681",
-  faint: "#6b6252",
-};
-
-/** Shared classes for the dark inputs across the terminal. */
+/** Shared classes for inputs across the register — pure theme tokens. */
 const fieldCls =
-  "w-full rounded-xl border border-[#2b2418] bg-[#100e0a] px-3.5 text-[14px] text-[#f2ecdf] placeholder:text-[#6b6252] outline-none transition focus:border-[#d9a441]/55 focus:ring-2 focus:ring-[#d9a441]/15";
+  "w-full rounded-xl border border-input bg-transparent px-3.5 text-[14px] text-foreground placeholder:text-muted-foreground/70 outline-none transition focus:border-ring/60 focus:ring-2 focus:ring-ring/15";
 
-/** Ghost icon button used in headers / rails. */
+/** Ghost icon button used in headers / toolbars. */
 const ghostIcon =
-  "inline-flex h-10 w-10 items-center justify-center rounded-xl text-[#a19681] transition hover:bg-[#241e14] hover:text-[#f2ecdf] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30";
+  "inline-flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30";
 
 /** Small pill for labels. */
 function Pill({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-[#2b2418] bg-[#171310] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-[#a19681]",
+        "inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground",
         className
       )}
     >
@@ -360,8 +343,6 @@ function Pill({ children, className }: { children: React.ReactNode; className?: 
 }
 
 export default function AdminPosPage() {
-  const router = useRouter();
-
   /* ------------------------------- catalog ------------------------------- */
   const [products, setProducts] = useState<ApiProduct[] | null>(null);
   const [prodFailed, setProdFailed] = useState(false);
@@ -1605,172 +1586,32 @@ export default function AdminPosPage() {
 
   /* =============================== render =============================== */
 
-  const railBadge = (n: number) =>
-    n > 0 ? (
-      <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] px-1 text-[9.5px] font-black text-[#221a08] shadow">
-        {n}
-      </span>
-    ) : null;
-
-  const railBtn = (
-    active: boolean,
-    label: string,
-    Icon: typeof ShoppingBasket,
-    onClick: () => void,
-    badge?: React.ReactNode,
-    title?: string
-  ) => (
-    <button
-      key={label}
-      type="button"
-      onClick={() => {
-        playPosSound("click");
-        onClick();
-      }}
-      title={title ?? label}
-      className={cn(
-        "group relative flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-2xl border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/40",
-        active
-          ? "border-[#d9a441]/35 bg-gradient-to-b from-[#d9a441]/18 to-[#d9a441]/5 text-[#e8bd68] shadow-[inset_0_1px_0_rgba(232,189,104,0.15)]"
-          : "border-transparent text-[#7d7362] hover:bg-[#1c1710] hover:text-[#d8cdb9]"
-      )}
-    >
-      <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.2 : 1.9} />
-      <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">{label}</span>
-      {badge}
-    </button>
-  );
-
   const stockTone = (n: number) =>
     n <= 0
-      ? { dot: "bg-[#e5484d]", text: "text-[#f27f82]", label: "Out of stock" }
+      ? { dot: "bg-destructive", text: "text-destructive", label: "Out of stock" }
       : n <= 3
-        ? { dot: "bg-[#f5a623]", text: "text-[#f5b93e]", label: `Only ${n} left` }
-        : { dot: "bg-[#3dd68c]", text: "text-[#5cd69c]", label: `In stock · ${n}` };
+        ? { dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400", label: `Only ${n} left` }
+        : { dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400", label: `In stock · ${n}` };
 
   return (
-    <div
-      className="flex h-dvh overflow-hidden text-[#f2ecdf]"
-      style={{
-        background:
-          "radial-gradient(1100px 460px at 72% -8%, rgba(217,164,65,0.075), transparent 62%), radial-gradient(900px 420px at -10% 110%, rgba(217,164,65,0.05), transparent 55%), #0e0c09",
-      }}
-    >
+    <div className="flex text-foreground lg:h-[calc(100dvh-120px)] lg:overflow-hidden">
       {/* print: only the receipt is visible on paper + tiny page-local motion */}
       <style>{`@media print{body *{visibility:hidden}.pos-receipt,.pos-receipt *{visibility:visible}.pos-receipt{position:absolute;inset:0;background:#fff;color:#000}}
 @keyframes posPulse{0%{opacity:.35}100%{opacity:1}}.pos-pulse{animation:posPulse .9s ease-out both}
 @keyframes posPop{0%{transform:scale(.55);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}.pos-pop{animation:posPop .38s cubic-bezier(.2,1.4,.4,1) both}
-@keyframes posSlide{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}.pos-slide{animation:posSlide .3s ease-out both}
-@keyframes posGlow{0%,100%{box-shadow:0 0 0 0 rgba(217,164,65,0)}50%{box-shadow:0 0 34px -6px rgba(217,164,65,.45)}}`}</style>
+@keyframes posSlide{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}.pos-slide{animation:posSlide .3s ease-out both}`}</style>
 
-      {/* ══════════════════ LEFT GOLD RAIL ══════════════════ */}
-      <nav className="hidden w-[84px] shrink-0 flex-col items-center gap-1.5 border-r border-[#241e13] bg-[#100d09]/90 py-4 lg:flex">
-        {/* brand — back to admin */}
-        <button
-          type="button"
-          onClick={() => router.push("/admin")}
-          title="Back to admin dashboard"
-          className="mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] font-serif text-xl font-black text-[#241a06] shadow-[0_10px_26px_-10px_rgba(217,164,65,0.55)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/40"
-        >
-          S
-        </button>
-        <span className="mb-1 h-px w-8 bg-[#2b2418]" />
-
-        {railBtn(true, "Sell", ShoppingBasket, () => {}, undefined, "Selling screen")}
-        {railBtn(
-          false,
-          "Held",
-          Pause,
-          () => setHeldOpen(true),
-          railBadge(held.length),
-          held.length > 0 ? `${held.length} held bill(s)` : "Held bills"
-        )}
-        {railBtn(false, "Sales", History, () => setRecentOpen(true), undefined, "Recent sales")}
-        {railBtn(false, "Day", ChartColumn, () => setDayOpen(true), undefined, "Today's summary")}
-        {railBtn(false, "Keys", Keyboard, () => setShortcutsOpen(true), undefined, "Keyboard shortcuts")}
-
-        <span className="my-1 h-px w-8 bg-[#2b2418]" />
-
-        {/* sound: toggle + inline volume popover */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => {
-              playPosSound("click");
-              setVolOpen((o) => !o);
-            }}
-            title="Sounds & volume"
-            className={cn(ghostIcon, "h-12 w-12 flex-col gap-0.5 rounded-2xl")}
-          >
-            {soundOn ? <Volume2 className="h-[18px] w-[18px]" /> : <VolumeX className="h-[18px] w-[18px]" />}
-            <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">{soundOn ? "On" : "Off"}</span>
-          </button>
-          {volOpen && (
-            <div className="pos-slide absolute bottom-0 left-full z-40 ml-2 w-56 rounded-2xl border border-[#2b2418] bg-[#171310] p-4 shadow-2xl">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#a19681]">Register sounds</span>
-                <button
-                  type="button"
-                  onClick={toggleSound}
-                  className={cn(
-                    "relative h-5.5 w-10 rounded-full transition",
-                    soundOn ? "bg-gradient-to-r from-[#d9a441] to-[#b57e26]" : "bg-[#2b2418]"
-                  )}
-                  aria-label="Toggle sounds"
-                >
-                  <span
-                    className={cn(
-                      "absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow transition-all",
-                      soundOn ? "left-[22px]" : "left-0.5"
-                    )}
-                  />
-                </button>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round(volume * 100)}
-                onChange={(e) => changeVolume(Number(e.target.value) / 100)}
-                className="w-full accent-[#d9a441]"
-                aria-label="Sound volume"
-              />
-              <button
-                type="button"
-                onClick={() => testPosSound()}
-                className="mt-3 w-full rounded-lg border border-[#2b2418] py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
-              >
-                Test sound
-              </button>
-            </div>
-          )}
-        </div>
-
-        <button type="button" onClick={toggleFullscreen} title="Fullscreen" className={cn(ghostIcon, "h-12 w-12 rounded-2xl flex-col gap-0.5")}>
-          <Maximize2 className="h-[18px] w-[18px]" />
-          <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">Full</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => router.push("/admin")}
-          title="Exit to admin"
-          className={cn(ghostIcon, "mt-auto h-12 w-12 flex-col gap-0.5 rounded-2xl hover:bg-[#3a1a1a] hover:text-[#f2a0a0]")}
-        >
-          <Home className="h-[18px] w-[18px]" />
-          <span className="text-[8.5px] font-bold uppercase tracking-[0.14em]">Exit</span>
-        </button>
-      </nav>
 
       {/* ══════════════════ MAIN COLUMN ══════════════════ */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* ─────────── top bar: scan, register, day pulse ─────────── */}
-        <header className="flex h-[74px] shrink-0 items-center gap-3 border-b border-[#241e13] bg-[#100d09]/60 px-4 backdrop-blur lg:px-6">
+        {/* ─────────── toolbar card: scan, register, day pulse, actions ─────────── */}
+        <header className="flex shrink-0 flex-wrap items-center gap-2.5 rounded-2xl border border-border bg-card px-3 py-2.5 shadow-sm sm:px-4">
           {/* scan / search */}
-          <div className="relative min-w-0 flex-1 max-w-2xl">
+          <div className="relative min-w-[180px] max-w-2xl flex-1">
             <ScanLine
               className={cn(
                 "pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 transition-colors",
-                scanFlash === "ok" ? "text-[#3dd68c]" : scanFlash === "err" ? "text-[#e5484d]" : "text-[#6b6252]"
+                scanFlash === "ok" ? "text-emerald-600 dark:text-emerald-400" : scanFlash === "err" ? "text-destructive" : "text-muted-foreground/70"
               )}
             />
             <input
@@ -1787,12 +1628,12 @@ export default function AdminPosPage() {
               aria-label="Scan barcode or search products"
               className={cn(
                 fieldCls,
-                "h-12 rounded-2xl pl-11 pr-16 text-[14.5px] transition-all focus:shadow-[0_0_0_1px_rgba(217,164,65,0.25),0_10px_30px_-14px_rgba(217,164,65,0.35)]",
-                scanFlash === "ok" && "border-[#3dd68c]/60",
-                scanFlash === "err" && "border-[#e5484d]/60"
+                "h-11 rounded-xl pl-10 pr-14 text-[14.5px] transition-all",
+                scanFlash === "ok" && "border-emerald-500/60",
+                scanFlash === "err" && "border-destructive/60"
               )}
             />
-            <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md border border-[#2b2418] bg-[#1a1610] px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-[#6b6252]">
+            <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md border border-border bg-muted px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wider text-muted-foreground/70">
               F2
             </kbd>
           </div>
@@ -1816,25 +1657,25 @@ export default function AdminPosPage() {
                 : "Register CLOSED — click to open with an opening float"
             }
             className={cn(
-              "hidden h-12 shrink-0 items-center gap-2.5 rounded-2xl border px-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30 sm:flex",
+              "hidden h-12 shrink-0 items-center gap-2.5 rounded-2xl border px-4 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 sm:flex",
               registerSession
-                ? "border-[#3dd68c]/25 bg-[#3dd68c]/8 hover:bg-[#3dd68c]/15"
-                : "border-[#e5484d]/30 bg-[#e5484d]/8 hover:bg-[#e5484d]/15"
+                ? "border-emerald-500/25 bg-emerald-500/10 hover:bg-emerald-500/15"
+                : "border-destructive/30 bg-destructive/8 hover:bg-destructive/15"
             )}
           >
             {registerSession ? (
-              <LockOpen className="h-4.5 w-4.5 text-[#5cd69c]" />
+              <LockOpen className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400" />
             ) : (
-              <LockKeyhole className="h-4.5 w-4.5 text-[#f27f82]" />
+              <LockKeyhole className="h-4.5 w-4.5 text-destructive" />
             )}
             <span className="text-left leading-tight">
-              <span className="block text-[9px] font-black uppercase tracking-[0.16em] text-[#8b8170]">
+              <span className="block text-[9px] font-black uppercase tracking-[0.16em] text-muted-foreground">
                 Register · T-{terminalId || "—"}
               </span>
-              <span className={cn("block text-[13px] font-bold", registerSession ? "text-[#5cd69c]" : "text-[#f27f82]")}>
+              <span className={cn("block text-[13px] font-bold", registerSession ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
                 {registerSession ? "OPEN" : "CLOSED"}
                 {registerSession && registerLive && (
-                  <span className="tnum ml-2 text-[12px] font-semibold text-[#a19681]">
+                  <span className="tnum ml-2 text-[12px] font-semibold text-muted-foreground">
                     Drawer {formatINR(registerLive.expectedCash)}
                   </span>
                 )}
@@ -1848,18 +1689,18 @@ export default function AdminPosPage() {
               type="button"
               onClick={() => setDayOpen(true)}
               title="Today's business (IST) — click for the full summary"
-              className="hidden h-12 shrink-0 items-center gap-4 rounded-2xl border border-[#2b2418] bg-[#16130e] px-4 transition hover:border-[#d9a441]/30 md:flex"
+              className="hidden h-12 shrink-0 items-center gap-4 rounded-2xl border border-border bg-muted px-4 transition hover:border-primary/30 2xl:flex"
             >
               {[
                 { k: "Bills", v: String(today.orders), gold: false },
                 { k: "Sales", v: formatINR(today.revenue), gold: true },
                 { k: "Items", v: String(today.itemsSold), gold: false },
               ].map((s, i) => (
-                <span key={s.k} className={cn("flex flex-col items-start leading-tight", i > 0 && "border-l border-[#2b2418] pl-4")}>
-                  <span className="text-[8.5px] font-black uppercase tracking-[0.16em] text-[#6b6252]">{s.k}</span>
+                <span key={s.k} className={cn("flex flex-col items-start leading-tight", i > 0 && "border-l border-border pl-4")}>
+                  <span className="text-[8.5px] font-black uppercase tracking-[0.16em] text-muted-foreground/70">{s.k}</span>
                   <span
                     key={`${s.k}-${s.v}`}
-                    className={cn("pos-pulse tnum text-[13.5px] font-bold", s.gold && "text-[#e8bd68]")}
+                    className={cn("pos-pulse tnum text-[13.5px] font-bold", s.gold && "text-primary")}
                   >
                     {s.v}
                   </span>
@@ -1870,28 +1711,138 @@ export default function AdminPosPage() {
 
           {/* cashier */}
           {sellerName && (
-            <div className="hidden h-12 shrink-0 items-center gap-2.5 rounded-2xl border border-[#2b2418] bg-[#16130e] px-3.5 xl:flex" title="Signed-in cashier">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] text-[11px] font-black text-[#241a06]">
+            <div className="hidden h-12 shrink-0 items-center gap-2.5 rounded-2xl border border-border bg-muted px-3.5 2xl:flex" title="Signed-in cashier">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-[11px] font-black text-primary-foreground">
                 {sellerName.trim().charAt(0).toUpperCase()}
               </span>
               <span className="leading-tight">
-                <span className="block text-[8.5px] font-black uppercase tracking-[0.16em] text-[#6b6252]">Cashier</span>
+                <span className="block text-[8.5px] font-black uppercase tracking-[0.16em] text-muted-foreground/70">Cashier</span>
                 <span className="block max-w-24 truncate text-[12px] font-bold">{sellerName}</span>
               </span>
             </div>
           )}
+
+          {/* quick actions — held bills, sales, day, keys, sound, fullscreen */}
+          <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                playPosSound("click");
+                setHeldOpen(true);
+              }}
+              title="Held bills — F8"
+              aria-label="Held bills"
+              className={cn(ghostIcon, "relative")}
+            >
+              <Pause className="h-[18px] w-[18px]" />
+              {held.length > 0 && (
+                <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-black leading-none text-primary-foreground">
+                  {held.length}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                playPosSound("click");
+                setRecentOpen(true);
+              }}
+              title="Recent sales"
+              aria-label="Recent sales"
+              className={cn(ghostIcon, "hidden sm:inline-flex")}
+            >
+              <History className="h-[18px] w-[18px]" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDayOpen(true)}
+              title="Today's summary"
+              aria-label="Today's summary"
+              className={cn(ghostIcon, "hidden xl:inline-flex")}
+            >
+              <ChartColumn className="h-[18px] w-[18px]" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setShortcutsOpen(true)}
+              title="Keyboard shortcuts — ?"
+              aria-label="Keyboard shortcuts"
+              className={cn(ghostIcon, "hidden xl:inline-flex")}
+            >
+              <Keyboard className="h-[18px] w-[18px]" />
+            </button>
+            <div className="relative hidden sm:block">
+              <button
+                type="button"
+                onClick={() => {
+                  playPosSound("click");
+                  setVolOpen((o) => !o);
+                }}
+                title="Sounds & volume"
+                aria-label="Register sounds"
+                className={ghostIcon}
+              >
+                {soundOn ? <Volume2 className="h-[18px] w-[18px]" /> : <VolumeX className="h-[18px] w-[18px]" />}
+              </button>
+              {volOpen && (
+                <div className="pos-slide absolute right-0 top-full z-40 mt-2 w-56 rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-xl">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Register sounds</span>
+                    <button
+                      type="button"
+                      onClick={toggleSound}
+                      className={cn("relative h-5.5 w-10 rounded-full transition", soundOn ? "bg-primary" : "bg-border")}
+                      aria-label="Toggle sounds"
+                    >
+                      <span
+                        className={cn(
+                          "absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow transition-all",
+                          soundOn ? "left-[22px]" : "left-0.5"
+                        )}
+                      />
+                    </button>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(volume * 100)}
+                    onChange={(e) => changeVolume(Number(e.target.value) / 100)}
+                    className="w-full accent-primary"
+                    aria-label="Sound volume"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => testPosSound()}
+                    className="mt-3 w-full rounded-lg border border-border py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground transition hover:border-primary/40 hover:text-primary"
+                  >
+                    Test sound
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              title="Fullscreen"
+              aria-label="Fullscreen"
+              className={cn(ghostIcon, "hidden xl:inline-flex")}
+            >
+              <Maximize2 className="h-[18px] w-[18px]" />
+            </button>
+          </div>
         </header>
 
         {/* ─────────── categories + filters ─────────── */}
-        <div className="flex shrink-0 items-center gap-2.5 overflow-x-auto border-b border-[#241e13] px-4 py-3 lg:px-6 stellora-scroll">
+        <div className="stellora-scroll flex shrink-0 items-center gap-2.5 overflow-x-auto rounded-2xl border border-border bg-card px-3 py-2.5 shadow-sm sm:px-4">
           <button
             type="button"
             onClick={() => setCatFilter("")}
             className={cn(
-              "flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30",
+              "flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
               !catFilter
-                ? "bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] shadow-[0_8px_20px_-8px_rgba(217,164,65,0.5)]"
-                : "border border-[#2b2418] bg-[#16130e] text-[#a19681] hover:border-[#453a24] hover:text-[#f2ecdf]"
+                ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                : "border border-border bg-muted text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground"
             )}
           >
             <Sparkles className="h-3.5 w-3.5" /> All
@@ -1902,16 +1853,16 @@ export default function AdminPosPage() {
               type="button"
               onClick={() => setCatFilter(cFilter => (cFilter === c.slug ? "" : c.slug))}
               className={cn(
-                "flex h-9 shrink-0 items-center rounded-full px-4 text-[12.5px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/30",
+                "flex h-9 shrink-0 items-center rounded-full px-4 text-[12.5px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
                 catFilter === c.slug
-                  ? "bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] shadow-[0_8px_20px_-8px_rgba(217,164,65,0.5)]"
-                  : "border border-[#2b2418] bg-[#16130e] text-[#a19681] hover:border-[#453a24] hover:text-[#f2ecdf]"
+                  ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
+                  : "border border-border bg-muted text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground"
               )}
             >
               {c.name}
             </button>
           ))}
-          <span className="mx-1 hidden h-6 w-px shrink-0 bg-[#2b2418] sm:block" />
+          <span className="mx-1 hidden h-6 w-px shrink-0 bg-border sm:block" />
           {/* stock filter + sort */}
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <button
@@ -1923,8 +1874,8 @@ export default function AdminPosPage() {
               className={cn(
                 "hidden h-9 items-center rounded-full border px-3.5 text-[11.5px] font-bold transition sm:flex",
                 inStockOnly
-                  ? "border-[#3dd68c]/40 bg-[#3dd68c]/10 text-[#5cd69c]"
-                  : "border-[#2b2418] bg-[#16130e] text-[#8b8170] hover:text-[#f2ecdf]"
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "border-border bg-muted text-muted-foreground hover:text-foreground"
               )}
             >
               In stock
@@ -1938,19 +1889,19 @@ export default function AdminPosPage() {
               className={cn(
                 "hidden h-9 items-center rounded-full border px-3.5 text-[11.5px] font-bold transition sm:flex",
                 outOnly
-                  ? "border-[#e5484d]/40 bg-[#e5484d]/10 text-[#f27f82]"
-                  : "border-[#2b2418] bg-[#16130e] text-[#8b8170] hover:text-[#f2ecdf]"
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : "border-border bg-muted text-muted-foreground hover:text-foreground"
               )}
             >
               Out
             </button>
             <div className="relative">
-              <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6b6252]" />
+              <ArrowUpDown className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
               <select
                 value={sortMode}
                 onChange={(e) => setSortMode(e.target.value as typeof sortMode)}
                 aria-label="Sort products"
-                className="h-9 appearance-none rounded-full border border-[#2b2418] bg-[#16130e] pl-8 pr-3 text-[11.5px] font-bold text-[#a19681] outline-none transition hover:text-[#f2ecdf] focus:border-[#d9a441]/50"
+                className="h-9 appearance-none rounded-full border border-border bg-muted pl-8 pr-3 text-[11.5px] font-bold text-muted-foreground outline-none transition hover:text-foreground focus:border-primary/50"
               >
                 <option value="featured">Featured</option>
                 <option value="price-asc">Price ↑</option>
@@ -1962,9 +1913,9 @@ export default function AdminPosPage() {
         </div>
 
         {/* ─────────── catalog grid ─────────── */}
-        <main
+        <section
           className={cn(
-            "stellora-scroll min-h-0 flex-1 overflow-y-auto px-4 pb-28 pt-5 lg:px-6 lg:pb-8",
+            "stellora-scroll min-h-0 flex-1 overflow-y-auto px-1 pb-10 pt-4 lg:px-1.5 lg:pb-4",
             mobileTab !== "browse" && "hidden lg:block"
           )}
         >
@@ -1972,20 +1923,20 @@ export default function AdminPosPage() {
             /* skeleton cards */
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {Array.from({ length: 10 }).map((_, i) => (
-                <div key={i} className="overflow-hidden rounded-2xl border border-[#241e13] bg-[#14110d]">
-                  <div className="aspect-[4/3] animate-pulse bg-[#1c1710]" />
+                <div key={i} className="overflow-hidden rounded-2xl border border-border bg-card">
+                  <div className="aspect-[4/3] animate-pulse bg-muted" />
                   <div className="space-y-2 p-3.5">
-                    <div className="h-3.5 w-3/4 animate-pulse rounded bg-[#1c1710]" />
-                    <div className="h-3 w-1/2 animate-pulse rounded bg-[#1c1710]" />
-                    <div className="h-4 w-1/3 animate-pulse rounded bg-[#1c1710]" />
+                    <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted" />
+                    <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+                    <div className="h-4 w-1/3 animate-pulse rounded bg-muted" />
                   </div>
                 </div>
               ))}
             </div>
           ) : visibleProducts.length === 0 ? (
             <div className="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
-              <span className="flex h-16 w-16 items-center justify-center rounded-3xl border border-[#2b2418] bg-[#16130e]">
-                <PackageOpen className="h-7 w-7 text-[#6b6252]" />
+              <span className="flex h-16 w-16 items-center justify-center rounded-3xl border border-border bg-muted">
+                <PackageOpen className="h-7 w-7 text-muted-foreground/70" />
               </span>
               {prodFailed ? (
                 <>
@@ -1993,7 +1944,7 @@ export default function AdminPosPage() {
                   <button
                     type="button"
                     onClick={() => void fetchProducts(1, query, catFilter)}
-                    className="mt-1 inline-flex items-center gap-2 rounded-xl border border-[#d9a441]/40 px-4 py-2 text-[12px] font-bold text-[#e8bd68] transition hover:bg-[#d9a441]/10"
+                    className="mt-1 inline-flex items-center gap-2 rounded-xl border border-primary/40 px-4 py-2 text-[12px] font-bold text-primary transition hover:bg-primary/10"
                   >
                     <RotateCcw className="h-3.5 w-3.5" /> Retry
                   </button>
@@ -2001,7 +1952,7 @@ export default function AdminPosPage() {
               ) : (
                 <>
                   <p className="text-[15px] font-bold">No products match</p>
-                  <p className="max-w-60 text-[12.5px] text-[#8b8170]">
+                  <p className="max-w-60 text-[12.5px] text-muted-foreground">
                     Try another search term, category or filter — scanned codes also work.
                   </p>
                 </>
@@ -2023,9 +1974,9 @@ export default function AdminPosPage() {
                     key={p.id}
                     type="button"
                     onClick={() => handleProductClick(p)}
-                    className="group relative flex flex-col overflow-hidden rounded-2xl border border-[#241e13] bg-[#15120d] text-left transition-all duration-200 hover:-translate-y-1 hover:border-[#d9a441]/45 hover:shadow-[0_22px_44px_-22px_rgba(217,164,65,0.35)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9a441]/40"
+                    className="group relative flex flex-col overflow-hidden rounded-2xl border border-border bg-card text-left transition-all duration-200 hover:-translate-y-1 hover:border-primary/45 hover:shadow-lg shadow-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                   >
-                    <span className="relative block aspect-[4/3] overflow-hidden bg-[#0b0a08]">
+                    <span className="relative block aspect-[4/3] overflow-hidden bg-muted">
                       {p.images[0]?.url ? (
                         <Image
                           src={p.images[0].url}
@@ -2036,38 +1987,38 @@ export default function AdminPosPage() {
                         />
                       ) : (
                         <span className="flex h-full items-center justify-center">
-                          <ShoppingBasket className="h-8 w-8 text-[#2b2418]" />
+                          <ShoppingBasket className="h-8 w-8 text-muted-foreground/40" />
                         </span>
                       )}
-                      <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0b0a08]/70 via-transparent to-transparent" />
+                      <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                       {offPct > 0 && (
-                        <span className="absolute left-3 top-3 rounded-lg bg-[#e5484d] px-2 py-0.5 text-[10px] font-black tracking-wide text-white shadow">
+                        <span className="absolute left-3 top-3 rounded-lg bg-destructive px-2 py-0.5 text-[10px] font-black tracking-wide text-white shadow">
                           −{offPct}%
                         </span>
                       )}
                       {stock <= 0 && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-[#0b0a08]/72 backdrop-blur-[2px]">
-                          <span className="rounded-lg border border-[#e5484d]/40 bg-[#e5484d]/15 px-3 py-1 text-[10.5px] font-black uppercase tracking-[0.14em] text-[#f27f82]">
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
+                          <span className="rounded-lg border border-destructive/40 bg-destructive/15 px-3 py-1 text-[10.5px] font-black uppercase tracking-[0.14em] text-destructive">
                             Out of stock
                           </span>
                         </span>
                       )}
-                      <span className="absolute bottom-3 right-3 flex h-9 w-9 translate-y-1.5 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] opacity-90 shadow-[0_10px_24px_-8px_rgba(217,164,65,0.6)] transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100 max-lg:translate-y-0 max-lg:opacity-100">
+                      <span className="absolute bottom-3 right-3 flex h-9 w-9 translate-y-1.5 items-center justify-center rounded-full bg-primary text-primary-foreground opacity-90 shadow-md shadow-primary/25 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100 max-lg:translate-y-0 max-lg:opacity-100">
                         <Plus className="h-4.5 w-4.5" strokeWidth={2.6} />
                       </span>
                     </span>
                     <span className="flex flex-1 flex-col gap-1 p-3.5">
-                      <span className="truncate text-[13.5px] font-bold leading-snug text-[#f2ecdf]">{p.name}</span>
-                      <span className="truncate font-mono text-[9.5px] uppercase tracking-[0.1em] text-[#6b6252]">
+                      <span className="truncate text-[13.5px] font-bold leading-snug text-foreground">{p.name}</span>
+                      <span className="truncate font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted-foreground/70">
                         {p.variants.find((v) => v.isActive)?.sku ?? p.category?.name ?? ""}
                       </span>
                       <span className="mt-auto flex items-end justify-between pt-1.5">
                         <span className="leading-none">
-                          <span className="tnum text-[15.5px] font-black text-[#e8bd68]">
+                          <span className="tnum text-[15.5px] font-black text-primary">
                             ₹{price.toLocaleString("en-IN")}
                           </span>
                           {compare && Number(compare) > price && (
-                            <span className="tnum ml-1.5 text-[10.5px] font-semibold text-[#6b6252] line-through">
+                            <span className="tnum ml-1.5 text-[10.5px] font-semibold text-muted-foreground/70 line-through">
                               ₹{Number(compare).toLocaleString("en-IN")}
                             </span>
                           )}
@@ -2087,22 +2038,22 @@ export default function AdminPosPage() {
           {/* pagination */}
           {visibleProducts !== null && visibleProducts.length > 0 && (
             <div className="mt-6 flex items-center justify-between">
-              <p className="text-[11.5px] font-semibold text-[#6b6252]">
-                Page <span className="text-[#a19681]">{page}</span> of {pages} · {total} products
+              <p className="text-[11.5px] font-semibold text-muted-foreground/70">
+                Page <span className="text-muted-foreground">{page}</span> of {pages} · {total} products
               </p>
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   disabled={page <= 1}
                   onClick={() => void fetchProducts(page - 1, query, catFilter)}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#2b2418] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68] disabled:opacity-30"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-30"
                   aria-label="Previous page"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
                 {pageWindow.map((n, i) =>
                   n === "…" ? (
-                    <span key={`gap-${i}`} className="px-1 text-[11px] text-[#6b6252]">
+                    <span key={`gap-${i}`} className="px-1 text-[11px] text-muted-foreground/70">
                       …
                     </span>
                   ) : (
@@ -2113,8 +2064,8 @@ export default function AdminPosPage() {
                       className={cn(
                         "tnum flex h-9 min-w-9 items-center justify-center rounded-xl px-2 text-[12px] font-bold transition",
                         n === page
-                          ? "bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06] shadow"
-                          : "border border-[#2b2418] text-[#a19681] hover:border-[#453a24] hover:text-[#f2ecdf]"
+                          ? "bg-primary text-primary-foreground shadow"
+                          : "border border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground"
                       )}
                     >
                       {n}
@@ -2125,7 +2076,7 @@ export default function AdminPosPage() {
                   type="button"
                   disabled={page >= pages}
                   onClick={() => void fetchProducts(page + 1, query, catFilter)}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#2b2418] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68] disabled:opacity-30"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-30"
                   aria-label="Next page"
                 >
                   <ChevronRight className="h-4 w-4" />
@@ -2133,16 +2084,19 @@ export default function AdminPosPage() {
               </div>
             </div>
           )}
-        </main>
+        </section>
 
-        {/* ─────────── mobile bottom tabs ─────────── */}
-        <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-[#241e13] bg-[#100d09]/95 px-4 py-3 backdrop-blur lg:hidden">
+        {/* ─────────── mobile bottom tabs (above the admin bottom nav) ─────────── */}
+        <div
+          className="fixed inset-x-0 z-30 flex items-center gap-2 border-t border-border bg-background/95 px-4 py-2.5 backdrop-blur lg:hidden"
+          style={{ bottom: "calc(3.5rem + env(safe-area-inset-bottom, 0px))" }}
+        >
           <button
             type="button"
             onClick={() => setMobileTab("browse")}
             className={cn(
               "flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[12px] font-bold transition",
-              mobileTab === "browse" ? "bg-[#d9a441]/15 text-[#e8bd68]" : "text-[#8b8170]"
+              mobileTab === "browse" ? "bg-primary/10 text-primary" : "text-muted-foreground"
             )}
           >
             <ShoppingBasket className="h-4.5 w-4.5" /> Browse
@@ -2152,12 +2106,12 @@ export default function AdminPosPage() {
             onClick={() => setMobileTab("cart")}
             className={cn(
               "relative flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[12px] font-bold transition",
-              mobileTab === "cart" ? "bg-[#d9a441]/15 text-[#e8bd68]" : "text-[#8b8170]"
+              mobileTab === "cart" ? "bg-primary/10 text-primary" : "text-muted-foreground"
             )}
           >
             <ReceiptText className="h-4.5 w-4.5" /> Bill
             {billCount > 0 && (
-              <span className="tnum absolute right-3 top-1 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] px-1 text-[9.5px] font-black text-[#241a06]">
+              <span className="tnum absolute right-3 top-1 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-primary px-1 text-[9.5px] font-black text-primary-foreground">
                 {billCount}
               </span>
             )}
@@ -2168,15 +2122,15 @@ export default function AdminPosPage() {
       {/* ══════════════════ BILL PANEL ══════════════════ */}
       <aside
         className={cn(
-          "stellora-scroll z-20 flex w-full shrink-0 flex-col border-l border-[#241e13] bg-[#12100c] pb-[76px] lg:w-[400px] lg:pb-0 xl:w-[432px]",
+          "stellora-scroll z-20 flex w-full shrink-0 flex-col border-l border-border bg-card pb-10 lg:w-[400px] lg:pb-0 xl:w-[432px]",
           mobileTab !== "cart" && "hidden lg:flex"
         )}
       >
         {/* panel header */}
-        <div className="flex h-[74px] shrink-0 items-center justify-between gap-2 border-b border-[#241e13] px-5">
+        <div className="flex h-[74px] shrink-0 items-center justify-between gap-2 border-b border-border px-5">
           <div className="flex items-baseline gap-2.5">
-            <h2 className="font-serif text-[19px] font-bold tracking-tight text-[#f2ecdf]">Current Bill</h2>
-            <Pill className="border-[#d9a441]/25 bg-[#d9a441]/8 text-[#e8bd68]">T-{terminalId || "—"}</Pill>
+            <h2 className="font-serif text-[19px] font-bold tracking-tight text-foreground">Current Bill</h2>
+            <Pill className="border-primary/25 bg-primary/10 text-primary">T-{terminalId || "—"}</Pill>
           </div>
           <div className="flex items-center gap-1">
             {bill.length > 0 && (
@@ -2200,16 +2154,16 @@ export default function AdminPosPage() {
 
         {/* customer strip */}
         <div className="shrink-0 px-5 pt-4">
-          <div className="flex items-center gap-3 rounded-2xl border border-[#241e13] bg-[#17130d] p-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d9a441]/30 bg-[#d9a441]/10 text-[15px] font-black text-[#e8bd68]">
-              {customerName ? customerName.trim().charAt(0).toUpperCase() : <UserRound className="h-4.5 w-4.5 text-[#8b8170]" />}
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted p-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[15px] font-black text-primary">
+              {customerName ? customerName.trim().charAt(0).toUpperCase() : <UserRound className="h-4.5 w-4.5 text-muted-foreground" />}
             </span>
             <div className="min-w-0 flex-1 leading-tight">
               <p className="truncate text-[13.5px] font-bold">{customerName ?? "Walk-in customer"}</p>
-              <p className="truncate text-[11px] text-[#8b8170]">
+              <p className="truncate text-[11px] text-muted-foreground">
                 {customerPhone || customerEmail || "Tap to attach for loyalty points"}
                 {customerPoints !== null && customerPoints > 0 && (
-                  <span className="tnum ml-2 rounded-md bg-[#d9a441]/12 px-1.5 py-0.5 text-[10px] font-bold text-[#e8bd68]">
+                  <span className="tnum ml-2 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">
                     ★ {customerPoints.toLocaleString("en-IN")} pts
                   </span>
                 )}
@@ -2238,11 +2192,11 @@ export default function AdminPosPage() {
         <div className="stellora-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {bill.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 pb-16 text-center">
-              <span className="pos-pop flex h-20 w-20 items-center justify-center rounded-[28px] border border-dashed border-[#3a3122] bg-[#17130d]">
-                <HandCoins className="h-8 w-8 text-[#4a4132]" />
+              <span className="pos-pop flex h-20 w-20 items-center justify-center rounded-[28px] border border-dashed border-border bg-muted">
+                <HandCoins className="h-8 w-8 text-muted-foreground/50" />
               </span>
-              <p className="mt-1 font-serif text-[16px] font-bold text-[#d8cdb9]">The counter is clear</p>
-              <p className="max-w-56 text-[12px] leading-relaxed text-[#8b8170]">
+              <p className="mt-1 font-serif text-[16px] font-bold text-foreground/80">The counter is clear</p>
+              <p className="max-w-56 text-[12px] leading-relaxed text-muted-foreground">
                 Tap a product, scan a barcode, or resume a held bill to start billing.
               </p>
             </div>
@@ -2251,33 +2205,33 @@ export default function AdminPosPage() {
               {bill.map((l) => (
                 <li
                   key={l.variantId}
-                  className="pos-slide rounded-2xl border border-[#262017] bg-[#17130d] p-3 transition hover:border-[#3a3122]"
+                  className="pos-slide rounded-2xl border border-border bg-muted p-3 transition hover:border-border"
                 >
                   <div className="flex gap-3">
                     {/* thumb */}
-                    <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-[#241e13] bg-[#0b0a08]">
+                    <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-border bg-muted">
                       {l.image ? (
                         <Image src={l.image} alt={l.productName} fill sizes="56px" className="object-cover" />
                       ) : (
                         <span className="flex h-full items-center justify-center">
-                          <ShoppingBasket className="h-5 w-5 text-[#2b2418]" />
+                          <ShoppingBasket className="h-5 w-5 text-muted-foreground/40" />
                         </span>
                       )}
                     </span>
                     {/* name + meta */}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-bold leading-snug">{l.productName}</p>
-                      <p className="truncate text-[10.5px] text-[#8b8170]">
+                      <p className="truncate text-[10.5px] text-muted-foreground">
                         {l.variantName} · <span className="font-mono uppercase">{l.sku}</span>
                       </p>
                       {/* qty stepper + unit price */}
                       <div className="mt-2 flex items-center gap-2.5">
-                        <span className="flex items-center rounded-lg border border-[#2b2418] bg-[#100e0a]">
+                        <span className="flex items-center rounded-lg border border-border bg-transparent">
                           <button
                             type="button"
                             onClick={() => changeQty(l.variantId, -1)}
                             disabled={l.quantity <= 1}
-                            className="flex h-7.5 w-7 items-center justify-center text-[#a19681] transition hover:text-[#f2ecdf] disabled:opacity-30"
+                            className="flex h-7.5 w-7 items-center justify-center text-muted-foreground transition hover:text-foreground disabled:opacity-30"
                             aria-label="Decrease quantity"
                           >
                             <Minus className="h-3.5 w-3.5" />
@@ -2287,24 +2241,24 @@ export default function AdminPosPage() {
                             type="button"
                             onClick={() => changeQty(l.variantId, 1)}
                             disabled={l.quantity >= l.stock}
-                            className="flex h-7.5 w-7 items-center justify-center text-[#a19681] transition hover:text-[#e8bd68] disabled:opacity-30"
+                            className="flex h-7.5 w-7 items-center justify-center text-muted-foreground transition hover:text-primary disabled:opacity-30"
                             aria-label="Increase quantity"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
                         </span>
-                        <span className="flex items-center gap-1 text-[11px] text-[#8b8170]">
+                        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                           @
                           <input
                             value={l.unitPrice}
                             onChange={(e) => editLinePrice(l.variantId, Number(e.target.value))}
                             inputMode="decimal"
                             aria-label={`Unit price for ${l.productName}`}
-                            className="tnum w-16 rounded-md border border-transparent bg-[#100e0a] px-1.5 py-1 text-right text-[11.5px] font-bold text-[#d8cdb9] outline-none transition hover:border-[#2b2418] focus:border-[#d9a441]/50"
+                            className="tnum w-16 rounded-md border border-transparent bg-transparent px-1.5 py-1 text-right text-[11.5px] font-bold text-foreground/80 outline-none transition hover:border-border focus:border-primary/50"
                           />
                         </span>
                         {l.stock <= 3 && (
-                          <span className="rounded-md bg-[#f5a623]/12 px-1.5 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-[#f5b93e]">
+                          <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-amber-600 dark:text-amber-400">
                             {l.stock} left
                           </span>
                         )}
@@ -2319,12 +2273,12 @@ export default function AdminPosPage() {
                           setBill(bill.filter((x) => x.variantId !== l.variantId));
                         }}
                         title="Remove line"
-                        className="flex h-7 w-7 items-center justify-center rounded-lg text-[#6b6252] transition hover:bg-[#3a1a1a] hover:text-[#f27f82]"
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground/70 transition hover:bg-destructive/10 hover:text-destructive"
                         aria-label={`Remove ${l.productName}`}
                       >
                         <X className="h-4 w-4" />
                       </button>
-                      <span className="tnum text-[14.5px] font-black text-[#e8bd68]">
+                      <span className="tnum text-[14.5px] font-black text-primary">
                         ₹{(l.unitPrice * l.quantity).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                       </span>
                     </div>
@@ -2353,7 +2307,7 @@ export default function AdminPosPage() {
                           setLineNote(l.variantId, noteEdit.draft);
                           setNoteEdit(null);
                         }}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[#241a06]"
+                        className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
                         aria-label="Save note"
                       >
                         <Check className="h-4 w-4" strokeWidth={2.6} />
@@ -2367,8 +2321,8 @@ export default function AdminPosPage() {
                         className={cn(
                           "rounded-md border px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition",
                           l.note
-                            ? "border-[#d9a441]/35 bg-[#d9a441]/10 text-[#e8bd68]"
-                            : "border-[#2b2418] text-[#6b6252] hover:border-[#453a24] hover:text-[#a19681]"
+                            ? "border-primary/35 bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground/70 hover:border-muted-foreground/40 hover:text-muted-foreground"
                         )}
                       >
                         {l.note ? `✎ ${l.note.slice(0, 26)}` : "+ Note"}
@@ -2385,10 +2339,10 @@ export default function AdminPosPage() {
                               className={cn(
                                 "shrink-0 rounded-md border px-2 py-1 text-[10px] font-bold transition",
                                 opt.id === l.variantId
-                                  ? "border-[#d9a441]/50 bg-[#d9a441]/15 text-[#e8bd68]"
+                                  ? "border-primary/50 bg-primary/10 text-primary"
                                   : opt.stock <= 0
-                                    ? "border-[#2b2418] text-[#4a4132] line-through"
-                                    : "border-[#2b2418] text-[#8b8170] hover:border-[#453a24] hover:text-[#f2ecdf]"
+                                    ? "border-border text-muted-foreground/50 line-through"
+                                    : "border-border text-muted-foreground hover:border-muted-foreground/40 hover:text-foreground"
                               )}
                             >
                               {opt.name}
@@ -2405,14 +2359,14 @@ export default function AdminPosPage() {
         </div>
 
         {/* adjustments + totals */}
-        <div className="shrink-0 border-t border-[#241e13] bg-[#14110c] px-5 py-4">
+        <div className="shrink-0 border-t border-border bg-popover px-5 py-4">
           {/* discount / tax / shipping / coupon — compact row controls */}
           <details className="group/adj">
-            <summary className="flex cursor-pointer list-none items-center justify-between text-[10.5px] font-black uppercase tracking-[0.16em] text-[#8b8170] transition hover:text-[#d8cdb9]">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-[10.5px] font-black uppercase tracking-[0.16em] text-muted-foreground transition hover:text-foreground/80">
               <span className="flex items-center gap-1.5">
                 <Tags className="h-3.5 w-3.5" /> Adjustments
                 {(appliedDiscount > 0 || taxNum > 0 || shippingNum > 0) && (
-                  <span className="rounded-md bg-[#d9a441]/15 px-1.5 py-0.5 text-[9px] font-black text-[#e8bd68]">
+                  <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-black text-primary">
                     {[
                       appliedDiscount > 0 ? "DISC" : "",
                       taxNum > 0 ? "TAX" : "",
@@ -2428,13 +2382,13 @@ export default function AdminPosPage() {
             <div className="mt-3 space-y-2.5">
               {/* discount */}
               <div className="flex items-center gap-2">
-                <div className="flex overflow-hidden rounded-xl border border-[#2b2418]">
+                <div className="flex overflow-hidden rounded-xl border border-border">
                   <button
                     type="button"
                     onClick={() => switchDiscountMode("flat")}
                     className={cn(
                       "px-2.5 py-2 text-[11px] font-black transition",
-                      discountMode === "flat" ? "bg-[#d9a441]/20 text-[#e8bd68]" : "bg-[#100e0a] text-[#6b6252] hover:text-[#a19681]"
+                      discountMode === "flat" ? "bg-primary/15 text-primary" : "bg-transparent text-muted-foreground/70 hover:text-muted-foreground"
                     )}
                   >
                     ₹
@@ -2444,7 +2398,7 @@ export default function AdminPosPage() {
                     onClick={() => switchDiscountMode("pct")}
                     className={cn(
                       "px-2.5 py-2 text-[11px] font-black transition",
-                      discountMode === "pct" ? "bg-[#d9a441]/20 text-[#e8bd68]" : "bg-[#100e0a] text-[#6b6252] hover:text-[#a19681]"
+                      discountMode === "pct" ? "bg-primary/15 text-primary" : "bg-transparent text-muted-foreground/70 hover:text-muted-foreground"
                     )}
                   >
                     %
@@ -2456,7 +2410,7 @@ export default function AdminPosPage() {
                   placeholder="Discount"
                   inputMode="decimal"
                   aria-label="Bill discount"
-                  className={cn(fieldCls, "tnum h-10 flex-1 rounded-xl text-right font-bold", discountInvalid && "border-[#e5484d]/60")}
+                  className={cn(fieldCls, "tnum h-10 flex-1 rounded-xl text-right font-bold", discountInvalid && "border-destructive/60")}
                 />
                 <div className="flex gap-1">
                   {(discountMode === "pct" ? [5, 10] : [100, 500]).map((q) => (
@@ -2464,7 +2418,7 @@ export default function AdminPosPage() {
                       key={q}
                       type="button"
                       onClick={() => setDiscount(String(q))}
-                      className="tnum h-10 rounded-xl border border-[#2b2418] px-2.5 text-[11px] font-bold text-[#8b8170] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                      className="tnum h-10 rounded-xl border border-border px-2.5 text-[11px] font-bold text-muted-foreground transition hover:border-primary/40 hover:text-primary"
                     >
                       {discountMode === "pct" ? `${q}%` : `₹${q}`}
                     </button>
@@ -2474,7 +2428,7 @@ export default function AdminPosPage() {
               {/* tax + shipping */}
               <div className="grid grid-cols-2 gap-2.5">
                 <label className="relative block">
-                  <Percent className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6b6252]" />
+                  <Percent className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
                   <input
                     value={taxPercent}
                     onChange={(e) => setTaxPercent(e.target.value.replace(/[^\d.]/g, ""))}
@@ -2485,7 +2439,7 @@ export default function AdminPosPage() {
                   />
                 </label>
                 <label className="relative block">
-                  <IndianRupee className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#6b6252]" />
+                  <IndianRupee className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
                   <input
                     value={shippingFee}
                     onChange={(e) => setShippingFee(e.target.value.replace(/[^\d.]/g, ""))}
@@ -2498,11 +2452,11 @@ export default function AdminPosPage() {
               </div>
               {/* coupon */}
               {appliedCoupon ? (
-                <div className="flex items-center justify-between rounded-xl border border-[#3dd68c]/30 bg-[#3dd68c]/8 px-3.5 py-2.5">
-                  <span className="flex items-center gap-2 text-[12px] font-bold text-[#5cd69c]">
+                <div className="flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5">
+                  <span className="flex items-center gap-2 text-[12px] font-bold text-emerald-600 dark:text-emerald-400">
                     <Ticket className="h-4 w-4" /> {appliedCoupon.code} · −{formatINR(appliedCoupon.discount)}
                   </span>
-                  <button type="button" onClick={removeCoupon} className="text-[#8b8170] transition hover:text-[#f27f82]" aria-label="Remove coupon">
+                  <button type="button" onClick={removeCoupon} className="text-muted-foreground transition hover:text-destructive" aria-label="Remove coupon">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -2520,7 +2474,7 @@ export default function AdminPosPage() {
                     type="button"
                     onClick={() => void applyCoupon()}
                     disabled={couponBusy || bill.length === 0}
-                    className="h-10 rounded-xl border border-[#d9a441]/35 px-4 text-[11.5px] font-black uppercase tracking-wide text-[#e8bd68] transition hover:bg-[#d9a441]/10 disabled:opacity-40"
+                    className="h-10 rounded-xl border border-primary/35 px-4 text-[11.5px] font-black uppercase tracking-wide text-primary transition hover:bg-primary/10 disabled:opacity-40"
                   >
                     {couponBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
                   </button>
@@ -2538,32 +2492,32 @@ export default function AdminPosPage() {
           </details>
 
           {/* totals */}
-          <dl className="mt-3.5 space-y-1.5 border-t border-dashed border-[#2b2418] pt-3.5 text-[12.5px]">
+          <dl className="mt-3.5 space-y-1.5 border-t border-dashed border-border pt-3.5 text-[12.5px]">
             <div className="flex justify-between">
-              <dt className="text-[#8b8170]">Subtotal · {billCount} item{billCount === 1 ? "" : "s"}</dt>
-              <dd className="tnum font-bold text-[#d8cdb9]">{formatINR(subtotal)}</dd>
+              <dt className="text-muted-foreground">Subtotal · {billCount} item{billCount === 1 ? "" : "s"}</dt>
+              <dd className="tnum font-bold text-foreground/80">{formatINR(subtotal)}</dd>
             </div>
             {appliedDiscount > 0 && (
               <div className="flex justify-between">
-                <dt className="text-[#8b8170]">Discount{appliedCoupon ? ` · ${appliedCoupon.code}` : ""}</dt>
-                <dd className="tnum font-bold text-[#5cd69c]">−{formatINR(appliedDiscount)}</dd>
+                <dt className="text-muted-foreground">Discount{appliedCoupon ? ` · ${appliedCoupon.code}` : ""}</dt>
+                <dd className="tnum font-bold text-emerald-600 dark:text-emerald-400">−{formatINR(appliedDiscount)}</dd>
               </div>
             )}
             {taxTotal > 0 && (
               <div className="flex justify-between">
-                <dt className="text-[#8b8170]">Tax · {taxNum}%</dt>
-                <dd className="tnum font-bold text-[#d8cdb9]">{formatINR(taxTotal)}</dd>
+                <dt className="text-muted-foreground">Tax · {taxNum}%</dt>
+                <dd className="tnum font-bold text-foreground/80">{formatINR(taxTotal)}</dd>
               </div>
             )}
             {shippingNum > 0 && (
               <div className="flex justify-between">
-                <dt className="text-[#8b8170]">Shipping</dt>
-                <dd className="tnum font-bold text-[#d8cdb9]">{formatINR(shippingNum)}</dd>
+                <dt className="text-muted-foreground">Shipping</dt>
+                <dd className="tnum font-bold text-foreground/80">{formatINR(shippingNum)}</dd>
               </div>
             )}
             <div className="flex items-end justify-between pt-1.5">
-              <dt className="text-[10.5px] font-black uppercase tracking-[0.18em] text-[#a19681]">Total payable</dt>
-              <dd key={grandTotal} className="pos-pulse tnum font-serif text-[26px] font-black leading-none text-[#e8bd68]">
+              <dt className="text-[10.5px] font-black uppercase tracking-[0.18em] text-muted-foreground">Total payable</dt>
+              <dd key={grandTotal} className="pos-pulse tnum font-serif text-[26px] font-black leading-none text-primary">
                 ₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </dd>
             </div>
@@ -2576,7 +2530,7 @@ export default function AdminPosPage() {
               onClick={holdBill}
               disabled={bill.length === 0}
               title="Hold this bill (F7)"
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#2b2418] text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68] disabled:opacity-30"
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-border text-muted-foreground transition hover:border-primary/40 hover:text-primary disabled:opacity-30"
             >
               <Pause className="h-5 w-5" />
             </button>
@@ -2585,17 +2539,17 @@ export default function AdminPosPage() {
               onClick={openPaymentDialog}
               disabled={bill.length === 0 || discountInvalid || grandTotal <= 0}
               title="Charge the bill (F4)"
-              className="group relative flex h-14 flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[15.5px] font-black tracking-wide text-[#241a06] shadow-[0_16px_36px_-14px_rgba(217,164,65,0.55)] transition-all hover:brightness-105 active:scale-[0.99] disabled:from-[#2b2418] disabled:via-[#2b2418] disabled:to-[#2b2418] disabled:text-[#6b6252] disabled:shadow-none"
+              className="group relative flex h-14 flex-1 items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-primary text-[15.5px] font-black tracking-wide text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:brightness-105 active:scale-[0.99] disabled:bg-muted disabled:text-muted-foreground/70 disabled:shadow-none"
             >
               <Banknote className="h-5 w-5" strokeWidth={2.4} />
               Charge ₹{grandTotal.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-              <span className="rounded-lg bg-[#241a06]/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider">
+              <span className="rounded-lg bg-primary-foreground/15 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider">
                 {billCount} item{billCount === 1 ? "" : "s"} · F4
               </span>
             </button>
           </div>
-          <p className="mt-2.5 flex items-center justify-center gap-1.5 text-[10px] font-semibold text-[#6b6252]">
-            <span className={cn("h-1.5 w-1.5 rounded-full", registerSession ? "bg-[#3dd68c]" : "bg-[#e5484d]")} />
+          <p className="mt-2.5 flex items-center justify-center gap-1.5 text-[10px] font-semibold text-muted-foreground/70">
+            <span className={cn("h-1.5 w-1.5 rounded-full", registerSession ? "bg-emerald-500" : "bg-destructive")} />
             {registerSession ? `Register open · drawer ${formatINR(registerLive?.expectedCash ?? 0)}` : "Register closed — open it to accept payments"}
           </p>
         </div>
@@ -2626,22 +2580,22 @@ export default function AdminPosPage() {
                 className={cn(
                   "flex w-full items-center gap-3.5 rounded-2xl border p-3 text-left transition",
                   v.stock <= 0
-                    ? "border-[#241e13] opacity-45"
-                    : "border-[#2b2418] bg-[#16130e] hover:border-[#d9a441]/50 hover:bg-[#1c1710]"
+                    ? "border-border opacity-45"
+                    : "border-border bg-muted hover:border-primary/50 hover:bg-muted"
                 )}
               >
-                <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-[#241e13] bg-[#0b0a08]">
+                <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-border bg-muted">
                   {variantPicker.images[0]?.url ? (
                     <Image src={variantPicker.images[0].url} alt={variantPicker.name} fill sizes="56px" className="object-cover" />
                   ) : null}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-bold">{v.name}</span>
-                  <span className="block font-mono text-[10px] uppercase text-[#6b6252]">{v.sku}</span>
+                  <span className="block font-mono text-[10px] uppercase text-muted-foreground/70">{v.sku}</span>
                 </span>
                 <span className="shrink-0 text-right">
-                  <span className="tnum block text-[14.5px] font-black text-[#e8bd68]">₹{Number(v.price).toLocaleString("en-IN")}</span>
-                  <span className={cn("block text-[10px] font-bold", v.stock <= 0 ? "text-[#f27f82]" : "text-[#5cd69c]")}>
+                  <span className="tnum block text-[14.5px] font-black text-primary">₹{Number(v.price).toLocaleString("en-IN")}</span>
+                  <span className={cn("block text-[10px] font-bold", v.stock <= 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>
                     {v.stock <= 0 ? "Out of stock" : `${v.stock} in stock`}
                   </span>
                 </span>
@@ -2652,19 +2606,19 @@ export default function AdminPosPage() {
 
       {/* camera scanner */}
       <AurumModal open={camOpen} onClose={() => setCamOpen(false)} title="Scan a barcode" subtitle="Hold the code inside the frame">
-        <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-[#2b2418] bg-[#0b0a08]">
+        <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-border bg-muted">
           <video ref={videoRef} muted playsInline className="h-full w-full object-cover" />
           {/* gold corner frame */}
           <span className="pointer-events-none absolute inset-10">
             {["left-0 top-0 border-l-2 border-t-2 rounded-tl-xl", "right-0 top-0 border-r-2 border-t-2 rounded-tr-xl", "bottom-0 left-0 border-b-2 border-l-2 rounded-bl-xl", "bottom-0 right-0 border-b-2 border-r-2 rounded-br-xl"].map(
               (c) => (
-                <span key={c} className={cn("absolute h-10 w-10 border-[#d9a441]", c)} />
+                <span key={c} className={cn("absolute h-10 w-10 border-primary", c)} />
               )
             )}
           </span>
           {!camSupported && (
-            <span className="absolute inset-0 flex items-center justify-center bg-[#0b0a08]/85 p-6 text-center">
-              <span className="text-[12.5px] leading-relaxed text-[#a19681]">
+            <span className="absolute inset-0 flex items-center justify-center bg-muted/85 p-6 text-center">
+              <span className="text-[12.5px] leading-relaxed text-muted-foreground">
                 This browser doesn't support camera scanning. USB barcode scanners and typed SKUs work everywhere — just
                 type the code in the search bar and press Enter.
               </span>
@@ -2676,7 +2630,7 @@ export default function AdminPosPage() {
       {/* held bills drawer */}
       <AurumSheet open={heldOpen} onClose={() => setHeldOpen(false)} title="Held bills" subtitle={`${held.length} parked at this terminal`}>
         {held.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-[#2b2418] p-6 text-center text-[12.5px] text-[#8b8170]">
+          <p className="rounded-2xl border border-dashed border-border p-6 text-center text-[12.5px] text-muted-foreground">
             Nothing on hold. Hold a bill with the pause button or F7 when a customer steps away.
           </p>
         ) : (
@@ -2684,30 +2638,30 @@ export default function AdminPosPage() {
             {held.map((h) => {
               const hTotal = r2(h.lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0));
               return (
-                <li key={h.id} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3.5">
+                <li key={h.id} className="rounded-2xl border border-border bg-muted p-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-[13px] font-bold">
                         {h.customerName ?? "Walk-in customer"} · {h.lines.length} line{h.lines.length === 1 ? "" : "s"}
                       </p>
-                      <p className="text-[10.5px] text-[#6b6252]">
+                      <p className="text-[10.5px] text-muted-foreground/70">
                         Held {formatDateTime(new Date(h.at).toISOString())}
                       </p>
                     </div>
-                    <span className="tnum shrink-0 text-[14px] font-black text-[#e8bd68]">₹{hTotal.toLocaleString("en-IN")}</span>
+                    <span className="tnum shrink-0 text-[14px] font-black text-primary">₹{hTotal.toLocaleString("en-IN")}</span>
                   </div>
                   <div className="mt-2.5 flex gap-2">
                     <button
                       type="button"
                       onClick={() => resumeBill(h)}
-                      className="h-9 flex-1 rounded-xl bg-gradient-to-b from-[#e8bd68] to-[#c08a2e] text-[11.5px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105"
+                      className="h-9 flex-1 rounded-xl bg-primary text-[11.5px] font-black uppercase tracking-wide text-primary-foreground transition hover:brightness-105"
                     >
                       Resume
                     </button>
                     <button
                       type="button"
                       onClick={() => setHeld(held.filter((x) => x.id !== h.id))}
-                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#2b2418] text-[#8b8170] transition hover:border-[#e5484d]/40 hover:text-[#f27f82]"
+                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-border text-muted-foreground transition hover:border-destructive/40 hover:text-destructive"
                       aria-label="Discard held bill"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -2723,13 +2677,13 @@ export default function AdminPosPage() {
       {/* recent sales drawer */}
       <AurumSheet open={recentOpen} onClose={() => setRecentOpen(false)} title="Recent sales" subtitle="Last 8 bills across the store">
         {recentBusy ? (
-          <p className="py-8 text-center text-[12.5px] text-[#8b8170]">Loading…</p>
+          <p className="py-8 text-center text-[12.5px] text-muted-foreground">Loading…</p>
         ) : recentErr ? (
-          <p className="rounded-2xl border border-dashed border-[#e5484d]/30 p-6 text-center text-[12.5px] text-[#f27f82]">
+          <p className="rounded-2xl border border-dashed border-destructive/30 p-6 text-center text-[12.5px] text-destructive">
             Could not load recent sales — try again in a moment.
           </p>
         ) : !recentOrders || recentOrders.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-[#2b2418] p-6 text-center text-[12.5px] text-[#8b8170]">
+          <p className="rounded-2xl border border-dashed border-border p-6 text-center text-[12.5px] text-muted-foreground">
             No sales yet today. Charged bills appear here instantly.
           </p>
         ) : (
@@ -2737,11 +2691,11 @@ export default function AdminPosPage() {
             {recentOrders.map((o) => {
               const pm = o.payments?.[0]?.method ?? o.paymentMethod;
               return (
-                <li key={o.id} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3.5">
+                <li key={o.id} className="rounded-2xl border border-border bg-muted p-3.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="tnum truncate text-[13px] font-bold text-[#e8bd68]">{o.orderNumber}</p>
-                      <p className="truncate text-[10.5px] text-[#6b6252]">
+                      <p className="tnum truncate text-[13px] font-bold text-primary">{o.orderNumber}</p>
+                      <p className="truncate text-[10.5px] text-muted-foreground/70">
                         {formatDateTime(o.createdAt)}
                         {o.user ? ` · ${o.user.name}` : " · Walk-in"}
                         {o.source ? ` · ${o.source === "POS" ? "counter" : "web"}` : ""}
@@ -2752,7 +2706,7 @@ export default function AdminPosPage() {
                       {pm && <Pill className="mt-0.5">{methodLabel(pm)}</Pill>}
                     </div>
                   </div>
-                  <p className="mt-1.5 truncate text-[11px] text-[#8b8170]">
+                  <p className="mt-1.5 truncate text-[11px] text-muted-foreground">
                     {o.items.map((i) => `${i.productName} ×${i.quantity}`).join(", ")}
                   </p>
                   <button
@@ -2761,7 +2715,7 @@ export default function AdminPosPage() {
                       setReceipt(receiptFromOrder(o));
                       setReceiptIsReprint(true);
                     }}
-                    className="mt-2.5 inline-flex h-9 items-center gap-2 rounded-xl border border-[#2b2418] px-3.5 text-[11px] font-black uppercase tracking-wide text-[#a19681] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                    className="mt-2.5 inline-flex h-9 items-center gap-2 rounded-xl border border-border px-3.5 text-[11px] font-black uppercase tracking-wide text-muted-foreground transition hover:border-primary/40 hover:text-primary"
                   >
                     <Printer className="h-3.5 w-3.5" /> Reprint receipt
                   </button>
@@ -2775,7 +2729,7 @@ export default function AdminPosPage() {
       {/* day summary drawer */}
       <AurumSheet open={dayOpen} onClose={() => setDayOpen(false)} title="Today at the counter" subtitle="IST business day — live">
         {!today ? (
-          <p className="py-8 text-center text-[12.5px] text-[#8b8170]">Loading…</p>
+          <p className="py-8 text-center text-[12.5px] text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2.5">
@@ -2787,15 +2741,15 @@ export default function AdminPosPage() {
                 { k: "Items sold", v: String(today.itemsSold), gold: false },
                 { k: "Counter bills", v: String(today.posOrders), gold: false },
               ].map((s) => (
-                <div key={s.k} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3.5">
-                  <p className="text-[9px] font-black uppercase tracking-[0.16em] text-[#6b6252]">{s.k}</p>
-                  <p className={cn("tnum mt-1 text-[17px] font-black", s.gold && "text-[#e8bd68]")}>{s.v}</p>
+                <div key={s.k} className="rounded-2xl border border-border bg-muted p-3.5">
+                  <p className="text-[9px] font-black uppercase tracking-[0.16em] text-muted-foreground/70">{s.k}</p>
+                  <p className={cn("tnum mt-1 text-[17px] font-black", s.gold && "text-primary")}>{s.v}</p>
                 </div>
               ))}
             </div>
             {today.hourly && today.hourly.some((h) => h.revenue > 0) && (
-              <div className="rounded-2xl border border-[#262017] bg-[#16130e] p-4">
-                <p className="mb-3 text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Hourly revenue</p>
+              <div className="rounded-2xl border border-border bg-muted p-4">
+                <p className="mb-3 text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Hourly revenue</p>
                 <div className="flex h-28 items-end gap-1.5">
                   {today.hourly
                     .filter((h) => h.hour >= 7 && h.hour <= 23)
@@ -2806,29 +2760,29 @@ export default function AdminPosPage() {
                           <span
                             className={cn(
                               "w-full rounded-t-md transition-all",
-                              h.revenue > 0 ? "bg-gradient-to-t from-[#8a6420] to-[#e8bd68]" : "bg-[#241e13]"
+                              h.revenue > 0 ? "bg-primary" : "bg-muted"
                             )}
                             style={{ height: `${Math.max((h.revenue / max) * 100, h.revenue > 0 ? 8 : 3)}%` }}
                           />
-                          <span className="text-[8.5px] font-bold text-[#6b6252]">{h.hour > 12 ? h.hour - 12 : h.hour || 12}{h.hour >= 12 ? "p" : "a"}</span>
+                          <span className="text-[8.5px] font-bold text-muted-foreground/70">{h.hour > 12 ? h.hour - 12 : h.hour || 12}{h.hour >= 12 ? "p" : "a"}</span>
                         </div>
                       );
                     })}
                 </div>
               </div>
             )}
-            <div className="rounded-2xl border border-[#262017] bg-[#16130e] p-4">
-              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Cash drawer</p>
+            <div className="rounded-2xl border border-border bg-muted p-4">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Cash drawer</p>
               {registerSession ? (
                 <div className="space-y-1.5 text-[12.5px]">
-                  <p className="flex justify-between"><span className="text-[#8b8170]">Expected in drawer</span><span className="tnum font-black text-[#5cd69c]">{formatINR(registerLive?.expectedCash ?? 0)}</span></p>
-                  <p className="flex justify-between"><span className="text-[#8b8170]">Cash in (sales)</span><span className="tnum font-bold">{formatINR(registerLive?.cashIn ?? 0)}</span></p>
-                  <p className="flex justify-between"><span className="text-[#8b8170]">Change given</span><span className="tnum font-bold">−{formatINR(registerLive?.change ?? 0)}</span></p>
-                  <p className="flex justify-between"><span className="text-[#8b8170]">Digital collected</span><span className="tnum font-bold">{formatINR(registerLive?.nonCash ?? 0)}</span></p>
-                  <p className="pt-1.5 text-[10.5px] text-[#6b6252]">Opened by {registerSession.openedByName ?? "—"} at {formatDateTime(registerSession.openedAt)}</p>
+                  <p className="flex justify-between"><span className="text-muted-foreground">Expected in drawer</span><span className="tnum font-black text-emerald-600 dark:text-emerald-400">{formatINR(registerLive?.expectedCash ?? 0)}</span></p>
+                  <p className="flex justify-between"><span className="text-muted-foreground">Cash in (sales)</span><span className="tnum font-bold">{formatINR(registerLive?.cashIn ?? 0)}</span></p>
+                  <p className="flex justify-between"><span className="text-muted-foreground">Change given</span><span className="tnum font-bold">−{formatINR(registerLive?.change ?? 0)}</span></p>
+                  <p className="flex justify-between"><span className="text-muted-foreground">Digital collected</span><span className="tnum font-bold">{formatINR(registerLive?.nonCash ?? 0)}</span></p>
+                  <p className="pt-1.5 text-[10.5px] text-muted-foreground/70">Opened by {registerSession.openedByName ?? "—"} at {formatDateTime(registerSession.openedAt)}</p>
                 </div>
               ) : (
-                <p className="text-[12px] text-[#8b8170]">Register is closed. Open it from the register chip to start the day.</p>
+                <p className="text-[12px] text-muted-foreground">Register is closed. Open it from the register chip to start the day.</p>
               )}
             </div>
           </div>
@@ -2847,9 +2801,9 @@ export default function AdminPosPage() {
         />
         <div className="stellora-scroll mt-3 max-h-72 space-y-1.5 overflow-y-auto">
           {custHits === null ? (
-            <p className="py-6 text-center text-[12.5px] text-[#8b8170]">Loading…</p>
+            <p className="py-6 text-center text-[12.5px] text-muted-foreground">Loading…</p>
           ) : custHits.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-[#2b2418] p-5 text-center text-[12.5px] text-[#8b8170]">
+            <p className="rounded-2xl border border-dashed border-border p-5 text-center text-[12.5px] text-muted-foreground">
               No match. Add a new customer instantly below.
             </p>
           ) : (
@@ -2866,17 +2820,17 @@ export default function AdminPosPage() {
                   playPosSound("success");
                   toast.success(`${c.name} attached to the bill`);
                 }}
-                className="flex w-full items-center gap-3 rounded-xl border border-[#262017] bg-[#16130e] p-3 text-left transition hover:border-[#d9a441]/45"
+                className="flex w-full items-center gap-3 rounded-xl border border-border bg-muted p-3 text-left transition hover:border-primary/45"
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#d9a441]/30 bg-[#d9a441]/10 text-[12.5px] font-black text-[#e8bd68]">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-[12.5px] font-black text-primary">
                   {c.name.trim().charAt(0).toUpperCase()}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-bold">{c.name}</span>
-                  <span className="block truncate text-[11px] text-[#8b8170]">{c.phone ?? c.email ?? "—"}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{c.phone ?? c.email ?? "—"}</span>
                 </span>
                 {Number(c.points) > 0 && (
-                  <span className="tnum shrink-0 rounded-md bg-[#d9a441]/12 px-2 py-0.5 text-[10.5px] font-bold text-[#e8bd68]">
+                  <span className="tnum shrink-0 rounded-md bg-primary/10 px-2 py-0.5 text-[10.5px] font-bold text-primary">
                     ★ {Number(c.points).toLocaleString("en-IN")}
                   </span>
                 )}
@@ -2889,7 +2843,7 @@ export default function AdminPosPage() {
           onClick={() => {
             setCustCreateOpen(true);
           }}
-          className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d9a441]/35 text-[12px] font-black uppercase tracking-wide text-[#e8bd68] transition hover:bg-[#d9a441]/10"
+          className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-primary/35 text-[12px] font-black uppercase tracking-wide text-primary transition hover:bg-primary/10"
         >
           <UserRoundPlus className="h-4 w-4" /> New customer
         </button>
@@ -2904,7 +2858,7 @@ export default function AdminPosPage() {
       >
         <div className="space-y-3">
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Name</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Name</span>
             <input
               value={custNewName}
               onChange={(e) => setCustNewName(e.target.value)}
@@ -2915,7 +2869,7 @@ export default function AdminPosPage() {
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Mobile (10 digits)</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Mobile (10 digits)</span>
             <input
               value={custNewPhone}
               onChange={(e) => setCustNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
@@ -2926,7 +2880,7 @@ export default function AdminPosPage() {
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Email (optional)</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Email (optional)</span>
             <input
               value={custNewEmail}
               onChange={(e) => setCustNewEmail(e.target.value)}
@@ -2940,7 +2894,7 @@ export default function AdminPosPage() {
             type="button"
             onClick={() => void quickCreateCustomer()}
             disabled={custNewBusy}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[13px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105 disabled:opacity-50"
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-black uppercase tracking-wide text-primary-foreground transition hover:brightness-105 disabled:opacity-50"
           >
             {custNewBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <UserRoundPlus className="h-4.5 w-4.5" />}
             Create & attach
@@ -2951,24 +2905,24 @@ export default function AdminPosPage() {
       {/* ────────── PAYMENT CHECKOUT — the showpiece ────────── */}
       <AurumModal open={payOpen} onClose={() => !busy && setPayOpen(false)} title="Take payment" subtitle={paymentDate} wide>
         {/* amount due band */}
-        <div className="mb-4 flex items-end justify-between rounded-2xl border border-[#d9a441]/25 bg-gradient-to-br from-[#d9a441]/12 via-[#d9a441]/5 to-transparent p-4">
+        <div className="mb-4 flex items-end justify-between rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-4">
           <div>
-            <p className="text-[9.5px] font-black uppercase tracking-[0.18em] text-[#a19681]">Amount due</p>
-            <p className="tnum font-serif text-[34px] font-black leading-none text-[#e8bd68]">
+            <p className="text-[9.5px] font-black uppercase tracking-[0.18em] text-muted-foreground">Amount due</p>
+            <p className="tnum font-serif text-[34px] font-black leading-none text-primary">
               ₹{grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
           </div>
           <div className="text-right">
             {balanceDue > 0 ? (
-              <p className="tnum text-[13px] font-black text-[#f5b93e]">Balance {formatINR(balanceDue)}</p>
+              <p className="tnum text-[13px] font-black text-amber-600 dark:text-amber-400">Balance {formatINR(balanceDue)}</p>
             ) : changeForCustomer > 0 ? (
-              <p className="tnum text-[13px] font-black text-[#5cd69c]">Change {formatINR(changeForCustomer)}</p>
+              <p className="tnum text-[13px] font-black text-emerald-600 dark:text-emerald-400">Change {formatINR(changeForCustomer)}</p>
             ) : (
-              <p className="flex items-center gap-1.5 text-[13px] font-black text-[#5cd69c]">
+              <p className="flex items-center gap-1.5 text-[13px] font-black text-emerald-600 dark:text-emerald-400">
                 <CircleCheck className="h-4 w-4" /> Fully tendered
               </p>
             )}
-            <p className="tnum mt-0.5 text-[10.5px] font-semibold text-[#6b6252]">Tendered {formatINR(tenderSum)}</p>
+            <p className="tnum mt-0.5 text-[10.5px] font-semibold text-muted-foreground/70">Tendered {formatINR(tenderSum)}</p>
           </div>
         </div>
 
@@ -2977,9 +2931,9 @@ export default function AdminPosPage() {
           <div>
             <div className="space-y-2.5">
               {tenders.map((t, idx) => (
-                <div key={idx} className="rounded-2xl border border-[#262017] bg-[#16130e] p-3">
+                <div key={idx} className="rounded-2xl border border-border bg-muted p-3">
                   <div className="flex items-center gap-2">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#d9a441]/12 text-[#e8bd68]">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       {(() => {
                         const M = PAYMENT_METHODS.find((m) => m.value === t.method)?.icon ?? Banknote;
                         return <M className="h-4 w-4" />;
@@ -2989,7 +2943,7 @@ export default function AdminPosPage() {
                       value={t.method}
                       onChange={(e) => updateTender(idx, { method: e.target.value as PaymentMethod })}
                       aria-label={`Payment method ${idx + 1}`}
-                      className="h-10 flex-1 appearance-none rounded-xl border border-[#2b2418] bg-[#100e0a] px-3 text-[12.5px] font-bold text-[#f2ecdf] outline-none transition focus:border-[#d9a441]/55"
+                      className="h-10 flex-1 appearance-none rounded-xl border border-border bg-transparent px-3 text-[12.5px] font-bold text-foreground outline-none transition focus:border-primary/55"
                     >
                       {PAYMENT_METHODS.map((m) => (
                         <option key={m.value} value={m.value}>
@@ -3003,13 +2957,13 @@ export default function AdminPosPage() {
                       placeholder="0"
                       inputMode="decimal"
                       aria-label={`Amount for method ${idx + 1}`}
-                      className="tnum h-10 w-24 rounded-xl border border-[#2b2418] bg-[#100e0a] px-3 text-right text-[13.5px] font-black text-[#e8bd68] outline-none transition focus:border-[#d9a441]/55"
+                      className="tnum h-10 w-24 rounded-xl border border-border bg-transparent px-3 text-right text-[13.5px] font-black text-primary outline-none transition focus:border-primary/55"
                     />
                     <button
                       type="button"
                       onClick={() => setTenderExact(idx)}
                       title="Fill the full balance"
-                      className="h-10 shrink-0 rounded-xl border border-[#2b2418] px-2.5 text-[10px] font-black uppercase tracking-wide text-[#8b8170] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                      className="h-10 shrink-0 rounded-xl border border-border px-2.5 text-[10px] font-black uppercase tracking-wide text-muted-foreground transition hover:border-primary/40 hover:text-primary"
                     >
                       Exact
                     </button>
@@ -3017,7 +2971,7 @@ export default function AdminPosPage() {
                       <button
                         type="button"
                         onClick={() => removeTender(idx)}
-                        className="flex h-10 w-9 shrink-0 items-center justify-center rounded-xl text-[#6b6252] transition hover:bg-[#3a1a1a] hover:text-[#f27f82]"
+                        className="flex h-10 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground/70 transition hover:bg-destructive/10 hover:text-destructive"
                         aria-label="Remove tender"
                       >
                         <X className="h-4 w-4" />
@@ -3031,22 +2985,22 @@ export default function AdminPosPage() {
               <button
                 type="button"
                 onClick={addTender}
-                className="mt-2.5 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#2b2418] text-[11px] font-black uppercase tracking-[0.14em] text-[#8b8170] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                className="mt-2.5 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border text-[11px] font-black uppercase tracking-[0.14em] text-muted-foreground transition hover:border-primary/40 hover:text-primary"
               >
                 <Plus className="h-4 w-4" /> Split payment
               </button>
             )}
 
             {/* options */}
-            <label className="mt-3.5 flex cursor-pointer items-center gap-2.5 rounded-xl border border-[#262017] bg-[#16130e] px-3.5 py-3">
+            <label className="mt-3.5 flex cursor-pointer items-center gap-2.5 rounded-xl border border-border bg-muted px-3.5 py-3">
               <input
                 type="checkbox"
                 checked={emailReceipt}
                 onChange={(e) => setEmailReceipt(e.target.checked)}
-                className="h-4 w-4 accent-[#d9a441]"
+                className="h-4 w-4 accent-primary"
               />
               <span className="text-[12px] font-bold">Email the receipt</span>
-              <span className="truncate text-[11px] text-[#6b6252]">{customerEmail || "(attach a customer with an email first)"}</span>
+              <span className="truncate text-[11px] text-muted-foreground/70">{customerEmail || "(attach a customer with an email first)"}</span>
             </label>
             <input
               value={payNote}
@@ -3068,15 +3022,15 @@ export default function AdminPosPage() {
                   className={cn(
                     "flex h-11 items-center justify-center rounded-xl border text-[15px] font-black transition active:scale-95",
                     k === "back"
-                      ? "border-[#2b2418] text-[#a19681] hover:border-[#e5484d]/40 hover:text-[#f27f82]"
-                      : "border-[#2b2418] bg-[#16130e] text-[#f2ecdf] hover:border-[#d9a441]/45 hover:bg-[#1c1710]"
+                      ? "border-border text-muted-foreground hover:border-destructive/40 hover:text-destructive"
+                      : "border-border bg-muted text-foreground hover:border-primary/45 hover:bg-muted"
                   )}
                 >
                   {k === "back" ? <Delete className="h-4.5 w-4.5" /> : k}
                 </button>
               ))}
             </div>
-            <p className="mb-1.5 mt-3.5 text-[9.5px] font-black uppercase tracking-[0.16em] text-[#6b6252]">Quick cash</p>
+            <p className="mb-1.5 mt-3.5 text-[9.5px] font-black uppercase tracking-[0.16em] text-muted-foreground/70">Quick cash</p>
             <div className="grid grid-cols-2 gap-1.5">
               {QUICK_NOTES.map((n) => (
                 <button
@@ -3086,7 +3040,7 @@ export default function AdminPosPage() {
                     setCashBuf(String(n));
                     updateTender(0, { amount: n });
                   }}
-                  className="tnum h-9 rounded-xl border border-[#2b2418] bg-[#16130e] text-[12px] font-black text-[#d8cdb9] transition hover:border-[#d9a441]/45 hover:text-[#e8bd68]"
+                  className="tnum h-9 rounded-xl border border-border bg-muted text-[12px] font-black text-foreground/80 transition hover:border-primary/45 hover:text-primary"
                 >
                   ₹{n.toLocaleString("en-IN")}
                 </button>
@@ -3096,11 +3050,11 @@ export default function AdminPosPage() {
         </div>
 
         {/* footer */}
-        <div className="mt-5 flex gap-2.5 border-t border-dashed border-[#2b2418] pt-4">
+        <div className="mt-5 flex gap-2.5 border-t border-dashed border-border pt-4">
           <button
             type="button"
             onClick={() => !busy && setPayOpen(false)}
-            className="h-13 shrink-0 rounded-2xl border border-[#2b2418] px-5 text-[12px] font-black uppercase tracking-wide text-[#8b8170] transition hover:text-[#f2ecdf]"
+            className="h-13 shrink-0 rounded-2xl border border-border px-5 text-[12px] font-black uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
           >
             Cancel
           </button>
@@ -3108,7 +3062,7 @@ export default function AdminPosPage() {
             type="button"
             onClick={() => void charge(tenders)}
             disabled={busy || balanceDue > 0 || tenderSum <= 0}
-            className="flex h-13 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[14.5px] font-black uppercase tracking-wide text-[#241a06] shadow-[0_16px_36px_-14px_rgba(217,164,65,0.55)] transition hover:brightness-105 active:scale-[0.99] disabled:from-[#2b2418] disabled:via-[#2b2418] disabled:to-[#2b2418] disabled:text-[#6b6252] disabled:shadow-none"
+            className="flex h-13 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-primary text-[14.5px] font-black uppercase tracking-wide text-primary-foreground shadow-lg shadow-primary/25 transition hover:brightness-105 active:scale-[0.99] disabled:bg-muted disabled:text-muted-foreground/70 disabled:shadow-none"
           >
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <CircleCheck className="h-5 w-5" strokeWidth={2.4} />}
             {busy ? "Billing…" : `Complete sale · ${formatINR(grandTotal)}`}
@@ -3120,7 +3074,7 @@ export default function AdminPosPage() {
       <AurumModal open={regOpenOpen} onClose={() => setRegOpenOpen(false)} title="Open the register" subtitle={`Terminal T-${terminalId || "—"} · count the opening float`}>
         <div className="space-y-3.5">
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Opening cash in drawer</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Opening cash in drawer</span>
             <input
               value={regOpeningBalance}
               onChange={(e) => setRegOpeningBalance(e.target.value.replace(/[^\d.]/g, ""))}
@@ -3128,11 +3082,11 @@ export default function AdminPosPage() {
               inputMode="decimal"
               autoFocus
               aria-label="Opening balance"
-              className={cn(fieldCls, "tnum h-14 rounded-2xl text-right text-[24px] font-black text-[#e8bd68]")}
+              className={cn(fieldCls, "tnum h-14 rounded-2xl text-right text-[24px] font-black text-primary")}
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Note (optional)</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Note (optional)</span>
             <input
               value={regOpeningNote}
               onChange={(e) => setRegOpeningNote(e.target.value)}
@@ -3145,7 +3099,7 @@ export default function AdminPosPage() {
             type="button"
             onClick={() => void openRegister()}
             disabled={regBusy}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[13px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105 disabled:opacity-50"
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary text-[13px] font-black uppercase tracking-wide text-primary-foreground transition hover:brightness-105 disabled:opacity-50"
           >
             {regBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <LockOpen className="h-4.5 w-4.5" />}
             Open register
@@ -3162,7 +3116,7 @@ export default function AdminPosPage() {
       >
         <div className="space-y-3.5">
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Counted cash</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Counted cash</span>
             <input
               value={regCounted}
               onChange={(e) => setRegCounted(e.target.value.replace(/[^\d.]/g, ""))}
@@ -3170,7 +3124,7 @@ export default function AdminPosPage() {
               inputMode="decimal"
               autoFocus
               aria-label="Counted balance"
-              className={cn(fieldCls, "tnum h-14 rounded-2xl text-right text-[24px] font-black text-[#e8bd68]")}
+              className={cn(fieldCls, "tnum h-14 rounded-2xl text-right text-[24px] font-black text-primary")}
             />
           </label>
           {regCounted !== "" && registerLive && (
@@ -3178,15 +3132,15 @@ export default function AdminPosPage() {
               className={cn(
                 "flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-[12.5px] font-bold",
                 Math.abs(Number(regCounted) - (registerLive.expectedCash ?? 0)) < 0.01
-                  ? "border-[#3dd68c]/30 bg-[#3dd68c]/8 text-[#5cd69c]"
-                  : "border-[#f5a623]/30 bg-[#f5a623]/8 text-[#f5b93e]"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
               )}
             >
               Variance {formatINR(Number(regCounted) - (registerLive.expectedCash ?? 0))}
             </p>
           )}
           <label className="block">
-            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-[#8b8170]">Closing note (optional)</span>
+            <span className="mb-1.5 block text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Closing note (optional)</span>
             <input
               value={regClosingNote}
               onChange={(e) => setRegClosingNote(e.target.value)}
@@ -3199,7 +3153,7 @@ export default function AdminPosPage() {
             type="button"
             onClick={() => void closeRegister()}
             disabled={regBusy}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#e5484d]/40 bg-[#e5484d]/10 text-[13px] font-black uppercase tracking-wide text-[#f27f82] transition hover:bg-[#e5484d]/20 disabled:opacity-50"
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 text-[13px] font-black uppercase tracking-wide text-destructive transition hover:bg-destructive/20 disabled:opacity-50"
           >
             {regBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <LockKeyhole className="h-4.5 w-4.5" />}
             Close register
@@ -3218,7 +3172,7 @@ export default function AdminPosPage() {
         {receipt && (
           <div className="flex flex-col items-center gap-4">
             {!receiptIsReprint && (
-              <span className="pos-pop flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-b from-[#e8bd68] to-[#b57e26] text-[#241a06]">
+              <span className="pos-pop flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground">
                 <Check className="h-7 w-7" strokeWidth={3} />
               </span>
             )}
@@ -3233,7 +3187,7 @@ export default function AdminPosPage() {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-[#2b2418] text-[12px] font-black uppercase tracking-wide text-[#d8cdb9] transition hover:border-[#d9a441]/40 hover:text-[#e8bd68]"
+                className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-border text-[12px] font-black uppercase tracking-wide text-foreground/80 transition hover:border-primary/40 hover:text-primary"
               >
                 <Printer className="h-4 w-4" /> Print
               </button>
@@ -3243,7 +3197,7 @@ export default function AdminPosPage() {
                   onClick={() => {
                     void navigator.clipboard?.writeText(receipt.order.orderNumber).then(() => toast.success("Order number copied"));
                   }}
-                  className="flex h-12 w-12 items-center justify-center rounded-xl border border-[#2b2418] text-[#a19681] transition hover:text-[#f2ecdf]"
+                  className="flex h-12 w-12 items-center justify-center rounded-xl border border-border text-muted-foreground transition hover:text-foreground"
                   title="Copy order number"
                 >
                   <Copy className="h-4 w-4" />
@@ -3255,7 +3209,7 @@ export default function AdminPosPage() {
                   setReceipt(null);
                   playPosSound("click");
                 }}
-                className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-b from-[#e8bd68] via-[#d9a441] to-[#b57e26] text-[12px] font-black uppercase tracking-wide text-[#241a06] transition hover:brightness-105"
+                className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-primary text-[12px] font-black uppercase tracking-wide text-primary-foreground transition hover:brightness-105"
               >
                 <ShoppingBasket className="h-4 w-4" /> New sale
               </button>
@@ -3268,9 +3222,9 @@ export default function AdminPosPage() {
       <AurumSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" subtitle="Speed keys for the counter">
         <ul className="space-y-1.5">
           {SHORTCUT_LIST.map((s) => (
-            <li key={s.keys} className="flex items-center justify-between rounded-xl border border-[#262017] bg-[#16130e] px-3.5 py-2.5">
-              <span className="text-[12.5px] text-[#d8cdb9]">{s.label}</span>
-              <kbd className="shrink-0 rounded-md border border-[#2b2418] bg-[#100e0a] px-2 py-1 text-[10px] font-black uppercase tracking-wider text-[#e8bd68]">
+            <li key={s.keys} className="flex items-center justify-between rounded-xl border border-border bg-muted px-3.5 py-2.5">
+              <span className="text-[12.5px] text-foreground/80">{s.label}</span>
+              <kbd className="shrink-0 rounded-md border border-border bg-transparent px-2 py-1 text-[10px] font-black uppercase tracking-wider text-primary">
                 {s.keys}
               </kbd>
             </li>
@@ -3309,17 +3263,17 @@ function AurumModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="absolute inset-0 bg-[#070604]/80 backdrop-blur-[3px]" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-[3px]" onClick={onClose} aria-hidden="true" />
       <div
         className={cn(
-          "pos-slide relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-3xl border border-[#2b2418] bg-[#14110c] shadow-[0_50px_110px_-30px_rgba(0,0,0,0.85)]",
+          "pos-slide relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-3xl border border-border bg-popover shadow-[0_50px_110px_-30px_rgba(0,0,0,0.85)]",
           wide ? "max-w-3xl" : "max-w-md"
         )}
       >
-        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[#241e13] px-6 py-4.5">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-6 py-4.5">
           <div>
-            <h3 className="font-serif text-[18px] font-bold leading-tight text-[#f2ecdf]">{title}</h3>
-            {subtitle && <p className="mt-0.5 text-[11px] font-semibold text-[#8b8170]">{subtitle}</p>}
+            <h3 className="font-serif text-[18px] font-bold leading-tight text-foreground">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">{subtitle}</p>}
           </div>
           <button
             type="button"
@@ -3360,12 +3314,12 @@ function AurumSheet({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="absolute inset-0 bg-[#070604]/70 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
-      <div className="pos-slide absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-[#2b2418] bg-[#14110c] shadow-[-40px_0_90px_-40px_rgba(0,0,0,0.8)]">
-        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[#241e13] px-5 py-4.5">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
+      <div className="pos-slide absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-border bg-popover shadow-[-40px_0_90px_-40px_rgba(0,0,0,0.8)]">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-5 py-4.5">
           <div>
-            <h3 className="font-serif text-[18px] font-bold leading-tight text-[#f2ecdf]">{title}</h3>
-            {subtitle && <p className="mt-0.5 text-[11px] font-semibold text-[#8b8170]">{subtitle}</p>}
+            <h3 className="font-serif text-[18px] font-bold leading-tight text-foreground">{title}</h3>
+            {subtitle && <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">{subtitle}</p>}
           </div>
           <button type="button" onClick={onClose} className={ghostIcon} aria-label="Close drawer">
             <X className="h-4.5 w-4.5" />

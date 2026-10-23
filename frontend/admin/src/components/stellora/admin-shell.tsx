@@ -857,13 +857,6 @@ export function AdminShell({
       n.href === "/admin" ? pathname === "/admin" : pathname === n.href || pathname.startsWith(`${n.href}/`)
     );
 
-  /* KIOSK MODE — the POS terminal is a dedicated full-screen app, exactly like
-     Stocky's register: no sidebar, no topbar, no page padding. The checkout
-     counter owns every pixel so cashiers can't wander into the admin. */
-  if (pathname.startsWith("/admin/pos")) {
-    return <RealtimeProvider>{children}</RealtimeProvider>;
-  }
-
   return (
     <RealtimeProvider>
     <LiveRefresher pathname={pathname} />
