@@ -3,10 +3,8 @@ import { apiAdminOrder } from "@/lib/server-api";
 import { formatINR, formatDateTime } from "@/lib/utils";
 import { OrderActions } from "@/components/stellora/admin-order-actions";
 import { PageHeader } from "@/components/stellora/advanced/page-header";
-import {
-  CopyAddressButton,
-  PrintInvoiceButton,
-} from "@/components/stellora/advanced/print-invoice-button";
+import { CopyAddressButton } from "@/components/stellora/advanced/print-invoice-button";
+import { InvoicePrintButton } from "@/components/stellora/advanced/invoice-print";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +30,35 @@ export default async function AdminOrderDetailPage({
     order.shipCountry,
   ].join("\n");
 
+  // Clean A4 tax invoice handed to the standalone document printer.
+  const invoice = {
+    orderNumber: order.orderNumber,
+    createdAt: order.createdAt,
+    customerName: order.shipName || order.user?.name || "Walk-in customer",
+    customerPhone: order.shipPhone || order.user?.phone || "",
+    customerEmail: order.user?.email ?? "",
+    addressLines: [
+      order.shipLine1 + (order.shipLine2 ? `, ${order.shipLine2}` : ""),
+      `${order.shipCity}, ${order.shipState} — ${order.shipPincode}`,
+      order.shipCountry,
+    ],
+    items: order.items.map((i) => ({
+      name: i.productName,
+      variant: i.variantName,
+      sku: i.sku,
+      qty: i.quantity,
+      unitPrice: i.unitPrice,
+      lineTotal: i.lineTotal,
+    })),
+    subtotal: order.subtotal,
+    discountTotal: order.discountTotal,
+    couponCode: order.couponCode,
+    shippingFee: order.shippingFee,
+    grandTotal: order.grandTotal,
+    paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -42,7 +69,7 @@ export default async function AdminOrderDetailPage({
         actions={
           <>
             <CopyAddressButton address={shippingAddress} />
-            <PrintInvoiceButton />
+            <InvoicePrintButton invoice={invoice} />
           </>
         }
       />

@@ -587,10 +587,11 @@ export default function AdminBarcodesPage() {
 
   /* ---------------- assign EAN-13 numbers (bulk) ---------------- */
 
-  const assignNumbers = useCallback(
-    async (overwrite: boolean) => {
-      if (overwrite && !window.confirm("Overwrite existing barcode numbers for the selected variants?")) return;
-      setAssigning(true);
+  /** POST /admin/barcodes/assign for the current selection — shared by the
+      toolbar button and the print guard. Returns the assigned count, or null
+      after toasting a failure. */
+  const assignRequest = useCallback(
+    async (overwrite: boolean): Promise<number | null> => {
       try {
         const ids = products
           ? products.flatMap((p) => p.variants.filter((v) => v.isActive && selected.has(v.id)).map((v) => v.id))
@@ -603,12 +604,26 @@ export default function AdminBarcodesPage() {
         const json = await res.json();
         if (!json.ok) {
           toast.error(json.error?.message ?? "Could not assign numbers");
-          return;
+          return null;
         }
-        toast.success(`${json.data.assigned} barcode number${json.data.assigned === 1 ? "" : "s"} assigned`);
-        await fetchAll();
+        return Number(json.data?.assigned ?? 0);
       } catch {
         toast.error("Network error while assigning numbers");
+        return null;
+      }
+    },
+    [products, selected]
+  );
+
+  const assignNumbers = useCallback(
+    async (overwrite: boolean) => {
+      if (overwrite && !window.confirm("Overwrite existing barcode numbers for the selected variants?")) return;
+      setAssigning(true);
+      try {
+        const assigned = await assignRequest(overwrite);
+        if (assigned == null) return;
+        toast.success(`${assigned} barcode number${assigned === 1 ? "" : "s"} assigned`);
+        await fetchAll();
       } finally {
         setAssigning(false);
       }
@@ -777,8 +792,33 @@ export default function AdminBarcodesPage() {
   /* ---------------- selection helpers ---------------- */
 
   /** Stocky-style print: sheets are cloned into a clean popup and the print
-      dialog opens automatically (Auto Print) — the main tab is never disturbed. */
-  function printPopup() {
+      dialog opens automatically (Auto Print) — the main tab is never disturbed.
+      EAN-13 source with unassigned variants would print a sheet of blank
+      "no number yet" labels, so the guard assigns numbers first. */
+  async function printPopup() {
+    if (cfg.source === "ean13") {
+      const missing = products
+        ? products.reduce(
+            (n, p) => n + p.variants.filter((v) => v.isActive && selected.has(v.id) && !v.barcode).length,
+            0
+          )
+        : 0;
+      if (missing > 0) {
+        const ok = window.confirm(
+          `${missing} selected variant${missing === 1 ? " has" : "s have"} no barcode number — those labels would print blank.\n\nAssign EAN-13 numbers automatically and print the fresh sheet?`
+        );
+        if (!ok) {
+          toast.error("Print cancelled — assign numbers first for scannable labels");
+          return;
+        }
+        const assigned = await assignRequest(false);
+        if (assigned == null) return;
+        await fetchAll();
+        toast.success(`${assigned} barcode number${assigned === 1 ? "" : "s"} assigned`);
+        // let the sheet re-render with real numbers before cloning it
+        await new Promise((r) => setTimeout(r, 450));
+      }
+    }
     const sheets = document.querySelector(".bc-sheets");
     if (!sheets) return;
     const win = window.open("", "_blank", "width=900,height=700");
@@ -1558,7 +1598,7 @@ export default function AdminBarcodesPage() {
                     <Button
                       size="sm"
                       disabled={overflow}
-                      onClick={printPopup}
+                      onClick={() => void printPopup()}
                       className={`h-9 rounded-lg px-5 text-[13px] font-bold shadow-md shadow-primary/20 ${BRAND.solid}`}
                     >
                       <Printer className="h-4 w-4" /> Print labels

@@ -68,6 +68,12 @@ function _normalize(value: unknown, seen: WeakSet<object>): unknown {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       out[k] = _normalize(v, seen);
     }
+    // Backtrack: `seen` must track the current DFS *path*, not every object
+    // ever visited. Payloads legitimately contain the same row twice (e.g.
+    // POS lookup returns { product, variant } where variant is ALSO inside
+    // product.variants) — with a global set the second occurrence was
+    // replaced by the string "[Circular]" and the POS scanner broke.
+    seen.delete(value as object);
     return out;
   }
   return value;

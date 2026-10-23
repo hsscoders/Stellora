@@ -74,6 +74,7 @@ import {
 } from "@/lib/pos-sound";
 import { toast } from "@/components/ui/notify";
 import { cn, formatDateTime, formatINR } from "@/lib/utils";
+import { escapeHtml as esc, printDocument } from "@/lib/print-doc";
 
 /* =============================== API shapes =============================== */
 
@@ -297,6 +298,88 @@ function changeFromRef(providerRef: string | null | undefined): number {
   if (!providerRef || !providerRef.startsWith("POS:")) return 0;
   const changePart = providerRef.split("|")[1];
   return changePart?.startsWith("CHG:") ? Number(changePart.slice(4)) || 0 : 0;
+}
+
+/* ==================== standalone thermal receipt (print) ==================== */
+
+const rup = (n: number | string) => `₹${Number(n).toFixed(2)}`;
+
+/** Mirror of ReceiptCard as a self-contained 80 mm thermal document, printed
+ *  through printDocument. Paper output therefore never depends on the admin
+ *  app's CSS — the old visibility-hack clipped every bill taller than one
+ *  screen because the receipt lived inside the modal's overflow-hidden panel. */
+function buildReceiptHtml(
+  receipt: ReceiptData,
+  footer: string,
+  seller: string,
+  qr: string,
+  reprint: boolean
+): string {
+  const o = receipt.order;
+  const taxAmt = taxAmountOf(o);
+  const rows = (o.items ?? [])
+    .map(
+      (it) => `<tr><td class="i">${esc(it.productName)}<span class="v">${esc(it.variantName)} · ${esc(it.sku)}</span></td><td class="c">${it.quantity}</td><td class="r">${rup(it.lineTotal)}</td></tr>`
+    )
+    .join("");
+  return `<style>
+@page { size: 80mm auto; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #fff; }
+body { width: 80mm; font: 11px/1.45 "Courier New", ui-monospace, monospace; color: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.rc { padding: 5mm 4mm; }
+.brand { text-align: center; }
+.brand h1 { font: 800 20px/1.1 Georgia, "Times New Roman", serif; letter-spacing: .04em; }
+.brand p { font-size: 8.5px; letter-spacing: .3em; text-transform: uppercase; margin-top: 2px; }
+.tag { color: #555; margin-top: 6px; }
+.hr { border-top: 1px dashed #999; margin: 8px 0; }
+.meta, .tot { font-size: 10.5px; }
+.meta div, .tot div { display: flex; justify-content: space-between; gap: 8px; margin: 1px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+thead th { text-align: left; font-size: 8.5px; text-transform: uppercase; letter-spacing: .1em; color: #555; padding-bottom: 3px; }
+th.c, td.c { text-align: center; width: 24px; }
+th.r, td.r { text-align: right; }
+td.i { padding: 2px 6px 2px 0; }
+td.i .v { display: block; font-size: 8.5px; color: #555; }
+.grand { border-top: 1px solid #000; margin-top: 5px; padding-top: 5px; font-size: 13px; font-weight: 800; }
+.qr { text-align: center; margin-top: 8px; }
+.qr img { width: 24mm; height: 24mm; }
+.qr p { font-size: 7.5px; letter-spacing: .28em; text-transform: uppercase; color: #555; margin-top: 2px; }
+.foot { text-align: center; margin-top: 8px; border-top: 1px dashed #999; padding-top: 6px; }
+.foot .th { font-size: 10px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+.foot .fnote { font-size: 8.5px; color: #444; margin-top: 3px; white-space: pre-line; }
+</style>
+<div class="rc">
+  <div class="brand">
+    <h1>STELLORA</h1>
+    <p>Fine Jewellery &amp; Lifestyle</p>
+    <p class="tag">${reprint ? "— Reprint —" : "Counter Sale"}</p>
+  </div>
+  <div class="hr"></div>
+  <div class="meta">
+    <div><span>Bill</span><b>${esc(o.orderNumber)}</b></div>
+    <div><span>Date</span><span>${esc(formatDateTime(o.createdAt))}</span></div>
+    ${seller ? `<div><span>Served by</span><span>${esc(seller)}</span></div>` : ""}
+  </div>
+  <div class="hr"></div>
+  <table><thead><tr><th>Item</th><th class="c">Qty</th><th class="r">Amount</th></tr></thead><tbody>${rows}</tbody></table>
+  <div class="hr"></div>
+  <div class="tot">
+    <div><span>Subtotal</span><span>${rup(o.subtotal)}</span></div>
+    ${Number(o.discountTotal) > 0 ? `<div><span>Discount</span><span>−${rup(o.discountTotal)}</span></div>` : ""}
+    ${taxAmt > 0 ? `<div><span>Tax${receipt.taxPercent ? ` @ ${receipt.taxPercent}%` : ""}</span><span>${rup(taxAmt)}</span></div>` : ""}
+    ${Number(o.shippingFee) > 0 ? `<div><span>Shipping</span><span>${rup(o.shippingFee)}</span></div>` : ""}
+    <div class="grand"><span>TOTAL</span><span>${rup(o.grandTotal)}</span></div>
+    <div><span>Paid (${esc(methodLabel(receipt.method))})</span><span>${rup(receipt.paidAmount)}</span></div>
+    ${receipt.changeDue > 0 ? `<div><b>Change due</b><b>${rup(receipt.changeDue)}</b></div>` : ""}
+    ${receipt.pointsEarned > 0 ? `<div><span>Loyalty points earned</span><span>★ ${receipt.pointsEarned}</span></div>` : ""}
+  </div>
+  ${qr ? `<div class="qr"><img src="${qr}" alt=""/><p>Invoice QR</p></div>` : ""}
+  <div class="foot">
+    <p class="th">Thank you · Visit again</p>
+    ${footer ? `<p class="fnote">${esc(footer)}</p>` : ""}
+  </div>
+</div>`;
 }
 
 /* Rebuild the same receipt the sale produced, from an orders-list row. */
@@ -797,6 +880,23 @@ export default function AdminPosPage() {
       .catch(() => setQrDataUrl(""));
   }, [receipt]);
 
+  /* Ctrl/Cmd+P with the receipt dialog open prints the clean 80 mm doc — the
+     terminal UI itself is never meant for paper. */
+  useEffect(() => {
+    if (!receipt) return;
+    const h = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        printDocument(
+          `Bill ${receipt.order.orderNumber}`,
+          buildReceiptHtml(receipt, receiptFooter, sellerName, qrDataUrl, receiptIsReprint)
+        );
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [receipt, receiptFooter, sellerName, qrDataUrl, receiptIsReprint]);
+
   /* ------------------------------ bill math ------------------------------ */
 
   const subtotal = useMemo(
@@ -992,6 +1092,15 @@ export default function AdminPosPage() {
       if (json.ok) {
         const product = json.data.product as ApiProduct;
         const variant = json.data.variant as ApiVariant;
+        /* defensive: a malformed lookup payload used to surface as the very
+           misleading "is out of stock" toast (variant fields read undefined) */
+        if (!product || !variant || typeof variant !== "object" || typeof variant.id !== "string") {
+          playPosSound("error");
+          setScanFlash("err");
+          setTimeout(() => setScanFlash(null), 600);
+          toast.error(`Lookup returned a malformed product for "${code}"`);
+          return;
+        }
         playPosSound("scan");
         addVariant(product, variant);
         setScanFlash("ok");
@@ -1595,9 +1704,9 @@ export default function AdminPosPage() {
 
   return (
     <div className="flex text-foreground lg:h-[calc(100dvh-120px)] lg:overflow-hidden">
-      {/* print: only the receipt is visible on paper + tiny page-local motion */}
-      <style>{`@media print{body *{visibility:hidden}.pos-receipt,.pos-receipt *{visibility:visible}.pos-receipt{position:absolute;inset:0;background:#fff;color:#000}}
-@keyframes posPulse{0%{opacity:.35}100%{opacity:1}}.pos-pulse{animation:posPulse .9s ease-out both}
+      {/* printing goes through the standalone 80 mm receipt doc (printDocument);
+         this style block only carries page-local motion */}
+      <style>{`@keyframes posPulse{0%{opacity:.35}100%{opacity:1}}.pos-pulse{animation:posPulse .9s ease-out both}
 @keyframes posPop{0%{transform:scale(.55);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}.pos-pop{animation:posPop .38s cubic-bezier(.2,1.4,.4,1) both}
 @keyframes posSlide{0%{transform:translateY(10px);opacity:0}100%{transform:translateY(0);opacity:1}}.pos-slide{animation:posSlide .3s ease-out both}`}</style>
 
@@ -3186,7 +3295,12 @@ export default function AdminPosPage() {
             <div className="flex w-full gap-2.5">
               <button
                 type="button"
-                onClick={() => window.print()}
+                onClick={() =>
+                  printDocument(
+                    `Bill ${receipt.order.orderNumber}`,
+                    buildReceiptHtml(receipt, receiptFooter, sellerName, qrDataUrl, receiptIsReprint)
+                  )
+                }
                 className="flex h-12 flex-1 items-center justify-center gap-2 rounded-xl border border-border text-[12px] font-black uppercase tracking-wide text-foreground/80 transition hover:border-primary/40 hover:text-primary"
               >
                 <Printer className="h-4 w-4" /> Print
